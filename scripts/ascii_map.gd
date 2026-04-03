@@ -1,6 +1,7 @@
 extends Node2D
 
 const GameMapClass     = preload("res://scripts/map/game_map.gd")
+const EntityClass      = preload("res://scripts/entities/entity.gd")
 const ActorClass       = preload("res://scripts/entities/actor.gd")
 const ItemClass        = preload("res://scripts/entities/item.gd")
 const ProcgenClass     = preload("res://scripts/map/procgen.gd")
@@ -56,6 +57,7 @@ var _screen: Screen = Screen.NONE
 var _map        # GameMap
 var _player     # Actor
 var _floor: int = 1
+var _floors: Dictionary = {}  # floor number -> GameMap, for visited floors not currently active
 var _messages: Array[String] = []
 var _game_over: bool = false
 var _font: Font
@@ -83,6 +85,7 @@ func _make_font() -> Font:
 
 func _new_game() -> void:
 	_floor     = 1
+	_floors.clear()
 	_game_over = false
 	_screen    = Screen.NONE
 	_messages.clear()
@@ -108,21 +111,65 @@ func _load_from_save() -> void:
 	_map    = result[0]
 	_player = result[1]
 	_floor  = result[2]
+	_floors = result[3]
 	_log("You return to where you left off...")
 	queue_redraw()
 
 
+func _stairs_pos(map, ch: String) -> Vector2i:
+	for e in map.entities:
+		if not (e is ActorClass) and e.char == ch:
+			return e.pos
+	return Vector2i(0, 0)
+
+
 func _descend() -> void:
+	# Save current floor without the player in the entity list.
+	_map.entities.erase(_player)
+	_floors[_floor] = _map
 	_floor += 1
-	var new_map = GameMapClass.new(COLS, MAP_ROWS)
-	_player.game_map = new_map
-	_player.pos      = Vector2i(0, 0)  # procgen will set the real spawn
-	new_map.entities.append(_player)
-	_map = new_map
-	var monsters := mini(2 + (_floor - 1) / 2, 4)
-	ProcgenClass.generate_dungeon(_map, 30, 5, 10, monsters, _player, _floor)
+
+	if _floors.has(_floor):
+		# Restore a previously visited floor.
+		_map = _floors[_floor]
+		_player.pos      = _stairs_pos(_map, "<")
+		_player.game_map = _map
+		_map.entities.append(_player)
+	else:
+		# Generate a fresh floor.
+		var new_map = GameMapClass.new(COLS, MAP_ROWS)
+		_player.game_map = new_map
+		_player.pos      = Vector2i(0, 0)  # procgen sets the real spawn
+		new_map.entities.append(_player)
+		_map = new_map
+		var monsters := mini(2 + (_floor - 1) / 2, 4)
+		ProcgenClass.generate_dungeon(_map, 30, 5, 10, monsters, _player, _floor)
+		# Place < stairs at the spawn point procgen chose for the player.
+		var up_stairs := EntityClass.new(_player.pos, "<", Color(0.55, 0.80, 0.95), "Stairs Up", false)
+		up_stairs.game_map = _map
+		_map.entities.append(up_stairs)
+
 	_map.compute_fov(_player.pos.x, _player.pos.y, FOV_RADIUS)
 	_log("You descend to floor %d. The air grows heavier." % _floor)
+	queue_redraw()
+
+
+func _ascend() -> void:
+	if _floor <= 1:
+		_log("There is nothing above.")
+		return
+	# Save current floor without the player.
+	_map.entities.erase(_player)
+	_floors[_floor] = _map
+	_floor -= 1
+
+	_map = _floors[_floor]
+	_player.pos      = _stairs_pos(_map, ">")
+	_player.game_map = _map
+	_map.entities.append(_player)
+
+	_map.compute_fov(_player.pos.x, _player.pos.y, FOV_RADIUS)
+	_log("You ascend to floor %d." % _floor)
 	queue_redraw()
 
 
@@ -171,10 +218,14 @@ func _unhandled_input(event: InputEvent) -> void:
 			_new_game()
 		return
 
-	# > is Shift+Period — check modifier explicitly before the match.
+	# > and < are shifted keys — check modifier explicitly before the match.
 	if event.shift_pressed and event.physical_keycode == KEY_PERIOD:
 		get_viewport().set_input_as_handled()
 		_try_descend()
+		return
+	if event.shift_pressed and event.physical_keycode == KEY_COMMA:
+		get_viewport().set_input_as_handled()
+		_try_ascend()
 		return
 
 	var dir := Vector2i.ZERO
@@ -221,7 +272,7 @@ func _confirm_escape() -> void:
 			queue_redraw()
 		2:  # Save & Quit to Title
 			if not _game_over:
-				SaveManagerClass.save_game(_map, _player, _floor)
+				SaveManagerClass.save_game(_map, _player, _floor, _floors)
 			get_tree().change_scene_to_file("res://ui/main_menu.tscn")
 		3:  # Quit Game
 			get_tree().quit()
@@ -312,8 +363,14 @@ func _auto_pickup() -> void:
 
 func _check_stairs() -> void:
 	for e in _map.entities:
-		if not (e is ActorClass) and e.char == ">" and e.pos == _player.pos:
+		if (e is ActorClass) or e.pos != _player.pos:
+			continue
+		if e.char == ">":
 			_log("Stairs lead down. > to descend.")
+			return
+		if e.char == "<":
+			var hint := "< to ascend." if _floor > 1 else "< to ascend. (already on surface)"
+			_log("Stairs lead up. %s" % hint)
 			return
 
 
@@ -322,6 +379,14 @@ func _try_descend() -> void:
 		if not (e is ActorClass) and e.char == ">" and e.pos == _player.pos:
 			get_viewport().set_input_as_handled()
 			_descend()
+			return
+
+
+func _try_ascend() -> void:
+	for e in _map.entities:
+		if not (e is ActorClass) and e.char == "<" and e.pos == _player.pos:
+			get_viewport().set_input_as_handled()
+			_ascend()
 			return
 
 

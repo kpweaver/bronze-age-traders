@@ -17,7 +17,7 @@ static func delete_save() -> void:
 		DirAccess.open("user://").remove("save.json")
 
 
-static func save_game(game_map, player, floor: int) -> void:
+static func save_game(game_map, player, floor: int, floors: Dictionary) -> void:
 	var data := {
 		"floor": floor,
 		"player": {
@@ -34,10 +34,23 @@ static func save_game(game_map, player, floor: int) -> void:
 			"explored": game_map.explored,
 		},
 		"entities": _serialize_entities(game_map.entities, player),
+		"stored_floors": _serialize_stored_floors(floors),
 	}
 	var file := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	file.store_string(JSON.stringify(data))
 	file.close()
+
+
+static func _serialize_stored_floors(floors: Dictionary) -> Dictionary:
+	var result := {}
+	for f in floors:
+		var m = floors[f]
+		result[str(f)] = {
+			"tiles":    m.tiles,
+			"explored": m.explored,
+			"entities": _serialize_entities(m.entities, null),
+		}
+	return result
 
 
 static func _serialize_inventory(inventory: Array) -> Array:
@@ -140,4 +153,40 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 				game_map.entities.append(ent)
 
 	game_map.compute_fov(player.pos.x, player.pos.y, fov_radius)
-	return [game_map, player, floor]
+
+	var floors := {}
+	for f_str in data.get("stored_floors", {}).keys():
+		var f_int := int(f_str)
+		var fd: Dictionary = data["stored_floors"][f_str]
+		var stored_map = GameMapClass.new(int(md["width"]), int(md["height"]))
+		var st_raw: Array = fd["tiles"]
+		var se_raw: Array = fd["explored"]
+		for y in range(stored_map.height):
+			for x in range(stored_map.width):
+				stored_map.tiles[y][x]    = int(st_raw[y][x])
+				stored_map.explored[y][x] = bool(se_raw[y][x])
+		for ed: Dictionary in fd["entities"]:
+			var color := Color(float(ed["cr"]), float(ed["cg"]), float(ed["cb"]))
+			var pos   := Vector2i(int(ed["x"]), int(ed["y"]))
+			match ed["type"]:
+				"actor":
+					var actor = ActorClass.new(pos, ed["char"], color, ed["name"],
+							int(ed["max_hp"]), int(ed["defense"]), int(ed["power"]))
+					actor.hp              = int(ed["hp"])
+					actor.blocks_movement = bool(ed["blocks_movement"])
+					if bool(ed["has_ai"]) and actor.is_alive:
+						actor.ai = HostileAIClass.new(actor)
+					actor.game_map = stored_map
+					stored_map.entities.append(actor)
+				"item":
+					var item = ItemClass.new(pos, ed["item_type"], int(ed["value"]))
+					item.game_map = stored_map
+					stored_map.entities.append(item)
+				"entity":
+					var ent = load("res://scripts/entities/entity.gd").new(
+							pos, ed["char"], color, ed["name"], bool(ed["blocks_movement"]))
+					ent.game_map = stored_map
+					stored_map.entities.append(ent)
+		floors[f_int] = stored_map
+
+	return [game_map, player, floor, floors]
