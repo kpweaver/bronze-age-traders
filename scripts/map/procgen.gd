@@ -71,7 +71,7 @@ static func generate_dungeon(
 	# Stairs at the center of the last room
 	if not rooms.is_empty():
 		var stairs_pos: Vector2i = rooms.back().center()
-		var stairs := EntityClass.new(stairs_pos, ">", Color(0.90, 0.85, 0.60), "Stairs Down", false)
+		var stairs := EntityClass.new(stairs_pos, ">", Color(0.90, 0.85, 0.60), "stairs down", false)
 		stairs.game_map = map
 		map.entities.append(stairs)
 

@@ -19,24 +19,24 @@ func _init(p_pos: Vector2i, p_type: String, p_value: int) -> void:
 		TYPE_HEALTH_POTION:
 			ch         = "!"
 			col        = Color(0.40, 0.85, 0.35)   # pale green
-			nm         = "Health Potion"
+			nm         = "health potion"
 			dice_count = 1
 			dice_sides = 6
 		TYPE_HEALING_DRAUGHT:
 			ch         = "!"
 			col        = Color(0.25, 0.65, 0.90)   # azure blue
-			nm         = "Healing Draught"
+			nm         = "healing draught"
 			dice_count = 2
 			dice_sides = 6
 		TYPE_GOLD:
 			ch    = "$"
 			col   = Color(0.90, 0.78, 0.15)
-			nm    = "Gold Coins"
+			nm    = "gold coins"
 			value = p_value
 		_:
 			ch  = "?"
 			col = Color(1.0, 1.0, 1.0)
-			nm  = "Unknown Item"
+			nm  = "unknown item"
 	super._init(p_pos, ch, col, nm, false)
 	item_type = p_type
 
