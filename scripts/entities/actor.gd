@@ -36,11 +36,17 @@ func _init(
 
 func attack(target: Actor) -> String:
 	var roll: int = randi_range(1, 20)
+	var is_player := name == "You"
+	var v_attack  := "attack" if is_player else "attacks"
+	var v_hit     := "hit"    if is_player else "hits"
 	if roll < target.ac:
-		return "%s attacks %s but misses. [to hit: %d vs AC %d]" % [name, target.name, roll, target.ac]
+		return "%s %s %s but miss. [to hit: %d vs AC %d]" % \
+			[name, v_attack, target.name, roll, target.ac] if is_player else \
+			"%s %s %s but misses. [to hit: %d vs AC %d]" % [name, v_attack, target.name, roll, target.ac]
 	var dmg: int = randi_range(1, 6) + power
 	target.take_damage(dmg)
-	return "%s hits %s for %d damage. [to hit: %d vs AC %d, 1d6+%d = %d]" % [name, target.name, dmg, roll, target.ac, power, dmg]
+	return "%s %s %s for %d damage. [to hit: %d vs AC %d, 1d6+%d = %d]" % \
+		[name, v_hit, target.name, dmg, roll, target.ac, power, dmg]
 
 
 func take_damage(amount: int) -> void:
