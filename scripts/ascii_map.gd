@@ -182,9 +182,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		KEY_KP_1:            dir = Vector2i(-1, 1)
 		KEY_KP_3:            dir = Vector2i(1, 1)
 		KEY_KP_5:            pass  # wait
-		KEY_G:               _auto_pickup(); _do_enemy_turns(); _end_turn(); return
-		KEY_PERIOD:          _try_descend(); return
-		_:                   return
+		KEY_G:  _auto_pickup(); _do_enemy_turns(); _end_turn(); return
+		_:      return
+
+	if event.keycode == KEY_GREATER:
+		_try_descend(); return
 
 	get_viewport().set_input_as_handled()
 	_do_player_turn(dir)
@@ -308,7 +310,7 @@ func _auto_pickup() -> void:
 func _check_stairs() -> void:
 	for e in _map.entities:
 		if not (e is ActorClass) and e.char == ">" and e.pos == _player.pos:
-			_log("Stairs lead down. [.] to descend.")
+			_log("Stairs lead down. [>] to descend.")
 			return
 
 
