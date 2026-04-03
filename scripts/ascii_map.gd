@@ -312,8 +312,11 @@ func _handle_settings_input(event: InputEvent) -> void:
 		KEY_ESCAPE:
 			_screen = Screen.ESCAPE
 			queue_redraw()
-		KEY_A:  # auto-pickup toggle
+		KEY_A:
 			GameState.auto_pickup = not GameState.auto_pickup
+			queue_redraw()
+		KEY_G:
+			GameState.god_mode = not GameState.god_mode
 			queue_redraw()
 
 
@@ -330,6 +333,8 @@ func _do_player_turn(dir: Vector2i) -> void:
 		if target != null:
 			if target is ActorClass and target.is_alive:
 				_log(_player.attack(target))
+				if GameState.god_mode and target.is_alive:
+					target.take_damage(target.hp)  # instakill
 				if not target.is_alive:
 					_log(target.die())
 		elif _map.is_walkable(next.x, next.y):
@@ -400,10 +405,13 @@ func _do_enemy_turns() -> void:
 		if msg != "":
 			_log(msg)
 		if not _player.is_alive:
-			_log(_player.die())
-			_log("You are dead.  Press r to try again.")
-			_game_over = true
-			return
+			if GameState.god_mode:
+				_player.hp = _player.max_hp
+			else:
+				_log(_player.die())
+				_log("You are dead.  Press r to try again.")
+				_game_over = true
+				return
 
 
 func _end_turn() -> void:
@@ -517,7 +525,7 @@ func _draw_escape_menu() -> void:
 # ---------------------------------------------------------------------------
 func _draw_settings() -> void:
 	const BOX_W := 40
-	const BOX_H := 9
+	const BOX_H := 10
 	const BOX_X := (COLS - BOX_W) / 2
 	const BOX_Y := (MAP_ROWS - BOX_H) / 2
 
@@ -528,10 +536,11 @@ func _draw_settings() -> void:
 	var title := "-=[ SETTINGS ]=-"
 	_puts(BOX_X + (BOX_W - title.length()) / 2, BOX_Y + 1, title, C_STATUS)
 
-	var ap_val := "ON " if GameState.auto_pickup else "OFF"
-	_puts(BOX_X + 2, BOX_Y + 3,
-		"[a] Auto-pickup items:  %s" % ap_val,
-		C_MSG_RECENT)
+	var ap_val  := "ON " if GameState.auto_pickup else "OFF"
+	var god_val := "ON " if GameState.god_mode    else "OFF"
+	_puts(BOX_X + 2, BOX_Y + 3, "a) Auto-pickup items:  %s" % ap_val,  C_MSG_RECENT)
+	_puts(BOX_X + 2, BOX_Y + 4, "g) God mode:           %s" % god_val,
+		Color(1.0, 0.85, 0.2) if GameState.god_mode else C_MSG_RECENT)
 
 	var hint := "esc: back"
 	_puts(BOX_X + (BOX_W - hint.length()) / 2, BOX_Y + BOX_H - 2, hint, C_DIVIDER)

@@ -5,3 +5,4 @@ var load_save: bool = false
 
 # Player preferences — persist for the session.
 var auto_pickup: bool = false
+var god_mode: bool    = false
