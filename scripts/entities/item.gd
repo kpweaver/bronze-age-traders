@@ -1,0 +1,42 @@
+class_name Item
+extends "res://scripts/entities/entity.gd"
+
+const TYPE_HEALTH_POTION := "health_potion"
+const TYPE_GOLD          := "gold"
+
+var item_type: String
+var value: int  # HP restored (potions) or coin amount (gold)
+
+
+func _init(p_pos: Vector2i, p_type: String, p_value: int) -> void:
+	var ch: String
+	var col: Color
+	var nm: String
+	match p_type:
+		TYPE_HEALTH_POTION:
+			ch  = "!"
+			col = Color(0.40, 0.85, 0.35)
+			nm  = "Health Potion"
+		TYPE_GOLD:
+			ch  = "$"
+			col = Color(0.90, 0.78, 0.15)
+			nm  = "Gold Coins"
+		_:
+			ch  = "?"
+			col = Color(1.0, 1.0, 1.0)
+			nm  = "Unknown Item"
+	super._init(p_pos, ch, col, nm, false)  # items never block movement
+	item_type = p_type
+	value     = p_value
+
+
+# Applies the item's effect to actor. Returns a log message.
+func use(actor) -> String:
+	match item_type:
+		TYPE_HEALTH_POTION:
+			var healed: int = mini(value, actor.max_hp - actor.hp)
+			actor.hp = mini(actor.max_hp, actor.hp + value)
+			if healed == 0:
+				return "You drink the potion but are already at full health."
+			return "You drink the potion and recover %d HP." % healed
+	return ""

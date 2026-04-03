@@ -1,8 +1,9 @@
 class_name SaveManager
 
-const ActorClass    = preload("res://scripts/entities/actor.gd")
+const ActorClass     = preload("res://scripts/entities/actor.gd")
+const ItemClass      = preload("res://scripts/entities/item.gd")
 const HostileAIClass = preload("res://scripts/components/hostile_ai.gd")
-const GameMapClass  = preload("res://scripts/map/game_map.gd")
+const GameMapClass   = preload("res://scripts/map/game_map.gd")
 
 const SAVE_PATH := "user://save.json"
 
@@ -16,12 +17,15 @@ static func delete_save() -> void:
 		DirAccess.open("user://").remove("save.json")
 
 
-static func save_game(game_map, player) -> void:
+static func save_game(game_map, player, floor: int) -> void:
 	var data := {
+		"floor": floor,
 		"player": {
 			"x": player.pos.x, "y": player.pos.y,
 			"hp": player.hp, "max_hp": player.max_hp,
 			"defense": player.defense, "power": player.power,
+			"gold": player.gold,
+			"inventory": _serialize_inventory(player.inventory),
 		},
 		"map": {
 			"width": game_map.width,
@@ -36,6 +40,13 @@ static func save_game(game_map, player) -> void:
 	file.close()
 
 
+static func _serialize_inventory(inventory: Array) -> Array:
+	var result := []
+	for item in inventory:
+		result.append({"item_type": item.item_type, "value": item.value})
+	return result
+
+
 static func _serialize_entities(entities: Array, player) -> Array:
 	var result := []
 	for e in entities:
@@ -47,14 +58,20 @@ static func _serialize_entities(entities: Array, player) -> Array:
 			"cr": e.color.r, "cg": e.color.g, "cb": e.color.b,
 			"name": e.name,
 			"blocks_movement": e.blocks_movement,
-			"type": "actor" if e is ActorClass else "entity",
 		}
 		if e is ActorClass:
-			entry["hp"]     = e.hp
-			entry["max_hp"] = e.max_hp
+			entry["type"]    = "actor"
+			entry["hp"]      = e.hp
+			entry["max_hp"]  = e.max_hp
 			entry["defense"] = e.defense
-			entry["power"]  = e.power
-			entry["has_ai"] = e.ai != null
+			entry["power"]   = e.power
+			entry["has_ai"]  = e.ai != null
+		elif e is ItemClass:
+			entry["type"]      = "item"
+			entry["item_type"] = e.item_type
+			entry["value"]     = e.value
+		else:
+			entry["type"] = "entity"
 		result.append(entry)
 	return result
 
@@ -69,13 +86,13 @@ static func load_game() -> Dictionary:
 	return parsed if parsed is Dictionary else {}
 
 
-# Reconstructs GameMap + player Actor from saved data.
-# Returns [game_map, player].
+# Returns [game_map, player, floor].
 static func restore(data: Dictionary, fov_radius: int) -> Array:
+	var floor: int = int(data.get("floor", 1))
+
 	var md: Dictionary = data["map"]
 	var game_map = GameMapClass.new(int(md["width"]), int(md["height"]))
 
-	# JSON parses ints as floats — cast explicitly
 	var tiles_raw: Array = md["tiles"]
 	var explored_raw: Array = md["explored"]
 	for y in range(game_map.height):
@@ -89,22 +106,35 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 		"@", Color(0.80, 0.50, 0.20), "You",
 		int(pd["max_hp"]), int(pd["defense"]), int(pd["power"])
 	)
-	player.hp = int(pd["hp"])
+	player.hp   = int(pd["hp"])
+	player.gold = int(pd.get("gold", 0))
+	for inv: Dictionary in pd.get("inventory", []):
+		var item = ItemClass.new(Vector2i(0, 0), inv["item_type"], int(inv["value"]))
+		player.inventory.append(item)
 	player.game_map = game_map
 	game_map.entities.append(player)
 
 	for ed: Dictionary in data["entities"]:
 		var color := Color(float(ed["cr"]), float(ed["cg"]), float(ed["cb"]))
 		var pos   := Vector2i(int(ed["x"]), int(ed["y"]))
-		if ed["type"] == "actor":
-			var actor = ActorClass.new(pos, ed["char"], color, ed["name"],
-					int(ed["max_hp"]), int(ed["defense"]), int(ed["power"]))
-			actor.hp = int(ed["hp"])
-			actor.blocks_movement = bool(ed["blocks_movement"])
-			if bool(ed["has_ai"]) and actor.is_alive:
-				actor.ai = HostileAIClass.new(actor)
-			actor.game_map = game_map
-			game_map.entities.append(actor)
+		match ed["type"]:
+			"actor":
+				var actor = ActorClass.new(pos, ed["char"], color, ed["name"],
+						int(ed["max_hp"]), int(ed["defense"]), int(ed["power"]))
+				actor.hp              = int(ed["hp"])
+				actor.blocks_movement = bool(ed["blocks_movement"])
+				if bool(ed["has_ai"]) and actor.is_alive:
+					actor.ai = HostileAIClass.new(actor)
+				actor.game_map = game_map
+				game_map.entities.append(actor)
+			"item":
+				var item = ItemClass.new(pos, ed["item_type"], int(ed["value"]))
+				item.game_map = game_map
+				game_map.entities.append(item)
+			"entity":
+				var ent = load("res://scripts/entities/entity.gd").new(pos, ed["char"], color, ed["name"], bool(ed["blocks_movement"]))
+				ent.game_map = game_map
+				game_map.entities.append(ent)
 
 	game_map.compute_fov(player.pos.x, player.pos.y, fov_radius)
-	return [game_map, player]
+	return [game_map, player, floor]

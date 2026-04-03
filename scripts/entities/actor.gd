@@ -1,11 +1,15 @@
 class_name Actor
 extends "res://scripts/entities/entity.gd"
 
+const MAX_INVENTORY := 20
+
 var max_hp: int
 var hp: int
 var defense: int
 var power: int
-var ai  # HostileAI or null — untyped to break circular dependency
+var ai          # HostileAI or null — untyped to break circular dependency
+var inventory: Array = []  # Array of Item
+var gold: int = 0
 
 var is_alive: bool:
 	get: return hp > 0
@@ -21,10 +25,10 @@ func _init(
 	p_power: int
 ) -> void:
 	super._init(p_pos, p_char, p_color, p_name, true)
-	max_hp = p_max_hp
-	hp = p_max_hp
-	defense = p_defense
-	power = p_power
+	max_hp   = p_max_hp
+	hp       = p_max_hp
+	defense  = p_defense
+	power    = p_power
 
 
 func attack(target: Actor) -> String:
@@ -40,8 +44,8 @@ func take_damage(amount: int) -> void:
 
 
 func die() -> String:
-	char = "%"
-	color = Color(0.45, 0.12, 0.05)
+	char           = "%"
+	color          = Color(0.45, 0.12, 0.05)
 	blocks_movement = false
-	ai = null
+	ai             = null
 	return "%s falls." % name
