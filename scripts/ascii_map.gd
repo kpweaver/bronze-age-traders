@@ -373,7 +373,7 @@ func _look_description() -> String:
 			names.append(n[0].to_upper() + n.substr(1))
 	if names.is_empty():
 		return "You see: %s." % tile
-	return "You see: %s (%s)." % [", ".join(names), tile]
+	return "You see: %s." % ", ".join(names)
 
 
 # ---------------------------------------------------------------------------
