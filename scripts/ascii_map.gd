@@ -40,14 +40,14 @@ const C_MSG_OLD    := Color(0.45, 0.38, 0.28)
 # ---------------------------------------------------------------------------
 # Escape menu
 # ---------------------------------------------------------------------------
-const ESCAPE_OPTIONS := ["Resume", "Save & Quit to Title", "Quit Game"]
+const ESCAPE_OPTIONS := ["Resume", "Settings", "Save & Quit to Title", "Quit Game"]
 var _escape_open: bool  = false
 var _escape_cursor: int = 0
 
 # ---------------------------------------------------------------------------
 # Overlay screens
 # ---------------------------------------------------------------------------
-enum Screen { NONE, ESCAPE, INVENTORY, CHARACTER }
+enum Screen { NONE, ESCAPE, INVENTORY, CHARACTER, SETTINGS }
 var _screen: Screen = Screen.NONE
 
 # ---------------------------------------------------------------------------
@@ -143,6 +143,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		Screen.CHARACTER:
 			_handle_character_input(event)
 			return
+		Screen.SETTINGS:
+			_handle_settings_input(event)
+			return
 
 	# Global overlay toggles
 	match event.physical_keycode:
@@ -208,11 +211,14 @@ func _confirm_escape() -> void:
 		0:  # Resume
 			_screen = Screen.NONE
 			queue_redraw()
-		1:  # Save & Quit to Title
+		1:  # Settings
+			_screen = Screen.SETTINGS
+			queue_redraw()
+		2:  # Save & Quit to Title
 			if not _game_over:
 				SaveManagerClass.save_game(_map, _player, _floor)
 			get_tree().change_scene_to_file("res://ui/main_menu.tscn")
-		2:  # Quit Game
+		3:  # Quit Game
 			get_tree().quit()
 
 
@@ -244,6 +250,17 @@ func _handle_character_input(event: InputEvent) -> void:
 		queue_redraw()
 
 
+func _handle_settings_input(event: InputEvent) -> void:
+	get_viewport().set_input_as_handled()
+	match event.physical_keycode:
+		KEY_ESCAPE:
+			_screen = Screen.ESCAPE
+			queue_redraw()
+		KEY_A:  # auto-pickup toggle
+			GameState.auto_pickup = not GameState.auto_pickup
+			queue_redraw()
+
+
 # ---------------------------------------------------------------------------
 # Turn logic
 # ---------------------------------------------------------------------------
@@ -261,7 +278,8 @@ func _do_player_turn(dir: Vector2i) -> void:
 					_log(target.die())
 		elif _map.is_walkable(next.x, next.y):
 			_player.pos = next
-			_auto_pickup()
+			if GameState.auto_pickup:
+				_auto_pickup()
 			_check_stairs()
 		else:
 			return  # wall — no turn consumed
@@ -344,6 +362,7 @@ func _draw() -> void:
 		Screen.ESCAPE:    _draw_escape_menu()
 		Screen.INVENTORY: _draw_inventory()
 		Screen.CHARACTER: _draw_character_sheet()
+		Screen.SETTINGS:  _draw_settings()
 
 
 func _draw_map() -> void:
@@ -420,6 +439,31 @@ func _draw_escape_menu() -> void:
 		_puts(BOX_X + 2, BOX_Y + 3 + i, prefix + ESCAPE_OPTIONS[i], color)
 
 	var hint := "enter: select   esc: resume"
+	_puts(BOX_X + (BOX_W - hint.length()) / 2, BOX_Y + BOX_H - 2, hint, C_DIVIDER)
+
+
+# ---------------------------------------------------------------------------
+# Overlay: settings
+# ---------------------------------------------------------------------------
+func _draw_settings() -> void:
+	const BOX_W := 40
+	const BOX_H := 9
+	const BOX_X := (COLS - BOX_W) / 2
+	const BOX_Y := (MAP_ROWS - BOX_H) / 2
+
+	draw_rect(Rect2(Vector2.ZERO, Vector2(COLS * CELL_W, ROWS * CELL_H)), Color(0, 0, 0, 0.65))
+	draw_rect(Rect2(BOX_X * CELL_W, BOX_Y * CELL_H, BOX_W * CELL_W, BOX_H * CELL_H), C_BG)
+	_draw_box(BOX_X, BOX_Y, BOX_W, BOX_H)
+
+	var title := "-=[ SETTINGS ]=-"
+	_puts(BOX_X + (BOX_W - title.length()) / 2, BOX_Y + 1, title, C_STATUS)
+
+	var ap_val := "ON " if GameState.auto_pickup else "OFF"
+	_puts(BOX_X + 2, BOX_Y + 3,
+		"[a] Auto-pickup items:  %s" % ap_val,
+		C_MSG_RECENT)
+
+	var hint := "esc: back"
 	_puts(BOX_X + (BOX_W - hint.length()) / 2, BOX_Y + BOX_H - 2, hint, C_DIVIDER)
 
 
