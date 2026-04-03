@@ -368,7 +368,7 @@ func _look_description() -> String:
 	var names: Array[String] = []
 	for e in _map.entities:
 		if e.pos == Vector2i(x, y):
-			var n := e.name
+			var n: String = e.name
 			# Capitalise first letter for display.
 			names.append(n[0].to_upper() + n.substr(1))
 	if names.is_empty():
