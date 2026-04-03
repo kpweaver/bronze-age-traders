@@ -48,7 +48,7 @@ var _escape_cursor: int = 0
 # ---------------------------------------------------------------------------
 # Overlay screens
 # ---------------------------------------------------------------------------
-enum Screen { NONE, ESCAPE, INVENTORY, CHARACTER, SETTINGS }
+enum Screen { NONE, ESCAPE, INVENTORY, CHARACTER, SETTINGS, LOOK }
 var _screen: Screen = Screen.NONE
 
 # ---------------------------------------------------------------------------
@@ -58,6 +58,7 @@ var _map        # GameMap
 var _player     # Actor
 var _floor: int = 1
 var _floors: Dictionary = {}  # floor number -> GameMap, for visited floors not currently active
+var _look_pos: Vector2i = Vector2i.ZERO
 var _messages: Array[String] = []
 var _game_over: bool = false
 var _font: Font
@@ -193,6 +194,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		Screen.SETTINGS:
 			_handle_settings_input(event)
 			return
+		Screen.LOOK:
+			_handle_look_input(event)
+			return
 
 	# Global overlay toggles
 	match event.physical_keycode:
@@ -209,6 +213,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 		KEY_C:
 			_screen = Screen.CHARACTER
+			get_viewport().set_input_as_handled()
+			queue_redraw()
+			return
+		KEY_L:
+			_look_pos = _player.pos
+			_screen   = Screen.LOOK
 			get_viewport().set_input_as_handled()
 			queue_redraw()
 			return
@@ -318,6 +328,52 @@ func _handle_settings_input(event: InputEvent) -> void:
 		KEY_G:
 			GameState.god_mode = not GameState.god_mode
 			queue_redraw()
+
+
+func _handle_look_input(event: InputEvent) -> void:
+	get_viewport().set_input_as_handled()
+	var moved := true
+	match event.physical_keycode:
+		KEY_ESCAPE, KEY_L, KEY_ENTER, KEY_KP_ENTER:
+			_screen = Screen.NONE
+			queue_redraw()
+			return
+		KEY_KP_8, KEY_UP:    _look_pos += Vector2i(0, -1)
+		KEY_KP_2, KEY_DOWN:  _look_pos += Vector2i(0, 1)
+		KEY_KP_4, KEY_LEFT:  _look_pos += Vector2i(-1, 0)
+		KEY_KP_6, KEY_RIGHT: _look_pos += Vector2i(1, 0)
+		KEY_KP_7:            _look_pos += Vector2i(-1, -1)
+		KEY_KP_9:            _look_pos += Vector2i(1, -1)
+		KEY_KP_1:            _look_pos += Vector2i(-1, 1)
+		KEY_KP_3:            _look_pos += Vector2i(1, 1)
+		_:                   moved = false
+	if moved:
+		_look_pos.x = clampi(_look_pos.x, 0, COLS - 1)
+		_look_pos.y = clampi(_look_pos.y, 0, MAP_ROWS - 1)
+		queue_redraw()
+
+
+func _look_description() -> String:
+	var x := _look_pos.x
+	var y := _look_pos.y
+	if not _map.is_in_bounds(x, y) or not _map.explored[y][x]:
+		return "Unexplored."
+
+	var tile := "stone wall" if _map.tiles[y][x] == GameMapClass.TILE_WALL else "stone floor"
+
+	if not _map.visible[y][x]:
+		return "You remember: %s." % tile
+
+	# Collect visible entities at this tile (highest draw priority last = most important first).
+	var names: Array[String] = []
+	for e in _map.entities:
+		if e.pos == Vector2i(x, y):
+			var n := e.name
+			# Capitalise first letter for display.
+			names.append(n[0].to_upper() + n.substr(1))
+	if names.is_empty():
+		return "You see: %s." % tile
+	return "You see: %s (%s)." % [", ".join(names), tile]
 
 
 # ---------------------------------------------------------------------------
@@ -441,6 +497,7 @@ func _draw() -> void:
 		Screen.INVENTORY: _draw_inventory()
 		Screen.CHARACTER: _draw_character_sheet()
 		Screen.SETTINGS:  _draw_settings()
+		Screen.LOOK:      _draw_look_cursor()
 
 
 func _draw_map() -> void:
@@ -611,6 +668,25 @@ func _draw_character_sheet() -> void:
 
 	var hint := "[Esc] close"
 	_puts(BOX_X + (BOX_W - hint.length()) / 2, BOX_Y + BOX_H - 2, hint, C_DIVIDER)
+
+
+# ---------------------------------------------------------------------------
+# Overlay: look mode
+# ---------------------------------------------------------------------------
+func _draw_look_cursor() -> void:
+	# Highlight cursor tile.
+	draw_rect(
+		Rect2(_look_pos.x * CELL_W, _look_pos.y * CELL_H, CELL_W, CELL_H),
+		Color(0.20, 0.75, 0.90, 0.40)
+	)
+
+	# Overdraw message rows with description + exit hint.
+	draw_rect(
+		Rect2(0, MSG_START_ROW * CELL_H, COLS * CELL_W, MSG_LINES * CELL_H),
+		C_BG
+	)
+	_puts(0, MSG_START_ROW,     _look_description(),              C_MSG_RECENT)
+	_puts(0, MSG_START_ROW + 1, "l / Esc / Enter to exit look mode", C_DIVIDER)
 
 
 # ---------------------------------------------------------------------------
