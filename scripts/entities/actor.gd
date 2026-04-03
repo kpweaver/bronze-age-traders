@@ -39,14 +39,14 @@ func attack(target: Actor) -> String:
 	var is_player := name == "You"
 	var v_attack  := "attack" if is_player else "attacks"
 	var v_hit     := "hit"    if is_player else "hits"
+	var t := target.name.to_lower()
 	if roll < target.ac:
-		return "%s %s %s but miss. [to hit: %d vs AC %d]" % \
-			[name, v_attack, target.name, roll, target.ac] if is_player else \
-			"%s %s %s but misses. [to hit: %d vs AC %d]" % [name, v_attack, target.name, roll, target.ac]
+		var v_miss := "miss" if is_player else "misses"
+		return "%s %s %s but %s. [to hit: %d vs AC %d]" % [name, v_attack, t, v_miss, roll, target.ac]
 	var dmg: int = randi_range(1, 6) + power
 	target.take_damage(dmg)
 	return "%s %s %s for %d damage. [to hit: %d vs AC %d, 1d6+%d = %d]" % \
-		[name, v_hit, target.name, dmg, roll, target.ac, power, dmg]
+		[name, v_hit, t, dmg, roll, target.ac, power, dmg]
 
 
 func take_damage(amount: int) -> void:
@@ -58,4 +58,4 @@ func die() -> String:
 	color          = Color(0.45, 0.12, 0.05)
 	blocks_movement = false
 	ai             = null
-	return "%s falls." % name
+	return "You fall." if name == "You" else "%s falls." % name
