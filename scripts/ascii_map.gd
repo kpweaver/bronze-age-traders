@@ -333,7 +333,7 @@ func _do_enemy_turns() -> void:
 			_log(msg)
 		if not _player.is_alive:
 			_log(_player.die())
-			_log("You are dead.  Press R to try again.")
+			_log("You are dead.  Press r to try again.")
 			_game_over = true
 			return
 
