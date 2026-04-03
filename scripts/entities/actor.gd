@@ -34,19 +34,28 @@ func _init(
 	power    = p_power
 
 
+# "You" for player, "The raider" for enemies — use at sentence start.
+func _subj() -> String:
+	return name if name == "You" else "The %s" % name
+
+# "you" for player, "the raider" for enemies — use mid-sentence.
+func _obj() -> String:
+	return "you" if name == "You" else "the %s" % name
+
+
 func attack(target: Actor) -> String:
 	var roll: int = randi_range(1, 20)
 	var is_player := name == "You"
-	var v_attack  := "attack" if is_player else "attacks"
-	var v_hit     := "hit"    if is_player else "hits"
-	var t := target.name.to_lower()
+	var v_attack  := "attack"  if is_player else "attacks"
+	var v_hit     := "hit"     if is_player else "hits"
+	var v_miss    := "miss"    if is_player else "misses"
 	if roll < target.ac:
-		var v_miss := "miss" if is_player else "misses"
-		return "%s %s %s but %s. [to hit: %d vs AC %d]" % [name, v_attack, t, v_miss, roll, target.ac]
+		return "%s %s %s but %s. [to hit: %d vs AC %d]" % \
+			[_subj(), v_attack, target._obj(), v_miss, roll, target.ac]
 	var dmg: int = randi_range(1, 6) + power
 	target.take_damage(dmg)
 	return "%s %s %s for %d damage. [to hit: %d vs AC %d, 1d6+%d = %d]" % \
-		[name, v_hit, t, dmg, roll, target.ac, power, dmg]
+		[_subj(), v_hit, target._obj(), dmg, roll, target.ac, power, dmg]
 
 
 func take_damage(amount: int) -> void:
@@ -54,8 +63,8 @@ func take_damage(amount: int) -> void:
 
 
 func die() -> String:
-	char           = "%"
-	color          = Color(0.45, 0.12, 0.05)
+	char            = "%"
+	color           = Color(0.45, 0.12, 0.05)
 	blocks_movement = false
-	ai             = null
-	return "You fall." if name == "You" else "%s falls." % name
+	ai              = null
+	return "You fall." if name == "You" else "%s falls." % _subj()

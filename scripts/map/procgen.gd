@@ -114,11 +114,11 @@ static func _place_monsters(map, room: RectRoom, max_monsters: int, floor: int) 
 		if randf() < beast_chance:
 			var hp    := 18 + (floor - 1) * 3
 			var power := 4  + (floor - 1)
-			monster = ActorClass.new(Vector2i(x, y), "B", Color(0.48, 0.32, 0.12), "Desert Beast", hp, 2, power)
+			monster = ActorClass.new(Vector2i(x, y), "B", Color(0.48, 0.32, 0.12), "desert beast", hp, 2, power)
 		else:
 			var hp    := 10 + (floor - 1) * 2
 			var power := 3  + (floor - 1)
-			monster = ActorClass.new(Vector2i(x, y), "r", Color(0.72, 0.22, 0.10), "Raider", hp, 0, power)
+			monster = ActorClass.new(Vector2i(x, y), "r", Color(0.72, 0.22, 0.10), "raider", hp, 0, power)
 		monster.ai       = HostileAIClass.new(monster)
 		monster.game_map = map
 		map.entities.append(monster)
