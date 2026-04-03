@@ -13,12 +13,16 @@ config_version=5
 config/name="BronzeAgeTraders"
 config/features=PackedStringArray("4.6", "Forward Plus")
 config/icon="res://icon.svg"
-run/main_scene="res://main.tscn"
+run/main_scene="res://ui/main_menu.tscn"
 
 [display]
 
 window/size/viewport_width=720
 window/size/viewport_height=450
+
+[autoload]
+
+GameState="*res://scripts/game_state.gd"
 
 [physics]
 
