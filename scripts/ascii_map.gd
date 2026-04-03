@@ -171,8 +171,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			_new_game()
 		return
 
-	# Shift+Period (>) uses keycode, not physical_keycode, so check it first.
-	if event.keycode == KEY_GREATER:
+	# > is Shift+Period — check modifier explicitly before the match.
+	if event.shift_pressed and event.physical_keycode == KEY_PERIOD:
 		get_viewport().set_input_as_handled()
 		_try_descend()
 		return
@@ -313,7 +313,7 @@ func _auto_pickup() -> void:
 func _check_stairs() -> void:
 	for e in _map.entities:
 		if not (e is ActorClass) and e.char == ">" and e.pos == _player.pos:
-			_log("Stairs lead down. [>] to descend.")
+			_log("Stairs lead down. > to descend.")
 			return
 
 
