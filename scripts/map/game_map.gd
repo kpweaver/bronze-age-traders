@@ -1,0 +1,98 @@
+class_name GameMap
+extends RefCounted
+
+const EntityClass = preload("res://scripts/entities/entity.gd")
+
+const TILE_WALL  := 0
+const TILE_FLOOR := 1
+
+var width: int
+var height: int
+var tiles: Array    # Array[Array[int]]  — tiles[y][x]
+var visible: Array  # Array[Array[bool]] — currently in FOV
+var explored: Array # Array[Array[bool]] — ever seen
+var entities: Array # Array[Entity]
+
+
+func _init(p_width: int, p_height: int) -> void:
+	width = p_width
+	height = p_height
+	tiles = []
+	visible = []
+	explored = []
+	entities = []
+	for y in range(height):
+		tiles.append([])
+		visible.append([])
+		explored.append([])
+		for x in range(width):
+			tiles[y].append(TILE_WALL)
+			visible[y].append(false)
+			explored[y].append(false)
+
+
+func is_in_bounds(x: int, y: int) -> bool:
+	return x >= 0 and x < width and y >= 0 and y < height
+
+
+func is_walkable(x: int, y: int) -> bool:
+	return is_in_bounds(x, y) and tiles[y][x] == TILE_FLOOR
+
+
+func is_transparent(x: int, y: int) -> bool:
+	return is_in_bounds(x, y) and tiles[y][x] == TILE_FLOOR
+
+
+# Returns the first blocking entity at (x, y), or null.
+func get_blocking_entity_at(x: int, y: int):
+	for e in entities:
+		if e.pos.x == x and e.pos.y == y and e.blocks_movement:
+			return e
+	return null
+
+
+func compute_fov(ox: int, oy: int, radius: int) -> void:
+	for y in range(height):
+		for x in range(width):
+			visible[y][x] = false
+
+	var r2 := radius * radius
+	for dy in range(-radius, radius + 1):
+		for dx in range(-radius, radius + 1):
+			if dx * dx + dy * dy > r2:
+				continue
+			var tx := ox + dx
+			var ty := oy + dy
+			if not is_in_bounds(tx, ty):
+				continue
+			if _has_los(ox, oy, tx, ty):
+				visible[ty][tx] = true
+				explored[ty][tx] = true
+
+
+# Bresenham LOS — transparent intermediate tiles only.
+# Destination is always reachable (you can see the wall that blocks you).
+func _has_los(x0: int, y0: int, x1: int, y1: int) -> bool:
+	var dx := absi(x1 - x0)
+	var dy := absi(y1 - y0)
+	var sx := 1 if x1 > x0 else -1
+	var sy := 1 if y1 > y0 else -1
+	var err := dx - dy
+	var x := x0
+	var y := y0
+
+	while true:
+		if x == x1 and y == y1:
+			return true
+		var e2 := 2 * err
+		if e2 > -dy:
+			err -= dy
+			x += sx
+		if e2 < dx:
+			err += dx
+			y += sy
+		# Block on opaque intermediate tiles (not the destination itself)
+		if not (x == x1 and y == y1) and not is_transparent(x, y):
+			return false
+
+	return false  # unreachable
