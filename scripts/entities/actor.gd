@@ -14,6 +14,9 @@ var gold: int = 0
 var is_alive: bool:
 	get: return hp > 0
 
+var ac: int:
+	get: return 10 + defense
+
 
 func _init(
 	p_pos: Vector2i,
@@ -32,11 +35,12 @@ func _init(
 
 
 func attack(target: Actor) -> String:
-	var dmg: int = maxi(0, power - target.defense)
-	if dmg == 0:
-		return "%s strikes %s but deals no damage." % [name, target.name]
+	var roll: int = randi_range(1, 20)
+	if roll < target.ac:
+		return "%s attacks %s but misses. [d20: %d vs AC %d]" % [name, target.name, roll, target.ac]
+	var dmg: int = randi_range(1, 6) + power
 	target.take_damage(dmg)
-	return "%s hits %s for %d damage." % [name, target.name, dmg]
+	return "%s hits %s for %d damage. [d20: %d, 1d6+%d]" % [name, target.name, dmg, roll, power]
 
 
 func take_damage(amount: int) -> void:

@@ -406,8 +406,8 @@ func _draw_ui() -> void:
 
 	var hp_frac: float = float(_player.hp) / float(_player.max_hp)
 	var hp_color       := C_STATUS.lerp(Color(0.8, 0.15, 0.05), 1.0 - hp_frac)
-	var status := "HP: %d/%d   ATK: %d  DEF: %d   Gold: %d   Floor: %d" % [
-		_player.hp, _player.max_hp, _player.power, _player.defense,
+	var status := "HP: %d/%d   ATK: 1d6+%d  AC: %d   Gold: %d   Floor: %d" % [
+		_player.hp, _player.max_hp, _player.power, _player.ac,
 		_player.gold, _floor
 	]
 	_puts(0, STATUS_ROW, status, hp_color)
@@ -523,8 +523,8 @@ func _draw_character_sheet() -> void:
 	_stat_line(BOX_X + 4, r, "Floor",   str(_floor));              r += 1
 	r += 1
 	_stat_line(BOX_X + 4, r, "HP",      "%d / %d" % [_player.hp, _player.max_hp]); r += 1
-	_stat_line(BOX_X + 4, r, "Attack",  str(_player.power));       r += 1
-	_stat_line(BOX_X + 4, r, "Defense", str(_player.defense));     r += 1
+	_stat_line(BOX_X + 4, r, "Attack",  "1d6+%d" % _player.power); r += 1
+	_stat_line(BOX_X + 4, r, "AC",      str(_player.ac));          r += 1
 	r += 1
 	_stat_line(BOX_X + 4, r, "Gold",    str(_player.gold), C_GOLD); r += 1
 	_stat_line(BOX_X + 4, r, "Pack",
