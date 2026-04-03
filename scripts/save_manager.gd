@@ -119,7 +119,7 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 	var pd: Dictionary = data["player"]
 	var player = ActorClass.new(
 		Vector2i(int(pd["x"]), int(pd["y"])),
-		"@", Color(0.80, 0.50, 0.20), "You",
+		"@", Color(0.80, 0.50, 0.20), "you",
 		int(pd["max_hp"]), int(pd["defense"]), int(pd["power"])
 	)
 	player.hp   = int(pd["hp"])

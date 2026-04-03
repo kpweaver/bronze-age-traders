@@ -91,7 +91,7 @@ func _new_game() -> void:
 	_screen    = Screen.NONE
 	_messages.clear()
 	_map    = GameMapClass.new(COLS, MAP_ROWS)
-	_player = ActorClass.new(Vector2i(0, 0), "@", Color(0.80, 0.50, 0.20), "You", 30, 2, 5)
+	_player = ActorClass.new(Vector2i(0, 0), "@", Color(0.80, 0.50, 0.20), "you", 30, 2, 5)
 	_player.game_map = _map
 	_map.entities.append(_player)
 	ProcgenClass.generate_dungeon(_map, 30, 5, 10, 2, _player, _floor)
@@ -146,7 +146,7 @@ func _descend() -> void:
 		var monsters := mini(2 + (_floor - 1) / 2, 4)
 		ProcgenClass.generate_dungeon(_map, 30, 5, 10, monsters, _player, _floor)
 		# Place < stairs at the spawn point procgen chose for the player.
-		var up_stairs := EntityClass.new(_player.pos, "<", Color(0.55, 0.80, 0.95), "Stairs Up", false)
+		var up_stairs := EntityClass.new(_player.pos, "<", Color(0.55, 0.80, 0.95), "stairs up", false)
 		up_stairs.game_map = _map
 		_map.entities.append(up_stairs)
 
@@ -368,9 +368,7 @@ func _look_description() -> String:
 	var names: Array[String] = []
 	for e in _map.entities:
 		if e.pos == Vector2i(x, y):
-			var n: String = e.name
-			# Capitalise first letter for display.
-			names.append(n[0].to_upper() + n.substr(1))
+			names.append(e.name as String)
 	if names.is_empty():
 		return "You see: %s." % tile
 	return "You see: %s." % ", ".join(names)

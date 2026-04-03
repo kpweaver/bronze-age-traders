@@ -34,18 +34,18 @@ func _init(
 	power    = p_power
 
 
-# "You" for player, "The raider" for enemies — use at sentence start.
+# Sentence-start subject: "You" for player, "The raider" for enemies.
 func _subj() -> String:
-	return name if name == "You" else "The %s" % name
+	return "You" if name == "you" else "The %s" % name
 
-# "you" for player, "the raider" for enemies — use mid-sentence.
+# Mid-sentence object: "you" for player, "the raider" for enemies.
 func _obj() -> String:
-	return "you" if name == "You" else "the %s" % name
+	return "you" if name == "you" else "the %s" % name
 
 
 func attack(target: Actor) -> String:
 	var roll: int = randi_range(1, 20)
-	var is_player := name == "You"
+	var is_player := name == "you"
 	var v_attack  := "attack"  if is_player else "attacks"
 	var v_hit     := "hit"     if is_player else "hits"
 	var v_miss    := "miss"    if is_player else "misses"
@@ -67,4 +67,4 @@ func die() -> String:
 	color           = Color(0.45, 0.12, 0.05)
 	blocks_movement = false
 	ai              = null
-	return "You fall." if name == "You" else "%s falls." % _subj()
+	return "You fall." if name == "you" else "The %s falls." % name
