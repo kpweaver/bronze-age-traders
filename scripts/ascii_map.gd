@@ -490,8 +490,8 @@ func _draw_inventory() -> void:
 			var item   = _player.inventory[i]
 			var slot   := char(ord("a") + i)
 			var detail := ""
-			if item.item_type == ItemClass.TYPE_HEALTH_POTION:
-				detail = "  (+%d HP)" % item.value
+			if item.item_type in [ItemClass.TYPE_HEALTH_POTION, ItemClass.TYPE_HEALING_DRAUGHT]:
+				detail = "  (%s HP)" % item.dice_label()
 			_puts(BOX_X + 2, BOX_Y + 2 + i, "%s) %s%s" % [slot, item.name, detail], C_MSG_RECENT)
 
 	# Gold summary

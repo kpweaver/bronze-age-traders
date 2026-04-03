@@ -43,7 +43,8 @@ static func save_game(game_map, player, floor: int) -> void:
 static func _serialize_inventory(inventory: Array) -> Array:
 	var result := []
 	for item in inventory:
-		result.append({"item_type": item.item_type, "value": item.value})
+		result.append({"item_type": item.item_type, "value": item.value,
+			"dice_count": item.dice_count, "dice_sides": item.dice_sides})
 	return result
 
 
@@ -67,9 +68,11 @@ static func _serialize_entities(entities: Array, player) -> Array:
 			entry["power"]   = e.power
 			entry["has_ai"]  = e.ai != null
 		elif e is ItemClass:
-			entry["type"]      = "item"
-			entry["item_type"] = e.item_type
-			entry["value"]     = e.value
+			entry["type"]       = "item"
+			entry["item_type"]  = e.item_type
+			entry["value"]      = e.value
+			entry["dice_count"] = e.dice_count
+			entry["dice_sides"] = e.dice_sides
 		else:
 			entry["type"] = "entity"
 		result.append(entry)
