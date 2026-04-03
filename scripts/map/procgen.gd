@@ -70,7 +70,7 @@ static func generate_dungeon(
 
 	# Stairs at the center of the last room
 	if not rooms.is_empty():
-		var stairs_pos := rooms.back().center()
+		var stairs_pos: Vector2i = rooms.back().center()
 		var stairs := EntityClass.new(stairs_pos, ">", Color(0.90, 0.85, 0.60), "Stairs Down", false)
 		stairs.game_map = map
 		map.entities.append(stairs)
@@ -131,7 +131,7 @@ static func _place_items(map, room: RectRoom, max_items: int, floor: int) -> voi
 		var y := randi_range(room.y1 + 1, room.y2 - 2)
 		if _item_at(map, x, y):
 			continue
-		var item: Item
+		var item
 		if randf() < 0.6:
 			# From floor 3 onward, Healing Draughts (~25 HP) can appear alongside
 			# basic Health Potions (~8 HP). Chance grows with depth, capped at 50%.

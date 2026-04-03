@@ -218,14 +218,14 @@ func _confirm_escape() -> void:
 
 func _handle_inventory_input(event: InputEvent) -> void:
 	get_viewport().set_input_as_handled()
-	var key := event.physical_keycode
+	var key: int = event.physical_keycode
 	if key == KEY_ESCAPE or key == KEY_I:
 		_screen = Screen.NONE
 		queue_redraw()
 		return
 	# a–t maps to inventory slots 0–19
 	if key >= KEY_A and key <= KEY_T:
-		var idx := key - KEY_A
+		var idx: int = key - KEY_A
 		if idx < _player.inventory.size():
 			var item = _player.inventory[idx]
 			var msg: String = item.use(_player)
