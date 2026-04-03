@@ -133,9 +133,13 @@ static func _place_items(map, room: RectRoom, max_items: int, floor: int) -> voi
 			continue
 		var item: Item
 		if randf() < 0.6:
-			# Health potion — heals more on deeper floors
-			var heal := randi_range(4, 8) + (floor - 1) * 2
-			item = ItemClass.new(Vector2i(x, y), ItemClass.TYPE_HEALTH_POTION, heal)
+			# From floor 3 onward, Healing Draughts (~25 HP) can appear alongside
+			# basic Health Potions (~8 HP). Chance grows with depth, capped at 50%.
+			var draught_chance := clampf((floor - 2) * 0.15, 0.0, 0.5)
+			if floor >= 3 and randf() < draught_chance:
+				item = ItemClass.new(Vector2i(x, y), ItemClass.TYPE_HEALING_DRAUGHT, randi_range(20, 30))
+			else:
+				item = ItemClass.new(Vector2i(x, y), ItemClass.TYPE_HEALTH_POTION, randi_range(6, 10))
 		else:
 			# Gold — scales with floor
 			var amount := randi_range(5, 15) * floor
