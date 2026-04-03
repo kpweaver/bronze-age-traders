@@ -171,6 +171,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			_new_game()
 		return
 
+	# Shift+Period (>) uses keycode, not physical_keycode, so check it first.
+	if event.keycode == KEY_GREATER:
+		get_viewport().set_input_as_handled()
+		_try_descend()
+		return
+
 	var dir := Vector2i.ZERO
 	match event.physical_keycode:
 		KEY_KP_8, KEY_UP:    dir = Vector2i(0, -1)
@@ -181,12 +187,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		KEY_KP_9:            dir = Vector2i(1, -1)
 		KEY_KP_1:            dir = Vector2i(-1, 1)
 		KEY_KP_3:            dir = Vector2i(1, 1)
-		KEY_KP_5:            pass  # wait
+		KEY_KP_5, KEY_PERIOD: pass  # wait
 		KEY_G:  _auto_pickup(); _do_enemy_turns(); _end_turn(); return
 		_:      return
-
-	if event.keycode == KEY_GREATER:
-		_try_descend(); return
 
 	get_viewport().set_input_as_handled()
 	_do_player_turn(dir)
