@@ -82,15 +82,11 @@ func _handle_name_input(event: InputEvent) -> void:
 		KEY_ESCAPE:
 			get_tree().change_scene_to_file("res://ui/main_menu.tscn")
 		_:
-			# Printable ASCII only (space to ~)
-			var ch := event.as_text_physical_keycode()
-			if ch.length() == 1 and _name.length() < NAME_MAX:
-				var code := ch.unicode_at(0)
-				if code >= 32 and code <= 126:
-					# Respect shift state for capitalisation
-					var typed: String = ch if event.shift_pressed else ch.to_lower()
-					_name += typed
-					queue_redraw()
+			# event.unicode is the final codepoint accounting for Shift, etc.
+			var code: int = event.unicode
+			if code >= 32 and code <= 126 and _name.length() < NAME_MAX:
+				_name += char(code)
+				queue_redraw()
 
 
 func _handle_class_input(event: InputEvent) -> void:

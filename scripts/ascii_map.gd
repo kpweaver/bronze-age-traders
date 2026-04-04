@@ -964,21 +964,21 @@ func _draw_world_map() -> void:
 	#   row 25  : cursor info
 	#   row 27  : legend
 	#   row 29  : hint
-	const WM_CELL := 2
-	const WM_LEFT := (COLS - GameState.WORLD_W * WM_CELL) >> 1  # left margin ≈ 28
-	const WM_TOP  := 3   # first row of world tiles
+	var wm_cell: int = 2
+	var wm_left: int = (COLS - GameState.WORLD_W * wm_cell) >> 1  # left margin ≈ 28
+	var wm_top:  int = 3   # first row of world tiles
 
 	_puts_centered(0, "-=[ WORLD MAP ]=-", C_STATUS)
 
 	# Outer border
-	_draw_box(WM_LEFT - 1, WM_TOP - 1, GameState.WORLD_W * WM_CELL + 2, GameState.WORLD_H + 2)
+	_draw_box(wm_left - 1, wm_top - 1, GameState.WORLD_W * wm_cell + 2, GameState.WORLD_H + 2)
 
 	for cy in range(GameState.WORLD_H):
 		for cx in range(GameState.WORLD_W):
 			var this_chunk := Vector2i(cx, cy)
 			var biome: int   = _get_chunk_biome(this_chunk)
-			var sx: int      = WM_LEFT + cx * WM_CELL
-			var sy: int      = WM_TOP  + cy
+			var sx: int      = wm_left + cx * wm_cell
+			var sy: int      = wm_top  + cy
 
 			var is_current := this_chunk == _chunk
 			var is_cursor  := this_chunk == _world_cursor
@@ -1003,7 +1003,7 @@ func _draw_world_map() -> void:
 				_put(sx + 1, sy, "]", C_STATUS)
 
 	# Info rows beneath grid
-	var info_y: int       = WM_TOP + GameState.WORLD_H + 2
+	var info_y: int       = wm_top + GameState.WORLD_H + 2
 	var cursor_biome: int = _get_chunk_biome(_world_cursor)
 	var loc_tag: String   = " (current)" if _world_cursor == _chunk else \
 							(" (visited)" if _chunks.has(_world_cursor) else " (unexplored)")
