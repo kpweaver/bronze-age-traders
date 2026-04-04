@@ -71,8 +71,7 @@ func _confirm() -> void:
 				get_tree().change_scene_to_file("res://main.tscn")
 		1:  # New Game
 			SaveManagerClass.delete_save()
-			GameState.load_save = false
-			get_tree().change_scene_to_file("res://main.tscn")
+			get_tree().change_scene_to_file("res://ui/char_create.tscn")
 		2:  # Quit
 			get_tree().quit()
 

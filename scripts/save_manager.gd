@@ -23,6 +23,8 @@ static func save_game(game_map, player, floor: int, floors: Dictionary, chunk: V
 		"chunk_x": chunk.x,
 		"chunk_y": chunk.y,
 		"world_seed": GameState.world_seed,
+		"player_name":  GameState.player_name,
+		"player_class": GameState.player_class,
 		"player": {
 			"x": player.pos.x, "y": player.pos.y,
 			"hp": player.hp, "max_hp": player.max_hp,
@@ -126,7 +128,9 @@ static func load_game() -> Dictionary:
 
 # Returns [game_map, player, floor, floors, chunk, chunks].
 static func restore(data: Dictionary, fov_radius: int) -> Array:
-	GameState.world_seed = int(data.get("world_seed", 0))
+	GameState.world_seed   = int(data.get("world_seed", 0))
+	GameState.player_name  = str(data.get("player_name",  "Wanderer"))
+	GameState.player_class = str(data.get("player_class", "wanderer"))
 	var floor: int = int(data.get("floor", 1))
 	var chunk := Vector2i(int(data.get("chunk_x", 0)), int(data.get("chunk_y", 0)))
 

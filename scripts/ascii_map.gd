@@ -682,6 +682,10 @@ func _log(text: String) -> void:
 # ---------------------------------------------------------------------------
 func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, Vector2(COLS * CELL_W, ROWS * CELL_H)), C_BG)
+	if _screen == Screen.WORLD_MAP:
+		_draw_world_map()
+		_draw_ui()
+		return
 	_draw_map()
 	_draw_entities()
 	_draw_ui()
@@ -691,7 +695,6 @@ func _draw() -> void:
 		Screen.CHARACTER: _draw_character_sheet()
 		Screen.SETTINGS:  _draw_settings()
 		Screen.LOOK:      _draw_look_cursor()
-		Screen.WORLD_MAP: _draw_world_map()
 
 
 func _draw_map() -> void:
@@ -857,9 +860,9 @@ func _draw_inventory() -> void:
 # ---------------------------------------------------------------------------
 func _draw_character_sheet() -> void:
 	const BOX_X := 35
-	const BOX_Y := 6
+	const BOX_Y := 4
 	const BOX_W := 50
-	const BOX_H := 16
+	const BOX_H := 18
 
 	draw_rect(Rect2(Vector2.ZERO, Vector2(COLS * CELL_W, ROWS * CELL_H)), Color(0, 0, 0, 0.80))
 	draw_rect(Rect2(BOX_X * CELL_W, BOX_Y * CELL_H, BOX_W * CELL_W, BOX_H * CELL_H), C_BG)
@@ -869,6 +872,9 @@ func _draw_character_sheet() -> void:
 	_puts(BOX_X + ((BOX_W - title.length()) >> 1), BOX_Y, title, C_STATUS)
 
 	var r := BOX_Y + 2
+	_stat_line(BOX_X + 4, r, "Name",    GameState.player_name);    r += 1
+	_stat_line(BOX_X + 4, r, "Class",   GameState.player_class.capitalize()); r += 1
+	r += 1
 	_stat_line(BOX_X + 4, r, "Floor",   str(_floor));              r += 1
 	r += 1
 	_stat_line(BOX_X + 4, r, "HP",      "%d / %d" % [_player.hp, _player.max_hp]); r += 1
@@ -947,15 +953,25 @@ func _biome_color(biome: int) -> Color:
 # Overlay: world map
 # ---------------------------------------------------------------------------
 func _draw_world_map() -> void:
-	# Each world tile renders as 2 chars wide × 1 char tall, making tiles
-	# visually square given the 9×18 font (2:1 height-to-width ratio).
-	const WM_CELL  := 2
-	const WM_LEFT  := (COLS - GameState.WORLD_W * WM_CELL) >> 1  # ≈ 28
-	const WM_TOP   := 3
+	# Full-view world map — replaces the terrain view entirely.
+	# Each world tile is 2 chars wide × 1 char tall (compensates for 9×18 font
+	# aspect ratio, making each tile visually square on screen).
+	# Layout inside MAP_ROWS (35 rows):
+	#   row 0   : title
+	#   row 2   : top border of grid
+	#   rows 3–22: world grid (20 rows)
+	#   row 23  : bottom border
+	#   row 25  : cursor info
+	#   row 27  : legend
+	#   row 29  : hint
+	const WM_CELL := 2
+	const WM_LEFT := (COLS - GameState.WORLD_W * WM_CELL) >> 1  # left margin ≈ 28
+	const WM_TOP  := 3   # first row of world tiles
 
-	draw_rect(Rect2(Vector2.ZERO, Vector2(COLS * CELL_W, ROWS * CELL_H)), Color(0, 0, 0, 0.82))
+	_puts_centered(0, "-=[ WORLD MAP ]=-", C_STATUS)
 
-	_puts_centered(1, "-=[ WORLD MAP ]=-", C_STATUS)
+	# Outer border
+	_draw_box(WM_LEFT - 1, WM_TOP - 1, GameState.WORLD_W * WM_CELL + 2, GameState.WORLD_H + 2)
 
 	for cy in range(GameState.WORLD_H):
 		for cx in range(GameState.WORLD_W):
@@ -972,32 +988,28 @@ func _draw_world_map() -> void:
 			var color: Color = _biome_color(biome)
 
 			if not is_visited:
-				color = color * 0.38  # fog-of-war dim
+				color = color * 0.35  # fog-of-war dim
 
 			if is_current:
 				ch    = "@"
 				color = Color(0.95, 0.80, 0.40) if is_cursor else Color(0.80, 0.72, 0.55)
 			elif is_cursor:
-				color = C_STATUS  # bronze highlight for cursor
+				color = C_STATUS
 
 			_put(sx, sy, ch, color)
 
-			# Cursor brackets — drawn on top of whatever char is there.
 			if is_cursor:
 				_put(sx - 1, sy, "[", C_STATUS)
 				_put(sx + 1, sy, "]", C_STATUS)
 
-	# Biome name of cursor tile
-	var cursor_biome: int   = _get_chunk_biome(_world_cursor)
-	var cursor_label: String = _biome_name(cursor_biome)
-	if _world_cursor == _chunk:
-		cursor_label += " (here)"
-	var visited_label := "visited" if (_chunks.has(_world_cursor) or _world_cursor == _chunk) else "unexplored"
-
-	var bottom: int = WM_TOP + GameState.WORLD_H + 1
-	_puts_centered(bottom,     "%s — %s" % [cursor_label, visited_label],                C_MSG_RECENT)
-	_puts_centered(bottom + 1, ". desert  ~ oasis  \" steppes  ^ mountains  %% badlands", C_DIVIDER)
-	_puts_centered(bottom + 2, "arrows/numpad: move   enter: travel here   esc: close",  C_DIVIDER)
+	# Info rows beneath grid
+	var info_y: int       = WM_TOP + GameState.WORLD_H + 2
+	var cursor_biome: int = _get_chunk_biome(_world_cursor)
+	var loc_tag: String   = " (current)" if _world_cursor == _chunk else \
+							(" (visited)" if _chunks.has(_world_cursor) else " (unexplored)")
+	_puts_centered(info_y,     _biome_name(cursor_biome).to_upper() + loc_tag,            C_MSG_RECENT)
+	_puts_centered(info_y + 2, ". desert  ~ oasis  \" steppes  ^ mountains  %% badlands", C_DIVIDER)
+	_puts_centered(info_y + 4, "arrows/numpad: move cursor     enter: travel     esc: close", C_DIVIDER)
 
 
 func _handle_world_map_input(event: InputEvent) -> void:

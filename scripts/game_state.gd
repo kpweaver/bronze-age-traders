@@ -11,6 +11,10 @@ var god_mode: bool    = false
 # All overworld chunk noise uses this seed so terrain is seamless across borders.
 var world_seed: int = 0
 
+# Character — set during character creation, persisted in save.
+var player_name:  String = "Wanderer"
+var player_class: String = "Wanderer"  # stub for future class system
+
 # World map dimensions (number of overworld chunks in each direction).
 const WORLD_W := 32
 const WORLD_H := 20
