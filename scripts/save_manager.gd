@@ -17,9 +17,12 @@ static func delete_save() -> void:
 		DirAccess.open("user://").remove("save.json")
 
 
-static func save_game(game_map, player, floor: int, floors: Dictionary) -> void:
+static func save_game(game_map, player, floor: int, floors: Dictionary, chunk: Vector2i, chunks: Dictionary) -> void:
 	var data := {
 		"floor": floor,
+		"chunk_x": chunk.x,
+		"chunk_y": chunk.y,
+		"world_seed": GameState.world_seed,
 		"player": {
 			"x": player.pos.x, "y": player.pos.y,
 			"hp": player.hp, "max_hp": player.max_hp,
@@ -36,6 +39,7 @@ static func save_game(game_map, player, floor: int, floors: Dictionary) -> void:
 		},
 		"entities": _serialize_entities(game_map.entities, player),
 		"stored_floors": _serialize_stored_floors(floors),
+		"stored_chunks": _serialize_stored_chunks(chunks),
 	}
 	var file := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	file.store_string(JSON.stringify(data))
@@ -47,6 +51,22 @@ static func _serialize_stored_floors(floors: Dictionary) -> Dictionary:
 	for f in floors:
 		var m = floors[f]
 		result[str(f)] = {
+			"map_type": m.map_type,
+			"tiles":    m.tiles,
+			"explored": m.explored,
+			"entities": _serialize_entities(m.entities, null),
+		}
+	return result
+
+
+static func _serialize_stored_chunks(chunks: Dictionary) -> Dictionary:
+	# Keys are Vector2i — serialise as "x,y" strings.
+	var result := {}
+	for c in chunks:
+		var m = chunks[c]
+		result["%d,%d" % [c.x, c.y]] = {
+			"width":    m.width,
+			"height":   m.height,
 			"map_type": m.map_type,
 			"tiles":    m.tiles,
 			"explored": m.explored,
@@ -104,9 +124,11 @@ static func load_game() -> Dictionary:
 	return parsed if parsed is Dictionary else {}
 
 
-# Returns [game_map, player, floor].
+# Returns [game_map, player, floor, floors, chunk, chunks].
 static func restore(data: Dictionary, fov_radius: int) -> Array:
+	GameState.world_seed = int(data.get("world_seed", 0))
 	var floor: int = int(data.get("floor", 1))
+	var chunk := Vector2i(int(data.get("chunk_x", 0)), int(data.get("chunk_y", 0)))
 
 	var md: Dictionary = data["map"]
 	var game_map = GameMapClass.new(int(md["width"]), int(md["height"]))
@@ -193,4 +215,35 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 					stored_map.entities.append(ent)
 		floors[f_int] = stored_map
 
-	return [game_map, player, floor, floors]
+	# Restore visited overworld chunks.
+	var chunks := {}
+	for key: String in data.get("stored_chunks", {}).keys():
+		var parts := key.split(",")
+		var c     := Vector2i(int(parts[0]), int(parts[1]))
+		var cd: Dictionary = data["stored_chunks"][key]
+		var cw: int   = int(cd["width"])
+		var ch_h: int = int(cd["height"])
+		var cmap = GameMapClass.new(cw, ch_h)
+		cmap.map_type = int(cd.get("map_type", GameMapClass.MAP_OVERWORLD))
+		var ct_raw: Array = cd["tiles"]
+		var ce_raw: Array = cd["explored"]
+		for y in range(cmap.height):
+			for x in range(cmap.width):
+				cmap.tiles[y][x]    = int(ct_raw[y][x])
+				cmap.explored[y][x] = bool(ce_raw[y][x])
+		for ed: Dictionary in cd.get("entities", []):
+			var color := Color(float(ed["cr"]), float(ed["cg"]), float(ed["cb"]))
+			var pos   := Vector2i(int(ed["x"]), int(ed["y"]))
+			match ed["type"]:
+				"entity":
+					var ent = load("res://scripts/entities/entity.gd").new(
+							pos, ed["char"], color, ed["name"], bool(ed["blocks_movement"]))
+					ent.game_map = cmap
+					cmap.entities.append(ent)
+				"item":
+					var item = ItemClass.new(pos, ed["item_type"], int(ed["value"]))
+					item.game_map = cmap
+					cmap.entities.append(item)
+		chunks[c] = cmap
+
+	return [game_map, player, floor, floors, chunk, chunks]

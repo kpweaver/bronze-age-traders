@@ -8,9 +8,18 @@ const TILE_FLOOR := 1  # dungeon floor
 const TILE_SAND  := 2  # open desert (walkable)
 const TILE_DUNE  := 3  # rolling dune (walkable)
 const TILE_ROCK  := 4  # rocky outcropping (blocks movement + LOS)
+const TILE_WATER := 5  # oasis water (blocks movement, transparent)
+const TILE_GRASS := 6  # lush grassland (walkable, transparent)
 
 const MAP_DUNGEON   := 0
 const MAP_OVERWORLD := 1
+
+# Biome types — used by the world map to determine overworld chunk generation.
+const BIOME_DESERT    := 0  # arid waste: sand, dunes, rocky outcroppings
+const BIOME_OASIS     := 1  # fertile depression: water, grass, sparse rock
+const BIOME_STEPPES   := 2  # open grassland: grass dominant, light rocks
+const BIOME_MOUNTAINS := 3  # highland: rock dominant, narrow passages
+const BIOME_BADLANDS  := 4  # eroded: heavy dunes, moderate rock
 
 var width: int
 var height: int
@@ -46,14 +55,15 @@ func is_walkable(x: int, y: int) -> bool:
 	if not is_in_bounds(x, y):
 		return false
 	var t: int = tiles[y][x]
-	return t == TILE_FLOOR or t == TILE_SAND or t == TILE_DUNE
+	return t == TILE_FLOOR or t == TILE_SAND or t == TILE_DUNE or t == TILE_GRASS
 
 
 func is_transparent(x: int, y: int) -> bool:
 	if not is_in_bounds(x, y):
 		return false
 	var t: int = tiles[y][x]
-	return t == TILE_FLOOR or t == TILE_SAND or t == TILE_DUNE
+	# Water blocks movement but you can see across it (flat, open surface).
+	return t == TILE_FLOOR or t == TILE_SAND or t == TILE_DUNE or t == TILE_GRASS or t == TILE_WATER
 
 
 # Returns the first blocking entity at (x, y), or null.

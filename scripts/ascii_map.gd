@@ -28,8 +28,8 @@ const FOV_OVERWORLD: int   = 24  # wide sight lines in open desert
 # Internal map dimensions — larger than the viewport, enabling scrolling.
 const DUNGEON_W: int   = 160
 const DUNGEON_H: int   = 70
-const OVERWORLD_W: int = 500
-const OVERWORLD_H: int = 200
+const OVERWORLD_W: int = 200
+const OVERWORLD_H: int = 100
 
 # ---------------------------------------------------------------------------
 # Colour palette
@@ -45,13 +45,17 @@ const C_GOLD       := Color(0.90, 0.78, 0.15)
 const C_MSG_RECENT := Color(0.78, 0.68, 0.52)
 const C_MSG_OLD    := Color(0.45, 0.38, 0.28)
 
-# Overworld (desert) palette — warm, vivid, sun-baked
+# Overworld tile palette — biome-tuned, sun-baked
 const C_SAND_LIT   := Color(0.98, 0.88, 0.48)  # bright sunlit sand
 const C_SAND_DIM   := Color(0.55, 0.46, 0.22)  # shadow sand
 const C_DUNE_LIT   := Color(0.94, 0.68, 0.22)  # warm amber dune crest
 const C_DUNE_DIM   := Color(0.50, 0.34, 0.10)  # dune shadow
 const C_ROCK_LIT   := Color(0.78, 0.38, 0.18)  # terracotta rock face
 const C_ROCK_DIM   := Color(0.40, 0.18, 0.08)  # rock in shadow
+const C_WATER_LIT  := Color(0.22, 0.55, 0.88)  # oasis water, sunlit
+const C_WATER_DIM  := Color(0.10, 0.26, 0.44)  # oasis water, shadow
+const C_GRASS_LIT  := Color(0.40, 0.75, 0.22)  # lush grass, sunlit
+const C_GRASS_DIM  := Color(0.18, 0.38, 0.10)  # grass in shadow
 
 # ---------------------------------------------------------------------------
 # Escape menu
@@ -62,16 +66,19 @@ var _escape_cursor: int = 0
 # ---------------------------------------------------------------------------
 # Overlay screens
 # ---------------------------------------------------------------------------
-enum Screen { NONE, ESCAPE, INVENTORY, CHARACTER, SETTINGS, LOOK }
-var _screen: Screen = Screen.NONE
+enum Screen { NONE, ESCAPE, INVENTORY, CHARACTER, SETTINGS, LOOK, WORLD_MAP }
+var _screen: Screen     = Screen.NONE
+var _world_cursor: Vector2i = Vector2i.ZERO
 
 # ---------------------------------------------------------------------------
 # Game state
 # ---------------------------------------------------------------------------
 var _map        # GameMap
 var _player     # Actor
-var _floor: int = 1
-var _floors: Dictionary = {}  # floor number -> GameMap, for visited floors not currently active
+var _floor: int = 0
+var _floors: Dictionary = {}  # dungeon floor number (1+) -> GameMap
+var _chunk: Vector2i     = Vector2i.ZERO  # current overworld chunk coords
+var _chunks: Dictionary  = {}             # Vector2i -> GameMap for visited overworld chunks
 var _cam_x: int = 0  # top-left map column currently visible
 var _cam_y: int = 0  # top-left map row currently visible
 var _look_pos: Vector2i = Vector2i.ZERO
@@ -101,15 +108,24 @@ func _make_font() -> Font:
 
 
 func _new_game() -> void:
-	_floor     = 0
+	_floor  = 0
+	_chunk  = Vector2i.ZERO
 	_floors.clear()
+	_chunks.clear()
 	_game_over = false
 	_screen    = Screen.NONE
 	_messages.clear()
 
-	# Build the overworld — the player starts here, in the open desert.
+	# Roll the world seed once — all overworld chunks use this for seamless borders.
+	GameState.world_seed   = randi()
+	GameState.world_biomes = ProcgenClass.generate_world_biomes(GameState.WORLD_W, GameState.WORLD_H, GameState.world_seed)
+
+	# Player starts at the centre of the world map (always forced to BIOME_DESERT).
+	_chunk = Vector2i(GameState.WORLD_W >> 1, GameState.WORLD_H >> 1)
+
+	# Build the starting overworld chunk.
 	var ow_map = GameMapClass.new(OVERWORLD_W, OVERWORLD_H)
-	ProcgenClass.generate_overworld(ow_map)
+	ProcgenClass.generate_overworld(ow_map, _chunk.x * OVERWORLD_W, _chunk.y * OVERWORLD_H, GameState.world_seed, GameMapClass.BIOME_DESERT, true)
 
 	# Find a natural cave mouth: a walkable tile beside rocky outcroppings.
 	var entrance_pos: Vector2i = ProcgenClass.find_cave_entrance(ow_map)
@@ -126,7 +142,7 @@ func _new_game() -> void:
 
 	_update_camera()
 	_map.compute_fov(_player.pos.x, _player.pos.y, FOV_OVERWORLD)
-	_log("You stand beneath a merciless sun. The dungeon entrance lies nearby.")
+	_log("You stand beneath a merciless sun. The dungeon entrance lies nearby. Press < for the world map.")
 	queue_redraw()
 
 
@@ -157,6 +173,51 @@ func _walk_toward_center(map, from: Vector2i, steps: int) -> Vector2i:
 	return pos
 
 
+func _chunk_transition(dir: Vector2i) -> void:
+	# Work out which axis (or axes) crossed the boundary.
+	var next: Vector2i  = _player.pos + dir
+	var dc   := Vector2i.ZERO
+	var new_x: int      = next.x
+	var new_y: int      = next.y
+
+	if next.x < 0:
+		dc.x  = -1
+		new_x = OVERWORLD_W - 2
+	elif next.x >= OVERWORLD_W:
+		dc.x  = 1
+		new_x = 1
+
+	if next.y < 0:
+		dc.y  = -1
+		new_y = OVERWORLD_H - 2
+	elif next.y >= OVERWORLD_H:
+		dc.y  = 1
+		new_y = 1
+
+	# Save current chunk, move to the new one.
+	_map.entities.erase(_player)
+	_chunks[_chunk] = _map
+	_chunk += dc
+
+	if _chunks.has(_chunk):
+		_map = _chunks[_chunk]
+	else:
+		var new_map := GameMapClass.new(OVERWORLD_W, OVERWORLD_H)
+		var wx: int = _chunk.x * OVERWORLD_W
+		var wy: int = _chunk.y * OVERWORLD_H
+		ProcgenClass.generate_overworld(new_map, wx, wy, GameState.world_seed, _get_chunk_biome(_chunk))
+		_map = new_map
+
+	_player.pos      = Vector2i(new_x, new_y)
+	_player.game_map = _map
+	_map.entities.append(_player)
+
+	_update_camera()
+	_map.compute_fov(_player.pos.x, _player.pos.y, FOV_OVERWORLD)
+	_log("You enter the %s." % _biome_name(_get_chunk_biome(_chunk)))
+	queue_redraw()
+
+
 func _load_from_save() -> void:
 	var data := SaveManagerClass.load_game()
 	if data.is_empty():
@@ -170,6 +231,10 @@ func _load_from_save() -> void:
 	_player = result[1]
 	_floor  = result[2]
 	_floors = result[3]
+	_chunk  = result[4]
+	_chunks = result[5]
+	# Regenerate biome grid deterministically from the saved world seed.
+	GameState.world_biomes = ProcgenClass.generate_world_biomes(GameState.WORLD_W, GameState.WORLD_H, GameState.world_seed)
 	_update_camera()
 	_log("You return to where you left off...")
 	queue_redraw()
@@ -183,27 +248,28 @@ func _stairs_pos(map, ch: String) -> Vector2i:
 
 
 func _descend() -> void:
-	# Save current floor without the player in the entity list.
 	_map.entities.erase(_player)
-	_floors[_floor] = _map
-	_floor += 1
+	if _floor == 0:
+		# Descending from the overworld — save current chunk, not _floors.
+		_chunks[_chunk] = _map
+		_floor = 1
+	else:
+		_floors[_floor] = _map
+		_floor += 1
 
 	if _floors.has(_floor):
-		# Restore a previously visited floor.
 		_map = _floors[_floor]
 		_player.pos      = _stairs_pos(_map, "<")
 		_player.game_map = _map
 		_map.entities.append(_player)
 	else:
-		# Generate a fresh floor.
 		var new_map = GameMapClass.new(DUNGEON_W, DUNGEON_H)
 		_player.game_map = new_map
-		_player.pos      = Vector2i(0, 0)  # procgen sets the real spawn
+		_player.pos      = Vector2i(0, 0)
 		new_map.entities.append(_player)
 		_map = new_map
 		var monsters := mini(2 + (_floor - 1) >> 1, 4)
 		ProcgenClass.generate_dungeon(_map, 50, 5, 14, monsters, _player, _floor)
-		# Place < stairs at the spawn point procgen chose for the player.
 		var up_stairs := EntityClass.new(_player.pos, "<", Color(0.55, 0.80, 0.95), "stairs up", false)
 		up_stairs.game_map = _map
 		_map.entities.append(up_stairs)
@@ -218,28 +284,35 @@ func _ascend() -> void:
 	if _floor <= 0:
 		_log("There is nothing above.")
 		return
-	# Save current floor without the player.
 	_map.entities.erase(_player)
 	_floors[_floor] = _map
 	_floor -= 1
 
-	if _floors.has(_floor):
-		_map = _floors[_floor]
-		_player.pos      = _stairs_pos(_map, ">")
-		_player.game_map = _map
-		_map.entities.append(_player)
+	if _floor == 0:
+		# Return to the overworld — restore the chunk we descended from.
+		if _chunks.has(_chunk):
+			_map = _chunks[_chunk]
+			_player.pos      = _stairs_pos(_map, ">")
+			_player.game_map = _map
+			_map.entities.append(_player)
+		else:
+			# Fallback: regenerate the chunk (shouldn't normally happen).
+			var new_map = GameMapClass.new(OVERWORLD_W, OVERWORLD_H)
+			ProcgenClass.generate_overworld(new_map, _chunk.x * OVERWORLD_W, _chunk.y * OVERWORLD_H, GameState.world_seed, _get_chunk_biome(_chunk), _chunk == Vector2i(GameState.WORLD_W >> 1, GameState.WORLD_H >> 1))
+			var entrance_pos: Vector2i = ProcgenClass.find_cave_entrance(new_map)
+			var dungeon_entry := EntityClass.new(entrance_pos, ">", Color(0.90, 0.85, 0.60), "dungeon entrance", false)
+			dungeon_entry.game_map = new_map
+			new_map.entities.append(dungeon_entry)
+			_player.pos      = entrance_pos
+			_player.game_map = new_map
+			new_map.entities.append(_player)
+			_map = new_map
 	else:
-		# Generate the overworld surface (fallback — normally created in _new_game).
-		var new_map = GameMapClass.new(OVERWORLD_W, OVERWORLD_H)
-		ProcgenClass.generate_overworld(new_map)
-		var entrance_pos: Vector2i = ProcgenClass.find_cave_entrance(new_map)
-		var dungeon_entry := EntityClass.new(entrance_pos, ">", Color(0.90, 0.85, 0.60), "dungeon entrance", false)
-		dungeon_entry.game_map = new_map
-		new_map.entities.append(dungeon_entry)
-		_player.pos      = entrance_pos
-		_player.game_map = new_map
-		new_map.entities.append(_player)
-		_map = new_map
+		if _floors.has(_floor):
+			_map = _floors[_floor]
+			_player.pos      = _stairs_pos(_map, ">")
+			_player.game_map = _map
+			_map.entities.append(_player)
 
 	_update_camera()
 	var fov := FOV_OVERWORLD if _map.map_type == GameMapClass.MAP_OVERWORLD else FOV_RADIUS
@@ -273,6 +346,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 		Screen.LOOK:
 			_handle_look_input(event)
+			return
+		Screen.WORLD_MAP:
+			_handle_world_map_input(event)
 			return
 
 	# Global overlay toggles
@@ -312,7 +388,12 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event.shift_pressed and event.physical_keycode == KEY_COMMA:
 		get_viewport().set_input_as_handled()
-		_try_ascend()
+		if _floor == 0:
+			_world_cursor = _chunk
+			_screen = Screen.WORLD_MAP
+			queue_redraw()
+		else:
+			_try_ascend()
 		return
 
 	var dir := Vector2i.ZERO
@@ -359,7 +440,7 @@ func _confirm_escape() -> void:
 			queue_redraw()
 		2:  # Save & Quit to Title
 			if not _game_over:
-				SaveManagerClass.save_game(_map, _player, _floor, _floors)
+				SaveManagerClass.save_game(_map, _player, _floor, _floors, _chunk, _chunks)
 			get_tree().change_scene_to_file("res://ui/main_menu.tscn")
 		3:  # Quit Game
 			get_tree().quit()
@@ -447,6 +528,8 @@ func _look_description() -> String:
 		GameMapClass.TILE_SAND:  tile = "open desert"
 		GameMapClass.TILE_DUNE:  tile = "sandy dune"
 		GameMapClass.TILE_ROCK:  tile = "rocky outcropping"
+		GameMapClass.TILE_WATER: tile = "shimmering water"
+		GameMapClass.TILE_GRASS: tile = "lush grassland"
 		_:                       tile = "unknown terrain"
 
 	if not _map.visible[y][x]:
@@ -486,6 +569,8 @@ func _do_player_turn(dir: Vector2i) -> void:
 	if dir != Vector2i.ZERO:
 		var next: Vector2i = _player.pos + dir
 		if not _map.is_in_bounds(next.x, next.y):
+			if _map.map_type == GameMapClass.MAP_OVERWORLD:
+				_chunk_transition(dir)
 			return
 
 		var target = _map.get_blocking_entity_at(next.x, next.y)
@@ -606,6 +691,7 @@ func _draw() -> void:
 		Screen.CHARACTER: _draw_character_sheet()
 		Screen.SETTINGS:  _draw_settings()
 		Screen.LOOK:      _draw_look_cursor()
+		Screen.WORLD_MAP: _draw_world_map()
 
 
 func _draw_map() -> void:
@@ -630,6 +716,10 @@ func _draw_map() -> void:
 					ch = "^"; color = C_DUNE_LIT if lit else C_DUNE_DIM
 				GameMapClass.TILE_ROCK:
 					ch = "#"; color = C_ROCK_LIT if lit else C_ROCK_DIM
+				GameMapClass.TILE_WATER:
+					ch = "~"; color = C_WATER_LIT if lit else C_WATER_DIM
+				GameMapClass.TILE_GRASS:
+					ch = "."; color = C_GRASS_LIT if lit else C_GRASS_DIM
 				_:
 					ch = "?"; color = Color.WHITE
 			_put(vx, vy, ch, color)
@@ -814,6 +904,161 @@ func _draw_look_cursor() -> void:
 
 
 # ---------------------------------------------------------------------------
+# World map helpers
+# ---------------------------------------------------------------------------
+func _get_chunk_biome(c: Vector2i) -> int:
+	if c.y >= 0 and c.y < GameState.world_biomes.size() and \
+	   c.x >= 0 and c.x < GameState.world_biomes[c.y].size():
+		return int(GameState.world_biomes[c.y][c.x])
+	return GameMapClass.BIOME_DESERT
+
+
+func _biome_name(biome: int) -> String:
+	match biome:
+		GameMapClass.BIOME_DESERT:    return "arid desert"
+		GameMapClass.BIOME_OASIS:     return "lush oasis"
+		GameMapClass.BIOME_STEPPES:   return "open steppes"
+		GameMapClass.BIOME_MOUNTAINS: return "rocky mountains"
+		GameMapClass.BIOME_BADLANDS:  return "rugged badlands"
+		_:                            return "unknown lands"
+
+
+func _biome_char(biome: int) -> String:
+	match biome:
+		GameMapClass.BIOME_DESERT:    return "."
+		GameMapClass.BIOME_OASIS:     return "~"
+		GameMapClass.BIOME_STEPPES:   return "\""
+		GameMapClass.BIOME_MOUNTAINS: return "^"
+		GameMapClass.BIOME_BADLANDS:  return "%"
+		_:                            return "?"
+
+
+func _biome_color(biome: int) -> Color:
+	match biome:
+		GameMapClass.BIOME_DESERT:    return Color(0.85, 0.70, 0.35)
+		GameMapClass.BIOME_OASIS:     return Color(0.22, 0.72, 0.50)
+		GameMapClass.BIOME_STEPPES:   return Color(0.42, 0.72, 0.20)
+		GameMapClass.BIOME_MOUNTAINS: return Color(0.62, 0.56, 0.48)
+		GameMapClass.BIOME_BADLANDS:  return Color(0.72, 0.44, 0.18)
+		_:                            return Color(0.4, 0.4, 0.4)
+
+
+# ---------------------------------------------------------------------------
+# Overlay: world map
+# ---------------------------------------------------------------------------
+func _draw_world_map() -> void:
+	# Each world tile renders as 2 chars wide × 1 char tall, making tiles
+	# visually square given the 9×18 font (2:1 height-to-width ratio).
+	const WM_CELL  := 2
+	const WM_LEFT  := (COLS - GameState.WORLD_W * WM_CELL) >> 1  # ≈ 28
+	const WM_TOP   := 3
+
+	draw_rect(Rect2(Vector2.ZERO, Vector2(COLS * CELL_W, ROWS * CELL_H)), Color(0, 0, 0, 0.82))
+
+	_puts_centered(1, "-=[ WORLD MAP ]=-", C_STATUS)
+
+	for cy in range(GameState.WORLD_H):
+		for cx in range(GameState.WORLD_W):
+			var this_chunk := Vector2i(cx, cy)
+			var biome: int   = _get_chunk_biome(this_chunk)
+			var sx: int      = WM_LEFT + cx * WM_CELL
+			var sy: int      = WM_TOP  + cy
+
+			var is_current := this_chunk == _chunk
+			var is_cursor  := this_chunk == _world_cursor
+			var is_visited := _chunks.has(this_chunk) or is_current
+
+			var ch: String   = _biome_char(biome)
+			var color: Color = _biome_color(biome)
+
+			if not is_visited:
+				color = color * 0.38  # fog-of-war dim
+
+			if is_current:
+				ch    = "@"
+				color = Color(0.95, 0.80, 0.40) if is_cursor else Color(0.80, 0.72, 0.55)
+			elif is_cursor:
+				color = C_STATUS  # bronze highlight for cursor
+
+			_put(sx, sy, ch, color)
+
+			# Cursor brackets — drawn on top of whatever char is there.
+			if is_cursor:
+				_put(sx - 1, sy, "[", C_STATUS)
+				_put(sx + 1, sy, "]", C_STATUS)
+
+	# Biome name of cursor tile
+	var cursor_biome: int   = _get_chunk_biome(_world_cursor)
+	var cursor_label: String = _biome_name(cursor_biome)
+	if _world_cursor == _chunk:
+		cursor_label += " (here)"
+	var visited_label := "visited" if (_chunks.has(_world_cursor) or _world_cursor == _chunk) else "unexplored"
+
+	var bottom: int = WM_TOP + GameState.WORLD_H + 1
+	_puts_centered(bottom,     "%s — %s" % [cursor_label, visited_label],                C_MSG_RECENT)
+	_puts_centered(bottom + 1, ". desert  ~ oasis  \" steppes  ^ mountains  %% badlands", C_DIVIDER)
+	_puts_centered(bottom + 2, "arrows/numpad: move   enter: travel here   esc: close",  C_DIVIDER)
+
+
+func _handle_world_map_input(event: InputEvent) -> void:
+	get_viewport().set_input_as_handled()
+	var dc := Vector2i.ZERO
+	match event.physical_keycode:
+		KEY_ESCAPE:
+			_screen = Screen.NONE
+			queue_redraw()
+			return
+		KEY_UP,    KEY_KP_8: dc = Vector2i(0, -1)
+		KEY_DOWN,  KEY_KP_2: dc = Vector2i(0,  1)
+		KEY_LEFT,  KEY_KP_4: dc = Vector2i(-1, 0)
+		KEY_RIGHT, KEY_KP_6: dc = Vector2i(1,  0)
+		KEY_KP_7:            dc = Vector2i(-1, -1)
+		KEY_KP_9:            dc = Vector2i( 1, -1)
+		KEY_KP_1:            dc = Vector2i(-1,  1)
+		KEY_KP_3:            dc = Vector2i( 1,  1)
+		KEY_ENTER, KEY_KP_ENTER:
+			if _world_cursor != _chunk:
+				_world_map_travel(_world_cursor)
+			else:
+				_screen = Screen.NONE
+				queue_redraw()
+			return
+		_:
+			return
+	_world_cursor = Vector2i(
+		clampi(_world_cursor.x + dc.x, 0, GameState.WORLD_W - 1),
+		clampi(_world_cursor.y + dc.y, 0, GameState.WORLD_H - 1)
+	)
+	queue_redraw()
+
+
+func _world_map_travel(dest: Vector2i) -> void:
+	# Save current chunk, then load or generate the destination.
+	_map.entities.erase(_player)
+	_chunks[_chunk] = _map
+	_chunk = dest
+
+	if _chunks.has(_chunk):
+		_map = _chunks[_chunk]
+	else:
+		var new_map := GameMapClass.new(OVERWORLD_W, OVERWORLD_H)
+		var wx: int = _chunk.x * OVERWORLD_W
+		var wy: int = _chunk.y * OVERWORLD_H
+		ProcgenClass.generate_overworld(new_map, wx, wy, GameState.world_seed, _get_chunk_biome(_chunk))
+		_map = new_map
+
+	_player.pos      = Vector2i(OVERWORLD_W >> 1, OVERWORLD_H >> 1)
+	_player.game_map = _map
+	_map.entities.append(_player)
+	_screen = Screen.NONE
+
+	_update_camera()
+	_map.compute_fov(_player.pos.x, _player.pos.y, FOV_OVERWORLD)
+	_log("You arrive in the %s." % _biome_name(_get_chunk_biome(_chunk)))
+	queue_redraw()
+
+
+# ---------------------------------------------------------------------------
 # Draw helpers
 # ---------------------------------------------------------------------------
 func _draw_box(bx: int, by: int, bw: int, bh: int) -> void:
@@ -841,3 +1086,7 @@ func _put(x: int, y: int, ch: String, color: Color) -> void:
 func _puts(x: int, y: int, text: String, color: Color) -> void:
 	draw_string(_font, Vector2(x * CELL_W, y * CELL_H + FONT_SIZE),
 			text, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE, color)
+
+
+func _puts_centered(row: int, text: String, color: Color) -> void:
+	_puts((COLS - text.length()) >> 1, row, text, color)

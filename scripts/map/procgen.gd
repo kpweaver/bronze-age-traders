@@ -207,48 +207,139 @@ static func find_cave_entrance(map) -> Vector2i:
 	return best_pos
 
 
-static func generate_overworld(map) -> void:
-	# GDC-inspired layered generation:
+static func generate_world_biomes(world_w: int, world_h: int, world_seed: int) -> Array:
+	# Returns a 2D Array[world_h][world_w] of BIOME_* constants.
+	# Two noise passes: elevation (determines terrain roughness) and
+	# aridity (determines moisture / vegetation).
+	var elev_noise := FastNoiseLite.new()
+	elev_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	elev_noise.seed       = world_seed + 100
+	elev_noise.frequency  = 0.14
+
+	var arid_noise := FastNoiseLite.new()
+	arid_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	arid_noise.seed       = world_seed + 200
+	arid_noise.frequency  = 0.11
+
+	var grid: Array = []
+	for cy in range(world_h):
+		var row: Array = []
+		for cx in range(world_w):
+			var elev: float = elev_noise.get_noise_2d(float(cx), float(cy))
+			var arid: float = arid_noise.get_noise_2d(float(cx), float(cy))
+			var biome: int
+			if elev > 0.35:
+				biome = GameMapClass.BIOME_MOUNTAINS
+			elif elev > 0.10:
+				biome = GameMapClass.BIOME_BADLANDS
+			elif arid > 0.20:
+				biome = GameMapClass.BIOME_DESERT
+			elif arid > -0.20:
+				biome = GameMapClass.BIOME_STEPPES
+			else:
+				biome = GameMapClass.BIOME_OASIS
+			row.append(biome)
+		grid.append(row)
+
+	# The starting chunk (world centre) is always desert — dungeon entrance is there.
+	var cx_start: int = world_w >> 1
+	var cy_start: int = world_h >> 1
+	grid[cy_start][cx_start] = GameMapClass.BIOME_DESERT
+	return grid
+
+
+static func generate_overworld(map, world_x: int, world_y: int, world_seed: int, biome: int = GameMapClass.BIOME_DESERT, safe_center: bool = false) -> void:
+	# GDC-inspired layered generation (Grinblat, GDC 2019):
 	# Pass 1 — broad terrain via low-frequency noise (biome skeleton).
-	# Pass 2 — detail via higher-frequency noise (local variation).
-	# This mirrors the macro→micro layering described in Grinblat (GDC 2019).
+	# Pass 2 — detail via higher-frequency noise (local dune ripple).
+	#
+	# KEY: noise is sampled at WORLD coordinates (world_x+x, world_y+y) with a
+	# FIXED seed. Adjacent chunks therefore share continuous noise values at
+	# their shared border — no blending or stitching needed for seamless terrain.
 	map.map_type = GameMapClass.MAP_OVERWORLD
 
 	var base_noise := FastNoiseLite.new()
-	base_noise.noise_type  = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
-	base_noise.seed        = randi()
-	base_noise.frequency   = 0.018
+	base_noise.noise_type         = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	base_noise.seed               = world_seed
+	base_noise.frequency          = 0.018
 	base_noise.fractal_octaves    = 4
 	base_noise.fractal_lacunarity = 2.0
 	base_noise.fractal_gain       = 0.5
 
-	# Second noise layer adds fine-grained dune ripple variation.
 	var detail_noise := FastNoiseLite.new()
 	detail_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
-	detail_noise.seed       = randi()
+	detail_noise.seed       = world_seed + 1  # offset so it differs from base
 	detail_noise.frequency  = 0.06
+
+	# Biome threshold tables: each entry is [min_combined_value, tile_type].
+	# Entries are checked highest-to-lowest; first match wins.
+	# detail_amp scales the fine-detail noise layer per biome.
+	var detail_amp: float
+	var thresholds: Array
+	match biome:
+		GameMapClass.BIOME_MOUNTAINS:
+			# Rock-dominant — narrow sand corridors between outcroppings.
+			detail_amp = 0.15
+			thresholds = [
+				[0.00, GameMapClass.TILE_ROCK],
+				[-0.50, GameMapClass.TILE_DUNE],
+				[-2.00, GameMapClass.TILE_SAND],
+			]
+		GameMapClass.BIOME_BADLANDS:
+			# Heavy dune coverage, moderate rock — eroded feel.
+			detail_amp = 0.35
+			thresholds = [
+				[0.20, GameMapClass.TILE_ROCK],
+				[-0.30, GameMapClass.TILE_DUNE],
+				[-2.00, GameMapClass.TILE_SAND],
+			]
+		GameMapClass.BIOME_STEPPES:
+			# Grass dominant with scattered rock and sand patches.
+			detail_amp = 0.20
+			thresholds = [
+				[0.50, GameMapClass.TILE_ROCK],
+				[-0.10, GameMapClass.TILE_SAND],
+				[-2.00, GameMapClass.TILE_GRASS],
+			]
+		GameMapClass.BIOME_OASIS:
+			# Water bodies ringed by grass and sand, light rock at edges.
+			detail_amp = 0.20
+			thresholds = [
+				[0.55, GameMapClass.TILE_ROCK],
+				[-0.05, GameMapClass.TILE_SAND],
+				[-0.35, GameMapClass.TILE_GRASS],
+				[-2.00, GameMapClass.TILE_WATER],
+			]
+		_:  # BIOME_DESERT (default)
+			# Classic desert: sand flats, dune ridges, rocky outcroppings.
+			detail_amp = 0.25
+			thresholds = [
+				[0.30, GameMapClass.TILE_ROCK],
+				[-0.15, GameMapClass.TILE_DUNE],
+				[-2.00, GameMapClass.TILE_SAND],
+			]
 
 	for y in range(map.height):
 		for x in range(map.width):
-			var v: float = base_noise.get_noise_2d(float(x), float(y))
-			var d: float = detail_noise.get_noise_2d(float(x), float(y)) * 0.25
-			var combined := v + d
-			# Thresholds produce three terrain bands:
-			#   open sand  (-1.0 .. -0.15) — flat, traversable
-			#   dunes      (-0.15 .. 0.30) — rolling terrain, traversable
-			#   rock       ( 0.30 ..  1.0) — impassable outcroppings
-			if combined > 0.30:
-				map.tiles[y][x] = GameMapClass.TILE_ROCK
-			elif combined > -0.15:
-				map.tiles[y][x] = GameMapClass.TILE_DUNE
-			else:
-				map.tiles[y][x] = GameMapClass.TILE_SAND
+			var wx: float  = float(world_x + x)
+			var wy: float  = float(world_y + y)
+			var v: float   = base_noise.get_noise_2d(wx, wy)
+			var d: float   = detail_noise.get_noise_2d(wx, wy) * detail_amp
+			var combined   := v + d
+			var tile: int  = int(thresholds.back()[1])
+			for entry in thresholds:
+				if combined > float(entry[0]):
+					tile = int(entry[1])
+					break
+			map.tiles[y][x] = tile
 
-	# Guarantee a clear landing zone around the map centre (player spawn point).
-	# This prevents the player from being trapped by rocky outcroppings on arrival.
-	var cx: int = map.width  >> 1
-	var cy: int = map.height >> 1
-	for y in range(maxi(0, cy - 6), mini(map.height, cy + 7)):
-		for x in range(maxi(0, cx - 6), mini(map.width, cx + 7)):
-			if map.tiles[y][x] == GameMapClass.TILE_ROCK:
-				map.tiles[y][x] = GameMapClass.TILE_SAND
+	if safe_center:
+		# Clear a landing zone around the chunk centre. Rock and water are
+		# replaced with sand so the player spawn is always passable.
+		var cx: int = map.width  >> 1
+		var cy: int = map.height >> 1
+		for y in range(maxi(0, cy - 6), mini(map.height, cy + 7)):
+			for x in range(maxi(0, cx - 6), mini(map.width, cx + 7)):
+				var t: int = map.tiles[y][x]
+				if t == GameMapClass.TILE_ROCK or t == GameMapClass.TILE_WATER:
+					map.tiles[y][x] = GameMapClass.TILE_SAND
