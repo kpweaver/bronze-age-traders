@@ -3,11 +3,18 @@ extends RefCounted
 
 const EntityClass = preload("res://scripts/entities/entity.gd")
 
-const TILE_WALL  := 0
-const TILE_FLOOR := 1
+const TILE_WALL  := 0  # dungeon wall
+const TILE_FLOOR := 1  # dungeon floor
+const TILE_SAND  := 2  # open desert (walkable)
+const TILE_DUNE  := 3  # rolling dune (walkable)
+const TILE_ROCK  := 4  # rocky outcropping (blocks movement + LOS)
+
+const MAP_DUNGEON   := 0
+const MAP_OVERWORLD := 1
 
 var width: int
 var height: int
+var map_type: int = MAP_DUNGEON
 var tiles: Array    # Array[Array[int]]  — tiles[y][x]
 var visible: Array  # Array[Array[bool]] — currently in FOV
 var explored: Array # Array[Array[bool]] — ever seen
@@ -36,11 +43,17 @@ func is_in_bounds(x: int, y: int) -> bool:
 
 
 func is_walkable(x: int, y: int) -> bool:
-	return is_in_bounds(x, y) and tiles[y][x] == TILE_FLOOR
+	if not is_in_bounds(x, y):
+		return false
+	var t: int = tiles[y][x]
+	return t == TILE_FLOOR or t == TILE_SAND or t == TILE_DUNE
 
 
 func is_transparent(x: int, y: int) -> bool:
-	return is_in_bounds(x, y) and tiles[y][x] == TILE_FLOOR
+	if not is_in_bounds(x, y):
+		return false
+	var t: int = tiles[y][x]
+	return t == TILE_FLOOR or t == TILE_SAND or t == TILE_DUNE
 
 
 # Returns the first blocking entity at (x, y), or null.

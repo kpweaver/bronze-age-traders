@@ -28,9 +28,10 @@ static func save_game(game_map, player, floor: int, floors: Dictionary) -> void:
 			"inventory": _serialize_inventory(player.inventory),
 		},
 		"map": {
-			"width": game_map.width,
-			"height": game_map.height,
-			"tiles": game_map.tiles,
+			"width":    game_map.width,
+			"height":   game_map.height,
+			"map_type": game_map.map_type,
+			"tiles":    game_map.tiles,
 			"explored": game_map.explored,
 		},
 		"entities": _serialize_entities(game_map.entities, player),
@@ -46,6 +47,7 @@ static func _serialize_stored_floors(floors: Dictionary) -> Dictionary:
 	for f in floors:
 		var m = floors[f]
 		result[str(f)] = {
+			"map_type": m.map_type,
 			"tiles":    m.tiles,
 			"explored": m.explored,
 			"entities": _serialize_entities(m.entities, null),
@@ -108,6 +110,7 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 
 	var md: Dictionary = data["map"]
 	var game_map = GameMapClass.new(int(md["width"]), int(md["height"]))
+	game_map.map_type = int(md.get("map_type", GameMapClass.MAP_DUNGEON))
 
 	var tiles_raw: Array = md["tiles"]
 	var explored_raw: Array = md["explored"]
@@ -159,6 +162,7 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 		var f_int := int(f_str)
 		var fd: Dictionary = data["stored_floors"][f_str]
 		var stored_map = GameMapClass.new(int(md["width"]), int(md["height"]))
+		stored_map.map_type = int(fd.get("map_type", GameMapClass.MAP_DUNGEON))
 		var st_raw: Array = fd["tiles"]
 		var se_raw: Array = fd["explored"]
 		for y in range(stored_map.height):

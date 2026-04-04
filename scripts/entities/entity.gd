@@ -2,6 +2,7 @@ class_name Entity
 extends RefCounted
 
 var pos: Vector2i
+@warning_ignore("shadowed_global_identifier")
 var char: String
 var color: Color
 var name: String

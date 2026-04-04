@@ -2,8 +2,8 @@ extends Node2D
 
 const SaveManagerClass = preload("res://scripts/save_manager.gd")
 
-const COLS := 80
-const ROWS := 25
+const COLS := 120
+const ROWS := 40
 const FONT_SIZE := 16
 const CELL_W := 9.0
 const CELL_H := 18.0
@@ -99,8 +99,8 @@ func _draw_border() -> void:
 
 
 func _draw_title() -> void:
-	_puts_centered(7, "B R O N Z E  A G E  T R A D E R S", C_TITLE)
-	_puts_centered(9, "survive . trade . ascend", C_TAGLINE)
+	_puts_centered(14, "B R O N Z E  A G E  T R A D E R S", C_TITLE)
+	_puts_centered(16, "survive . trade . ascend", C_TAGLINE)
 
 
 func _draw_options() -> void:
@@ -115,7 +115,7 @@ func _draw_options() -> void:
 		else:
 			color = C_NORMAL
 		var prefix := "> " if is_selected else "  "
-		_puts_centered(14 + i * 2, prefix + OPTIONS[i], color)
+		_puts_centered(22 + i * 2, prefix + OPTIONS[i], color)
 
 
 func _draw_hint() -> void:
@@ -123,7 +123,7 @@ func _draw_hint() -> void:
 
 
 func _puts_centered(row: int, text: String, color: Color) -> void:
-	_puts(int((COLS - text.length()) / 2), row, text, color)
+	_puts((COLS - text.length()) >> 1, row, text, color)
 
 
 func _put(x: int, y: int, ch: String, color: Color) -> void:

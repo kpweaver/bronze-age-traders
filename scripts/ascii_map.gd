@@ -8,21 +8,28 @@ const ProcgenClass     = preload("res://scripts/map/procgen.gd")
 const SaveManagerClass = preload("res://scripts/save_manager.gd")
 
 # ---------------------------------------------------------------------------
-# Display constants
+# Display constants  (viewport: 1080×720, cell: 9×18 → 120×40 tiles)
 # ---------------------------------------------------------------------------
-const COLS: int = 80
-const ROWS: int = 25
+const COLS: int = 120      # visible columns
+const ROWS: int = 40       # total rows including UI
 const FONT_SIZE: int = 16
 const CELL_W: float = 9.0
 const CELL_H: float = 18.0
 
-const MAP_ROWS: int      = 20
-const DIVIDER_ROW: int   = 20
-const STATUS_ROW: int    = 21
-const MSG_START_ROW: int = 22
+const MAP_ROWS: int      = 35  # visible map rows
+const DIVIDER_ROW: int   = 35
+const STATUS_ROW: int    = 36
+const MSG_START_ROW: int = 37
 const MSG_LINES: int     = 3
 
-const FOV_RADIUS: int = 8
+const FOV_RADIUS: int      = 8
+const FOV_OVERWORLD: int   = 24  # wide sight lines in open desert
+
+# Internal map dimensions — larger than the viewport, enabling scrolling.
+const DUNGEON_W: int   = 160
+const DUNGEON_H: int   = 70
+const OVERWORLD_W: int = 500
+const OVERWORLD_H: int = 200
 
 # ---------------------------------------------------------------------------
 # Colour palette
@@ -38,11 +45,18 @@ const C_GOLD       := Color(0.90, 0.78, 0.15)
 const C_MSG_RECENT := Color(0.78, 0.68, 0.52)
 const C_MSG_OLD    := Color(0.45, 0.38, 0.28)
 
+# Overworld (desert) palette — warm, vivid, sun-baked
+const C_SAND_LIT   := Color(0.98, 0.88, 0.48)  # bright sunlit sand
+const C_SAND_DIM   := Color(0.55, 0.46, 0.22)  # shadow sand
+const C_DUNE_LIT   := Color(0.94, 0.68, 0.22)  # warm amber dune crest
+const C_DUNE_DIM   := Color(0.50, 0.34, 0.10)  # dune shadow
+const C_ROCK_LIT   := Color(0.78, 0.38, 0.18)  # terracotta rock face
+const C_ROCK_DIM   := Color(0.40, 0.18, 0.08)  # rock in shadow
+
 # ---------------------------------------------------------------------------
 # Escape menu
 # ---------------------------------------------------------------------------
 const ESCAPE_OPTIONS := ["Resume", "Settings", "Save & Quit to Title", "Quit Game"]
-var _escape_open: bool  = false
 var _escape_cursor: int = 0
 
 # ---------------------------------------------------------------------------
@@ -58,6 +72,8 @@ var _map        # GameMap
 var _player     # Actor
 var _floor: int = 1
 var _floors: Dictionary = {}  # floor number -> GameMap, for visited floors not currently active
+var _cam_x: int = 0  # top-left map column currently visible
+var _cam_y: int = 0  # top-left map row currently visible
 var _look_pos: Vector2i = Vector2i.ZERO
 var _messages: Array[String] = []
 var _game_over: bool = false
@@ -85,19 +101,60 @@ func _make_font() -> Font:
 
 
 func _new_game() -> void:
-	_floor     = 1
+	_floor     = 0
 	_floors.clear()
 	_game_over = false
 	_screen    = Screen.NONE
 	_messages.clear()
-	_map    = GameMapClass.new(COLS, MAP_ROWS)
-	_player = ActorClass.new(Vector2i(0, 0), "@", Color(0.80, 0.50, 0.20), "you", 30, 2, 5)
-	_player.game_map = _map
-	_map.entities.append(_player)
-	ProcgenClass.generate_dungeon(_map, 30, 5, 10, 2, _player, _floor)
-	_map.compute_fov(_player.pos.x, _player.pos.y, FOV_RADIUS)
-	_log("The ruins swallow you whole. Steel yourself.")
+
+	# Build the overworld — the player starts here, in the open desert.
+	var ow_map = GameMapClass.new(OVERWORLD_W, OVERWORLD_H)
+	ProcgenClass.generate_overworld(ow_map)
+
+	# Find a natural cave mouth: a walkable tile beside rocky outcroppings.
+	var entrance_pos: Vector2i = ProcgenClass.find_cave_entrance(ow_map)
+	var dungeon_entry := EntityClass.new(entrance_pos, ">", Color(0.90, 0.85, 0.60), "dungeon entrance", false)
+	dungeon_entry.game_map = ow_map
+	ow_map.entities.append(dungeon_entry)
+
+	# Spawn the player a few steps away from the entrance, toward the centre.
+	var spawn_pos: Vector2i = _walk_toward_center(ow_map, entrance_pos, 6)
+	_player = ActorClass.new(spawn_pos, "@", Color(0.80, 0.72, 0.55), "you", 30, 2, 5)
+	_player.game_map = ow_map
+	ow_map.entities.append(_player)
+	_map = ow_map
+
+	_update_camera()
+	_map.compute_fov(_player.pos.x, _player.pos.y, FOV_OVERWORLD)
+	_log("You stand beneath a merciless sun. The dungeon entrance lies nearby.")
 	queue_redraw()
+
+
+# Walk up to `steps` tiles from `from` toward the map centre, avoiding rocks.
+# Each step picks the walkable neighbour that is closest to the centre.
+func _walk_toward_center(map, from: Vector2i, steps: int) -> Vector2i:
+	var cx: int = map.width  >> 1
+	var cy: int = map.height >> 1
+	var pos := from
+	for _i in range(steps):
+		var best_next := pos
+		var best_dist := (pos.x - cx) * (pos.x - cx) + (pos.y - cy) * (pos.y - cy)
+		for dy in range(-1, 2):
+			for dx in range(-1, 2):
+				if dx == 0 and dy == 0:
+					continue
+				var nx: int = pos.x + dx
+				var ny: int = pos.y + dy
+				if not map.is_walkable(nx, ny):
+					continue
+				var d: int = (nx - cx) * (nx - cx) + (ny - cy) * (ny - cy)
+				if d < best_dist:
+					best_dist = d
+					best_next = Vector2i(nx, ny)
+		if best_next == pos:
+			break  # no walkable neighbour closer to centre — stop here
+		pos = best_next
+	return pos
 
 
 func _load_from_save() -> void:
@@ -113,6 +170,7 @@ func _load_from_save() -> void:
 	_player = result[1]
 	_floor  = result[2]
 	_floors = result[3]
+	_update_camera()
 	_log("You return to where you left off...")
 	queue_redraw()
 
@@ -138,25 +196,26 @@ func _descend() -> void:
 		_map.entities.append(_player)
 	else:
 		# Generate a fresh floor.
-		var new_map = GameMapClass.new(COLS, MAP_ROWS)
+		var new_map = GameMapClass.new(DUNGEON_W, DUNGEON_H)
 		_player.game_map = new_map
 		_player.pos      = Vector2i(0, 0)  # procgen sets the real spawn
 		new_map.entities.append(_player)
 		_map = new_map
-		var monsters := mini(2 + (_floor - 1) / 2, 4)
-		ProcgenClass.generate_dungeon(_map, 30, 5, 10, monsters, _player, _floor)
+		var monsters := mini(2 + (_floor - 1) >> 1, 4)
+		ProcgenClass.generate_dungeon(_map, 50, 5, 14, monsters, _player, _floor)
 		# Place < stairs at the spawn point procgen chose for the player.
 		var up_stairs := EntityClass.new(_player.pos, "<", Color(0.55, 0.80, 0.95), "stairs up", false)
 		up_stairs.game_map = _map
 		_map.entities.append(up_stairs)
 
+	_update_camera()
 	_map.compute_fov(_player.pos.x, _player.pos.y, FOV_RADIUS)
 	_log("You descend to floor %d. The air grows heavier." % _floor)
 	queue_redraw()
 
 
 func _ascend() -> void:
-	if _floor <= 1:
+	if _floor <= 0:
 		_log("There is nothing above.")
 		return
 	# Save current floor without the player.
@@ -164,13 +223,31 @@ func _ascend() -> void:
 	_floors[_floor] = _map
 	_floor -= 1
 
-	_map = _floors[_floor]
-	_player.pos      = _stairs_pos(_map, ">")
-	_player.game_map = _map
-	_map.entities.append(_player)
+	if _floors.has(_floor):
+		_map = _floors[_floor]
+		_player.pos      = _stairs_pos(_map, ">")
+		_player.game_map = _map
+		_map.entities.append(_player)
+	else:
+		# Generate the overworld surface (fallback — normally created in _new_game).
+		var new_map = GameMapClass.new(OVERWORLD_W, OVERWORLD_H)
+		ProcgenClass.generate_overworld(new_map)
+		var entrance_pos: Vector2i = ProcgenClass.find_cave_entrance(new_map)
+		var dungeon_entry := EntityClass.new(entrance_pos, ">", Color(0.90, 0.85, 0.60), "dungeon entrance", false)
+		dungeon_entry.game_map = new_map
+		new_map.entities.append(dungeon_entry)
+		_player.pos      = entrance_pos
+		_player.game_map = new_map
+		new_map.entities.append(_player)
+		_map = new_map
 
-	_map.compute_fov(_player.pos.x, _player.pos.y, FOV_RADIUS)
-	_log("You ascend to floor %d." % _floor)
+	_update_camera()
+	var fov := FOV_OVERWORLD if _map.map_type == GameMapClass.MAP_OVERWORLD else FOV_RADIUS
+	_map.compute_fov(_player.pos.x, _player.pos.y, fov)
+	if _floor == 0:
+		_log("You emerge into the blinding light of the open desert.")
+	else:
+		_log("You ascend to floor %d." % _floor)
 	queue_redraw()
 
 
@@ -348,8 +425,11 @@ func _handle_look_input(event: InputEvent) -> void:
 		KEY_KP_3:            _look_pos += Vector2i(1, 1)
 		_:                   moved = false
 	if moved:
-		_look_pos.x = clampi(_look_pos.x, 0, COLS - 1)
-		_look_pos.y = clampi(_look_pos.y, 0, MAP_ROWS - 1)
+		_look_pos.x = clampi(_look_pos.x, 0, _map.width - 1)
+		_look_pos.y = clampi(_look_pos.y, 0, _map.height - 1)
+		# Pan camera to keep look cursor centred on screen.
+		_cam_x = clampi(_look_pos.x - (COLS >> 1), 0, _map.width  - COLS)
+		_cam_y = clampi(_look_pos.y - (MAP_ROWS >> 1), 0, _map.height - MAP_ROWS)
 		queue_redraw()
 
 
@@ -359,7 +439,15 @@ func _look_description() -> String:
 	if not _map.is_in_bounds(x, y) or not _map.explored[y][x]:
 		return "Unexplored."
 
-	var tile := "stone wall" if _map.tiles[y][x] == GameMapClass.TILE_WALL else "stone floor"
+	var tile_type: int = _map.tiles[y][x]
+	var tile: String
+	match tile_type:
+		GameMapClass.TILE_WALL:  tile = "stone wall"
+		GameMapClass.TILE_FLOOR: tile = "stone floor"
+		GameMapClass.TILE_SAND:  tile = "open desert"
+		GameMapClass.TILE_DUNE:  tile = "sandy dune"
+		GameMapClass.TILE_ROCK:  tile = "rocky outcropping"
+		_:                       tile = "unknown terrain"
 
 	if not _map.visible[y][x]:
 		return "You remember: %s." % tile
@@ -372,6 +460,23 @@ func _look_description() -> String:
 	if names.is_empty():
 		return "You see: %s." % tile
 	return "You see: %s." % ", ".join(names)
+
+
+# ---------------------------------------------------------------------------
+# Camera
+# ---------------------------------------------------------------------------
+func _update_camera() -> void:
+	_cam_x = clampi(_player.pos.x - (COLS >> 1), 0, _map.width  - COLS)
+	_cam_y = clampi(_player.pos.y - (MAP_ROWS >> 1), 0, _map.height - MAP_ROWS)
+
+
+func _to_screen(mx: int, my: int) -> Vector2i:
+	return Vector2i(mx - _cam_x, my - _cam_y)
+
+
+func _on_screen(mx: int, my: int) -> bool:
+	return mx >= _cam_x and mx < _cam_x + COLS \
+	   and my >= _cam_y and my < _cam_y + MAP_ROWS
 
 
 # ---------------------------------------------------------------------------
@@ -425,10 +530,13 @@ func _check_stairs() -> void:
 		if (e is ActorClass) or e.pos != _player.pos:
 			continue
 		if e.char == ">":
-			_log("Stairs lead down. > to descend.")
+			if (e.name as String) == "dungeon entrance":
+				_log("A dungeon entrance yawns in the earth. > to enter.")
+			else:
+				_log("Stairs lead down. > to descend.")
 			return
 		if e.char == "<":
-			var hint := "< to ascend." if _floor > 1 else "< to ascend. (already on surface)"
+			var hint := "< to ascend." if _floor > 1 else "< to surface."
 			_log("Stairs lead up. %s" % hint)
 			return
 
@@ -469,7 +577,9 @@ func _do_enemy_turns() -> void:
 
 
 func _end_turn() -> void:
-	_map.compute_fov(_player.pos.x, _player.pos.y, FOV_RADIUS)
+	_update_camera()
+	var fov := FOV_OVERWORLD if _map.map_type == GameMapClass.MAP_OVERWORLD else FOV_RADIUS
+	_map.compute_fov(_player.pos.x, _player.pos.y, fov)
 	queue_redraw()
 
 
@@ -499,38 +609,53 @@ func _draw() -> void:
 
 
 func _draw_map() -> void:
-	for y in range(MAP_ROWS):
-		for x in range(COLS):
-			if not _map.explored[y][x]:
+	for vy in range(MAP_ROWS):
+		for vx in range(COLS):
+			var mx := vx + _cam_x
+			var my := vy + _cam_y
+			if not _map.is_in_bounds(mx, my) or not _map.explored[my][mx]:
 				continue
-			var is_wall: bool = _map.tiles[y][x] == GameMapClass.TILE_WALL
-			var lit: bool     = _map.visible[y][x]
+			var tile: int = _map.tiles[my][mx]
+			var lit: bool = _map.visible[my][mx]
+			var ch: String
 			var color: Color
-			if is_wall:
-				color = C_WALL_LIT if lit else C_WALL_DIM
-			else:
-				color = C_FLOOR_LIT if lit else C_FLOOR_DIM
-			_put(x, y, "#" if is_wall else ".", color)
+			match tile:
+				GameMapClass.TILE_WALL:
+					ch = "#"; color = C_WALL_LIT if lit else C_WALL_DIM
+				GameMapClass.TILE_FLOOR:
+					ch = "."; color = C_FLOOR_LIT if lit else C_FLOOR_DIM
+				GameMapClass.TILE_SAND:
+					ch = "."; color = C_SAND_LIT if lit else C_SAND_DIM
+				GameMapClass.TILE_DUNE:
+					ch = "^"; color = C_DUNE_LIT if lit else C_DUNE_DIM
+				GameMapClass.TILE_ROCK:
+					ch = "#"; color = C_ROCK_LIT if lit else C_ROCK_DIM
+				_:
+					ch = "?"; color = Color.WHITE
+			_put(vx, vy, ch, color)
 
 
 func _draw_entities() -> void:
+	# key: screen-space Vector2i; value: entity. Three passes for priority.
 	var cell_map: Dictionary = {}
 
-	# Priority (lowest to highest): items/stairs → corpses → living actors
 	for e in _map.entities:
-		if not (e is ActorClass) and _map.is_in_bounds(e.pos.x, e.pos.y) \
+		if not (e is ActorClass) and _on_screen(e.pos.x, e.pos.y) \
 				and _map.visible[e.pos.y][e.pos.x]:
-			cell_map[e.pos] = e
+			cell_map[_to_screen(e.pos.x, e.pos.y)] = e
 	for e in _map.entities:
-		if (e is ActorClass) and not e.is_alive and _map.visible[e.pos.y][e.pos.x]:
-			cell_map[e.pos] = e
+		if (e is ActorClass) and not e.is_alive and _on_screen(e.pos.x, e.pos.y) \
+				and _map.visible[e.pos.y][e.pos.x]:
+			cell_map[_to_screen(e.pos.x, e.pos.y)] = e
 	for e in _map.entities:
-		if (e is ActorClass) and e.is_alive and _map.visible[e.pos.y][e.pos.x]:
-			cell_map[e.pos] = e
+		if (e is ActorClass) and e.is_alive and _on_screen(e.pos.x, e.pos.y) \
+				and _map.visible[e.pos.y][e.pos.x]:
+			cell_map[_to_screen(e.pos.x, e.pos.y)] = e
 
-	for e in cell_map.values():
-		draw_rect(Rect2(e.pos.x * CELL_W, e.pos.y * CELL_H, CELL_W, CELL_H), C_BG)
-		_put(e.pos.x, e.pos.y, e.char, e.color)
+	for sp in cell_map:
+		var e = cell_map[sp]
+		draw_rect(Rect2(sp.x * CELL_W, sp.y * CELL_H, CELL_W, CELL_H), C_BG)
+		_put(sp.x, sp.y, e.char as String, e.color)
 
 
 func _draw_ui() -> void:
@@ -554,17 +679,17 @@ func _draw_ui() -> void:
 # Overlay: escape menu
 # ---------------------------------------------------------------------------
 func _draw_escape_menu() -> void:
-	const BOX_W := 36
-	const BOX_H := 9
-	const BOX_X := (COLS - BOX_W) / 2
-	const BOX_Y := (MAP_ROWS - BOX_H) / 2
+	const BOX_W := 52
+	const BOX_H := 12
+	const BOX_X := (COLS - BOX_W) >> 1
+	const BOX_Y := (MAP_ROWS - BOX_H) >> 1
 
 	draw_rect(Rect2(Vector2.ZERO, Vector2(COLS * CELL_W, ROWS * CELL_H)), Color(0, 0, 0, 0.65))
 	draw_rect(Rect2(BOX_X * CELL_W, BOX_Y * CELL_H, BOX_W * CELL_W, BOX_H * CELL_H), C_BG)
 	_draw_box(BOX_X, BOX_Y, BOX_W, BOX_H)
 
 	var title := "-=[ PAUSED ]=-"
-	_puts(BOX_X + (BOX_W - title.length()) / 2, BOX_Y + 1, title, C_STATUS)
+	_puts(BOX_X + ((BOX_W - title.length()) >> 1), BOX_Y + 1, title, C_STATUS)
 
 	for i in range(ESCAPE_OPTIONS.size()):
 		var color  := C_STATUS if i == _escape_cursor else C_MSG_OLD
@@ -572,24 +697,24 @@ func _draw_escape_menu() -> void:
 		_puts(BOX_X + 2, BOX_Y + 3 + i, prefix + ESCAPE_OPTIONS[i], color)
 
 	var hint := "enter: select   esc: resume"
-	_puts(BOX_X + (BOX_W - hint.length()) / 2, BOX_Y + BOX_H - 2, hint, C_DIVIDER)
+	_puts(BOX_X + ((BOX_W - hint.length()) >> 1), BOX_Y + BOX_H - 2, hint, C_DIVIDER)
 
 
 # ---------------------------------------------------------------------------
 # Overlay: settings
 # ---------------------------------------------------------------------------
 func _draw_settings() -> void:
-	const BOX_W := 40
-	const BOX_H := 10
-	const BOX_X := (COLS - BOX_W) / 2
-	const BOX_Y := (MAP_ROWS - BOX_H) / 2
+	const BOX_W := 54
+	const BOX_H := 12
+	const BOX_X := (COLS - BOX_W) >> 1
+	const BOX_Y := (MAP_ROWS - BOX_H) >> 1
 
 	draw_rect(Rect2(Vector2.ZERO, Vector2(COLS * CELL_W, ROWS * CELL_H)), Color(0, 0, 0, 0.65))
 	draw_rect(Rect2(BOX_X * CELL_W, BOX_Y * CELL_H, BOX_W * CELL_W, BOX_H * CELL_H), C_BG)
 	_draw_box(BOX_X, BOX_Y, BOX_W, BOX_H)
 
 	var title := "-=[ SETTINGS ]=-"
-	_puts(BOX_X + (BOX_W - title.length()) / 2, BOX_Y + 1, title, C_STATUS)
+	_puts(BOX_X + ((BOX_W - title.length()) >> 1), BOX_Y + 1, title, C_STATUS)
 
 	var ap_val  := "ON " if GameState.auto_pickup else "OFF"
 	var god_val := "ON " if GameState.god_mode    else "OFF"
@@ -598,24 +723,24 @@ func _draw_settings() -> void:
 		Color(1.0, 0.85, 0.2) if GameState.god_mode else C_MSG_RECENT)
 
 	var hint := "esc: back"
-	_puts(BOX_X + (BOX_W - hint.length()) / 2, BOX_Y + BOX_H - 2, hint, C_DIVIDER)
+	_puts(BOX_X + ((BOX_W - hint.length()) >> 1), BOX_Y + BOX_H - 2, hint, C_DIVIDER)
 
 
 # ---------------------------------------------------------------------------
 # Overlay: inventory
 # ---------------------------------------------------------------------------
 func _draw_inventory() -> void:
-	const BOX_X := 3
-	const BOX_Y := 0
-	const BOX_W := 50
-	const BOX_H := 25
+	const BOX_X := 4
+	const BOX_Y := 1
+	const BOX_W := 60
+	const BOX_H := 28
 
 	draw_rect(Rect2(Vector2.ZERO, Vector2(COLS * CELL_W, ROWS * CELL_H)), Color(0, 0, 0, 0.80))
 	draw_rect(Rect2(BOX_X * CELL_W, BOX_Y * CELL_H, BOX_W * CELL_W, BOX_H * CELL_H), C_BG)
 	_draw_box(BOX_X, BOX_Y, BOX_W, BOX_H)
 
 	var title := "-=[ INVENTORY ]=-"
-	_puts(BOX_X + (BOX_W - title.length()) / 2, BOX_Y, title, C_STATUS)
+	_puts(BOX_X + ((BOX_W - title.length()) >> 1), BOX_Y, title, C_STATUS)
 
 	if _player.inventory.is_empty():
 		_puts(BOX_X + 2, BOX_Y + 2, "Your pack is empty.", C_MSG_OLD)
@@ -634,24 +759,24 @@ func _draw_inventory() -> void:
 		"%d / %d items" % [_player.inventory.size(), ActorClass.MAX_INVENTORY], C_MSG_OLD)
 
 	var hint := "[a-t] use item     [Esc] close"
-	_puts(BOX_X + (BOX_W - hint.length()) / 2, BOX_Y + BOX_H - 2, hint, C_DIVIDER)
+	_puts(BOX_X + ((BOX_W - hint.length()) >> 1), BOX_Y + BOX_H - 2, hint, C_DIVIDER)
 
 
 # ---------------------------------------------------------------------------
 # Overlay: character sheet
 # ---------------------------------------------------------------------------
 func _draw_character_sheet() -> void:
-	const BOX_X := 20
-	const BOX_Y := 4
-	const BOX_W := 40
-	const BOX_H := 15
+	const BOX_X := 35
+	const BOX_Y := 6
+	const BOX_W := 50
+	const BOX_H := 16
 
 	draw_rect(Rect2(Vector2.ZERO, Vector2(COLS * CELL_W, ROWS * CELL_H)), Color(0, 0, 0, 0.80))
 	draw_rect(Rect2(BOX_X * CELL_W, BOX_Y * CELL_H, BOX_W * CELL_W, BOX_H * CELL_H), C_BG)
 	_draw_box(BOX_X, BOX_Y, BOX_W, BOX_H)
 
 	var title := "-=[ CHARACTER ]=-"
-	_puts(BOX_X + (BOX_W - title.length()) / 2, BOX_Y, title, C_STATUS)
+	_puts(BOX_X + ((BOX_W - title.length()) >> 1), BOX_Y, title, C_STATUS)
 
 	var r := BOX_Y + 2
 	_stat_line(BOX_X + 4, r, "Floor",   str(_floor));              r += 1
@@ -665,16 +790,17 @@ func _draw_character_sheet() -> void:
 		"%d / %d items" % [_player.inventory.size(), ActorClass.MAX_INVENTORY]); r += 1
 
 	var hint := "[Esc] close"
-	_puts(BOX_X + (BOX_W - hint.length()) / 2, BOX_Y + BOX_H - 2, hint, C_DIVIDER)
+	_puts(BOX_X + ((BOX_W - hint.length()) >> 1), BOX_Y + BOX_H - 2, hint, C_DIVIDER)
 
 
 # ---------------------------------------------------------------------------
 # Overlay: look mode
 # ---------------------------------------------------------------------------
 func _draw_look_cursor() -> void:
-	# Highlight cursor tile.
+	# Highlight cursor tile (camera already panned to keep it on-screen).
+	var sp := _to_screen(_look_pos.x, _look_pos.y)
 	draw_rect(
-		Rect2(_look_pos.x * CELL_W, _look_pos.y * CELL_H, CELL_W, CELL_H),
+		Rect2(sp.x * CELL_W, sp.y * CELL_H, CELL_W, CELL_H),
 		Color(0.20, 0.75, 0.90, 0.40)
 	)
 

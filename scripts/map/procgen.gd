@@ -153,3 +153,102 @@ static func _item_at(map, x: int, y: int) -> bool:
 		if e.pos.x == x and e.pos.y == y and (e is ItemClass):
 			return true
 	return false
+
+
+static func find_cave_entrance(map) -> Vector2i:
+	# Search for a walkable tile beside rocky outcroppings — a natural cave mouth.
+	# Constraints:
+	#   • 2–4 diagonal+orthogonal rock neighbours  (cave aesthetic)
+	#   • at least 2 walkable cardinal neighbours   (player can actually move)
+	# Score = rock_neighbours * 100 − distance from centre (prefers closer).
+	var cx: int = map.width  >> 1
+	var cy: int = map.height >> 1
+	var best_pos   := Vector2i(cx + 20, cy)
+	var best_score := -1
+
+	for dy in range(-70, 71):
+		for dx in range(-70, 71):
+			var dist: int = absi(dx) + absi(dy)
+			if dist < 15 or dist > 80:
+				continue
+			var tx: int = cx + dx
+			var ty: int = cy + dy
+			if not map.is_in_bounds(tx, ty):
+				continue
+			var t: int = map.tiles[ty][tx]
+			if t != GameMapClass.TILE_SAND and t != GameMapClass.TILE_DUNE:
+				continue
+			# Count 8-directional rock neighbours.
+			var rocks := 0
+			for ndy in range(-1, 2):
+				for ndx in range(-1, 2):
+					if ndx == 0 and ndy == 0:
+						continue
+					var nx: int = tx + ndx
+					var ny: int = ty + ndy
+					if map.is_in_bounds(nx, ny) and map.tiles[ny][nx] == GameMapClass.TILE_ROCK:
+						rocks += 1
+			# Must have 2–4 rock neighbours (cave mouth, not a pit).
+			if rocks < 2 or rocks > 4:
+				continue
+			# Must have at least 2 walkable cardinal neighbours so the player isn't trapped.
+			var open_cardinals := 0
+			for card in [Vector2i(1,0), Vector2i(-1,0), Vector2i(0,1), Vector2i(0,-1)]:
+				var nx: int = tx + card.x
+				var ny: int = ty + card.y
+				if map.is_walkable(nx, ny):
+					open_cardinals += 1
+			if open_cardinals < 2:
+				continue
+			var score: int = rocks * 100 - dist
+			if score > best_score:
+				best_score = score
+				best_pos   = Vector2i(tx, ty)
+	return best_pos
+
+
+static func generate_overworld(map) -> void:
+	# GDC-inspired layered generation:
+	# Pass 1 — broad terrain via low-frequency noise (biome skeleton).
+	# Pass 2 — detail via higher-frequency noise (local variation).
+	# This mirrors the macro→micro layering described in Grinblat (GDC 2019).
+	map.map_type = GameMapClass.MAP_OVERWORLD
+
+	var base_noise := FastNoiseLite.new()
+	base_noise.noise_type  = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	base_noise.seed        = randi()
+	base_noise.frequency   = 0.018
+	base_noise.fractal_octaves    = 4
+	base_noise.fractal_lacunarity = 2.0
+	base_noise.fractal_gain       = 0.5
+
+	# Second noise layer adds fine-grained dune ripple variation.
+	var detail_noise := FastNoiseLite.new()
+	detail_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	detail_noise.seed       = randi()
+	detail_noise.frequency  = 0.06
+
+	for y in range(map.height):
+		for x in range(map.width):
+			var v: float = base_noise.get_noise_2d(float(x), float(y))
+			var d: float = detail_noise.get_noise_2d(float(x), float(y)) * 0.25
+			var combined := v + d
+			# Thresholds produce three terrain bands:
+			#   open sand  (-1.0 .. -0.15) — flat, traversable
+			#   dunes      (-0.15 .. 0.30) — rolling terrain, traversable
+			#   rock       ( 0.30 ..  1.0) — impassable outcroppings
+			if combined > 0.30:
+				map.tiles[y][x] = GameMapClass.TILE_ROCK
+			elif combined > -0.15:
+				map.tiles[y][x] = GameMapClass.TILE_DUNE
+			else:
+				map.tiles[y][x] = GameMapClass.TILE_SAND
+
+	# Guarantee a clear landing zone around the map centre (player spawn point).
+	# This prevents the player from being trapped by rocky outcroppings on arrival.
+	var cx: int = map.width  >> 1
+	var cy: int = map.height >> 1
+	for y in range(maxi(0, cy - 6), mini(map.height, cy + 7)):
+		for x in range(maxi(0, cx - 6), mini(map.width, cx + 7)):
+			if map.tiles[y][x] == GameMapClass.TILE_ROCK:
+				map.tiles[y][x] = GameMapClass.TILE_SAND
