@@ -94,7 +94,7 @@ var _day_tint: Color = Color.WHITE
 # ---------------------------------------------------------------------------
 # Game world + rendering
 # ---------------------------------------------------------------------------
-var _world: GameWorldClass
+var _world: GameWorld
 var _font: Font
 
 # Convenience aliases — read-only proxies into _world.

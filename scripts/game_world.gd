@@ -15,8 +15,11 @@ const EntityClass      = preload("res://scripts/entities/entity.gd")
 const ActorClass       = preload("res://scripts/entities/actor.gd")
 const ItemClass        = preload("res://scripts/entities/item.gd")
 const NpcClass         = preload("res://scripts/entities/npc.gd")
+const NpcDataClass     = preload("res://content/npcs.gd")
 const ProcgenClass     = preload("res://scripts/map/procgen.gd")
 const SaveManagerClass = preload("res://scripts/save_manager.gd")
+const HostileAIClass   = preload("res://scripts/components/hostile_ai.gd")
+const WanderAIClass    = preload("res://scripts/components/wander_ai.gd")
 
 # ---------------------------------------------------------------------------
 # Map size / FOV constants
@@ -51,6 +54,10 @@ var messages: Array[String] = []
 var game_over: bool     = false
 var nearby_npc                       # last bumped NPC, cleared when player moves away
 var turn: int           = 0          # global turn counter — increments every resolved action
+
+# Minimum turns between random encounter rolls (prevents back-to-back spawns).
+const ENCOUNTER_COOLDOWN: int = 30
+var _last_encounter_turn: int = -100
 
 # Time of day: 0.0 = midnight, 0.25 = 06:00, 0.5 = noon, 0.75 = 18:00.
 var time_of_day: float:
@@ -185,11 +192,15 @@ func do_player_turn(dir: Vector2i) -> void:
 
 
 func do_enemy_turns() -> void:
+	var night: bool = is_night
 	for e in map.entities:
 		if not (e is ActorClass):
 			continue
 		if e == player or not e.is_alive or e.ai == null:
 			continue
+		# Push current time-of-day into WanderAI so NPCs can honour their schedule.
+		if e.ai is WanderAI:
+			(e.ai as WanderAI).world_is_night = night
 		var msg: String = e.ai.take_turn(player, map)
 		if msg != "":
 			log(msg)
@@ -211,6 +222,7 @@ func end_turn() -> void:
 		fov = FOV_RADIUS
 	map.compute_fov(player.pos.x, player.pos.y, fov)
 	turn += 1
+	_check_random_encounter()
 	turn_ended.emit(turn)
 
 
@@ -491,6 +503,84 @@ func _walk_toward_center(m, from: Vector2i, steps: int) -> Vector2i:
 			break
 		pos = best_next
 	return pos
+
+
+# ===========================================================================
+# Random encounters (overworld only)
+# ===========================================================================
+
+# Called every turn; rolls for and spawns overworld random encounters.
+func _check_random_encounter() -> void:
+	if depth != 0 or game_over:
+		return
+	if turn - _last_encounter_turn < ENCOUNTER_COOLDOWN:
+		return
+
+	# Night-time bandit encounter — ~1-in-40 chance per eligible turn.
+	if is_night and randf() < 0.025:
+		_spawn_bandits()
+		return
+
+	# Road caravan encounter (day only) — ~1-in-60 chance per eligible turn.
+	if not is_night and is_road_chunk(chunk.x, chunk.y) and randf() < 0.017:
+		_spawn_caravan()
+
+
+# Spawns 1-2 desert bandits near the player.
+func _spawn_bandits() -> void:
+	var count: int   = randi_range(1, 2)
+	var spawned: int = 0
+	# Try several random positions; give up if none are suitable.
+	for _attempt in range(count * 10):
+		if spawned >= count:
+			break
+		var angle: float = randf() * TAU
+		var dist: int    = randi_range(5, 10)
+		var tx: int      = player.pos.x + int(cos(angle) * dist)
+		var ty: int      = player.pos.y + int(sin(angle) * dist)
+		if not map.is_in_bounds(tx, ty):
+			continue
+		if not map.is_walkable(tx, ty):
+			continue
+		if map.get_blocking_entity_at(tx, ty) != null:
+			continue
+		var bandit := ActorClass.new(
+				Vector2i(tx, ty), "B", Color(0.72, 0.32, 0.20),
+				"desert bandit", 12, 1, 3)
+		bandit.ai       = HostileAIClass.new(bandit)
+		bandit.game_map = map
+		map.entities.append(bandit)
+		spawned += 1
+
+	if spawned > 0:
+		_last_encounter_turn = turn
+		var plural: String = "Bandits emerge" if spawned > 1 else "A bandit emerges"
+		log("%s from the night!" % plural)
+
+
+# Spawns a lone traveling merchant on a road chunk.
+func _spawn_caravan() -> void:
+	var tx: int = 0
+	var ty: int = 0
+	var found: bool = false
+	for _attempt in range(25):
+		var angle: float = randf() * TAU
+		var dist: int    = randi_range(6, 14)
+		tx = player.pos.x + int(cos(angle) * dist)
+		ty = player.pos.y + int(sin(angle) * dist)
+		if map.is_in_bounds(tx, ty) and map.is_walkable(tx, ty) \
+				and map.get_blocking_entity_at(tx, ty) == null:
+			found = true
+			break
+	if not found:
+		return
+	var npc_data: Dictionary = NpcDataClass.get_npc("merchant")
+	var npc := NpcClass.new(Vector2i(tx, ty), "merchant", npc_data)
+	npc.ai       = WanderAIClass.new(npc, 0.25, false)  # travels day and night
+	npc.game_map = map
+	map.entities.append(npc)
+	_last_encounter_turn = turn
+	log("A traveling merchant appears on the road ahead.")
 
 
 # Biome labels for in-game log messages.

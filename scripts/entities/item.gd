@@ -1,6 +1,8 @@
 class_name Item
 extends "res://scripts/entities/entity.gd"
 
+const ItemDataClass = preload("res://content/items.gd")
+
 # ---------------------------------------------------------------------------
 # Categories
 # ---------------------------------------------------------------------------
@@ -96,123 +98,21 @@ var defense_bonus: int = 0   # equipment — added to wearer's AC
 
 func _init(p_pos: Vector2i, p_type: String, p_value: int) -> void:
 	item_type = p_type
-	var ch:  String = "?"
-	var col: Color  = Color.WHITE
-	var nm:  String = "unknown item"
-
-	match p_type:
-		# ── Usable ────────────────────────────────────────────────────────
-		TYPE_HEALTH_POTION:
-			ch = "!"; col = Color(0.40, 0.85, 0.35); nm = "health potion"
-			category = CATEGORY_USABLE; base_value = 8
-			dice_count = 1; dice_sides = 6
-		TYPE_HEALING_DRAUGHT:
-			ch = "!"; col = Color(0.25, 0.65, 0.90); nm = "healing draught"
-			category = CATEGORY_USABLE; base_value = 16
-			dice_count = 2; dice_sides = 6
-		# ── Currency ──────────────────────────────────────────────────────
-		TYPE_GOLD:
-			ch = "$"; col = Color(0.90, 0.78, 0.15); nm = "gold coins"
-			category = CATEGORY_GOLD; value = p_value
-		# ── Trade goods ───────────────────────────────────────────────────
-		TYPE_POTTERY:
-			ch = ","; col = Color(0.72, 0.40, 0.22); nm = "pottery"
-			category = CATEGORY_TRADE; base_value = 3; material = "clay"
-		TYPE_LINEN_CLOTH:
-			ch = "\""; col = Color(0.90, 0.88, 0.75); nm = "linen cloth"
-			category = CATEGORY_TRADE; base_value = 4; material = "linen"
-		TYPE_CEDAR_WOOD:
-			ch = "/"; col = Color(0.55, 0.35, 0.18); nm = "cedar wood"
-			category = CATEGORY_TRADE; base_value = 6; material = "wood"
-		TYPE_TIN_INGOT:
-			ch = "*"; col = Color(0.82, 0.84, 0.86); nm = "tin ingot"
-			category = CATEGORY_TRADE; base_value = 12; material = "tin"
-		TYPE_COPPER_INGOT:
-			ch = "*"; col = Color(0.72, 0.45, 0.25); nm = "copper ingot"
-			category = CATEGORY_TRADE; base_value = 8; material = "copper"
-		TYPE_BRONZE_INGOT:
-			ch = "*"; col = Color(0.80, 0.50, 0.20); nm = "bronze ingot"
-			category = CATEGORY_TRADE; base_value = 22; material = "bronze"
-		TYPE_OLIVE_OIL:
-			ch = "~"; col = Color(0.70, 0.75, 0.30); nm = "olive oil"
-			category = CATEGORY_TRADE; base_value = 6; material = "oil"
-		TYPE_WINE:
-			ch = "~"; col = Color(0.55, 0.18, 0.35); nm = "wine"
-			category = CATEGORY_TRADE; base_value = 7; material = "wine"
-		TYPE_IVORY:
-			ch = "-"; col = Color(0.96, 0.94, 0.88); nm = "ivory"
-			category = CATEGORY_TRADE; base_value = 30; material = "ivory"
-		TYPE_LAPIS_LAZULI:
-			ch = "*"; col = Color(0.18, 0.28, 0.82); nm = "lapis lazuli"
-			category = CATEGORY_TRADE; base_value = 40; material = "stone"
-		TYPE_SILVER_INGOT:
-			ch = "*"; col = Color(0.85, 0.87, 0.90); nm = "silver ingot"
-			category = CATEGORY_TRADE; base_value = 35; material = "silver"
-		TYPE_PURPLE_DYE:
-			ch = "~"; col = Color(0.55, 0.12, 0.68); nm = "purple dye"
-			category = CATEGORY_TRADE; base_value = 50; material = "dye"
-		TYPE_WHEAT:
-			ch = ","; col = Color(0.88, 0.78, 0.38); nm = "wheat"
-			category = CATEGORY_TRADE; base_value = 2; material = "grain"
-		TYPE_CLAY_TABLET:
-			ch = "-"; col = Color(0.75, 0.62, 0.42); nm = "clay tablet"
-			category = CATEGORY_TRADE; base_value = 15; material = "clay"
-		# ── Weapons ───────────────────────────────────────────────────────
-		TYPE_DAGGER:
-			ch = ")"; col = Color(0.78, 0.72, 0.55); nm = "dagger"
-			category = CATEGORY_EQUIPMENT; slot = SLOT_WEAPON
-			attack_bonus = 1; base_value = 15; material = "copper"
-		TYPE_SHORT_SWORD:
-			ch = ")"; col = Color(0.85, 0.82, 0.60); nm = "short sword"
-			category = CATEGORY_EQUIPMENT; slot = SLOT_WEAPON
-			attack_bonus = 2; base_value = 28; material = "bronze"
-		TYPE_SPEAR:
-			ch = "/"; col = Color(0.72, 0.65, 0.42); nm = "spear"
-			category = CATEGORY_EQUIPMENT; slot = SLOT_WEAPON
-			attack_bonus = 3; base_value = 20; material = "wood"
-		TYPE_CLUB:
-			ch = ")"; col = Color(0.55, 0.38, 0.22); nm = "club"
-			category = CATEGORY_EQUIPMENT; slot = SLOT_WEAPON
-			attack_bonus = 1; base_value = 8; material = "wood"
-		TYPE_SLING:
-			ch = ")"; col = Color(0.65, 0.55, 0.38); nm = "sling"
-			category = CATEGORY_EQUIPMENT; slot = SLOT_WEAPON
-			attack_bonus = 0; base_value = 5; material = "leather"
-		# ── Body armour ───────────────────────────────────────────────────
-		TYPE_LINEN_TUNIC:
-			ch = "["; col = Color(0.90, 0.88, 0.75); nm = "linen tunic"
-			category = CATEGORY_EQUIPMENT; slot = SLOT_BODY
-			defense_bonus = 1; base_value = 6; material = "linen"
-		TYPE_WOOL_CLOAK:
-			ch = "["; col = Color(0.68, 0.58, 0.42); nm = "wool cloak"
-			category = CATEGORY_EQUIPMENT; slot = SLOT_BODY
-			defense_bonus = 1; base_value = 10; material = "wool"
-		TYPE_LEATHER_VEST:
-			ch = "["; col = Color(0.60, 0.42, 0.25); nm = "leather vest"
-			category = CATEGORY_EQUIPMENT; slot = SLOT_BODY
-			defense_bonus = 2; base_value = 18; material = "leather"
-		# ── Footwear ──────────────────────────────────────────────────────
-		TYPE_SANDALS:
-			ch = "["; col = Color(0.78, 0.65, 0.42); nm = "sandals"
-			category = CATEGORY_EQUIPMENT; slot = SLOT_FEET
-			defense_bonus = 0; base_value = 4; material = "leather"
-		TYPE_LEATHER_BOOTS:
-			ch = "["; col = Color(0.55, 0.40, 0.25); nm = "leather boots"
-			category = CATEGORY_EQUIPMENT; slot = SLOT_FEET
-			defense_bonus = 1; base_value = 12; material = "leather"
-		# ── Headwear ──────────────────────────────────────────────────────
-		TYPE_LINEN_HEADBAND:
-			ch = "["; col = Color(0.90, 0.88, 0.75); nm = "linen headband"
-			category = CATEGORY_EQUIPMENT; slot = SLOT_HEAD
-			defense_bonus = 0; base_value = 3; material = "linen"
-		TYPE_LEATHER_CAP:
-			ch = "["; col = Color(0.60, 0.42, 0.25); nm = "leather cap"
-			category = CATEGORY_EQUIPMENT; slot = SLOT_HEAD
-			defense_bonus = 1; base_value = 10; material = "leather"
-		TYPE_BRONZE_HELMET:
-			ch = "["; col = Color(0.80, 0.50, 0.20); nm = "bronze helmet"
-			category = CATEGORY_EQUIPMENT; slot = SLOT_HEAD
-			defense_bonus = 2; base_value = 35; material = "bronze"
+	var d: Dictionary = ItemDataClass.get_item(p_type)
+	var ch:  String = d.get("char", "?")
+	var col: Color  = Color(float(d.get("cr", 1.0)), float(d.get("cg", 1.0)), float(d.get("cb", 1.0)))
+	var nm:  String = d.get("name", "unknown item")
+	category     = int(d.get("category", CATEGORY_USABLE))
+	slot         = str(d.get("slot", SLOT_NONE))
+	material     = str(d.get("material", ""))
+	base_value   = int(d.get("base_value", 0))
+	dice_count   = int(d.get("dice_count", 0))
+	dice_sides   = int(d.get("dice_sides", 0))
+	attack_bonus = int(d.get("attack_bonus", 0))
+	defense_bonus = int(d.get("defense_bonus", 0))
+	# Gold coins carry a runtime quantity — use p_value directly.
+	if category == CATEGORY_GOLD:
+		value = p_value
 
 	super._init(p_pos, ch, col, nm, false)
 

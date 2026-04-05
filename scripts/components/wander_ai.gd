@@ -5,21 +5,33 @@ extends "res://scripts/components/ai_base.gd"
 # Each turn the NPC takes a random walkable step within wander_radius of its
 # home_pos.  It only moves when visible to the player (saves processing and
 # looks more natural — you see them actually moving around).
+#
+# diurnal: when true the NPC rests at night instead of wandering.
+# GameWorld.do_enemy_turns() updates world_is_night each turn.
 
 const GameMapClass = preload("res://scripts/map/game_map.gd")
 
 # How often the NPC moves: 1.0 = every visible turn, 0.33 = roughly 1-in-3.
 var move_chance: float = 0.40
+# Set by GameWorld before each AI tick so NPCs can react to time of day.
+var world_is_night: bool = false
+# When true the NPC stays near home_pos at night rather than wandering.
+var diurnal: bool = true
 
 
-func _init(p_actor, p_move_chance: float = 0.40) -> void:
+func _init(p_actor, p_move_chance: float = 0.40, p_diurnal: bool = true) -> void:
 	super._init(p_actor)
 	move_chance = p_move_chance
+	diurnal     = p_diurnal
 
 
 func take_turn(player, game_map) -> String:
 	# Only animate when the player can see the NPC.
 	if not game_map.visible[actor.pos.y][actor.pos.x]:
+		return ""
+
+	# Diurnal NPCs stay put at night (they're indoors / asleep).
+	if diurnal and world_is_night:
 		return ""
 
 	if randf() > move_chance:

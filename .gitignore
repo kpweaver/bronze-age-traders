@@ -5,3 +5,8 @@
 # Local IDE / AI assistant settings
 .claude/
 .vscode/
+
+# Python utility environment
+.venv/
+__pycache__/
+*.pyc
