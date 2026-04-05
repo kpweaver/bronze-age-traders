@@ -21,13 +21,22 @@ const SaveManagerClass = preload("res://scripts/save_manager.gd")
 # ---------------------------------------------------------------------------
 # Map size / FOV constants
 # ---------------------------------------------------------------------------
-const DUNGEON_W: int    = 160
-const DUNGEON_H: int    = 70
-const OVERWORLD_W: int  = 200
-const OVERWORLD_H: int  = 100
-const FOV_RADIUS: int   = 8
-const FOV_OVERWORLD: int = 24
-const MSG_MAX: int      = 3
+const DUNGEON_W: int     = 160
+const DUNGEON_H: int     = 70
+const OVERWORLD_W: int   = 200
+const OVERWORLD_H: int   = 100
+const FOV_RADIUS: int    = 8
+const FOV_OVERWORLD: int = 24   # daytime overworld sight range
+const FOV_NIGHT: int     = 14   # night-time overworld sight range
+const MSG_MAX: int       = 3
+
+# Day/night — one in-game day = TURNS_PER_DAY player actions.
+# 240 turns = roughly 10 turns per in-game hour, 24 hours per day.
+const TURNS_PER_DAY: int = 240
+
+# Game starts at dawn (turn 0 → 06:00).  Stored as a turn offset so that
+# saving/loading turn preserves time-of-day correctly.
+const START_HOUR: float  = 6.0   # what real-world hour turn 0 maps to
 
 # ---------------------------------------------------------------------------
 # Public state — read by the renderer, written only through methods below.
@@ -42,6 +51,23 @@ var messages: Array[String] = []
 var game_over: bool     = false
 var nearby_npc                       # last bumped NPC, cleared when player moves away
 var turn: int           = 0          # global turn counter — increments every resolved action
+
+# Time of day: 0.0 = midnight, 0.25 = 06:00, 0.5 = noon, 0.75 = 18:00.
+var time_of_day: float:
+	get:
+		var raw: float = (turn % TURNS_PER_DAY) / float(TURNS_PER_DAY)
+		return fmod(raw + START_HOUR / 24.0, 1.0)
+
+var is_night: bool:
+	get: return time_of_day < 0.2 or time_of_day >= 0.8  # 19:12–04:48
+
+
+# Returns the current time as a "HH:MM" string.
+func get_time_string() -> String:
+	var hours_f: float = fmod(time_of_day * 24.0, 24.0)
+	var h: int = int(hours_f)
+	var m: int = int((hours_f - h) * 60.0)
+	return "%02d:%02d" % [h, m]
 
 
 # ===========================================================================
@@ -178,7 +204,11 @@ func do_enemy_turns() -> void:
 
 
 func end_turn() -> void:
-	var fov := FOV_OVERWORLD if map.map_type == GameMapClass.MAP_OVERWORLD else FOV_RADIUS
+	var fov: int
+	if map.map_type == GameMapClass.MAP_OVERWORLD:
+		fov = FOV_NIGHT if is_night else FOV_OVERWORLD
+	else:
+		fov = FOV_RADIUS
 	map.compute_fov(player.pos.x, player.pos.y, fov)
 	turn += 1
 	turn_ended.emit(turn)

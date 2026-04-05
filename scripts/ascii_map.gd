@@ -86,6 +86,12 @@ var _cam_y: int = 0
 var _look_pos: Vector2i = Vector2i.ZERO
 
 # ---------------------------------------------------------------------------
+# Day/night tint — applied to map tiles and entities only (UI stays lit).
+# Updated every turn via _on_turn_ended.
+# ---------------------------------------------------------------------------
+var _day_tint: Color = Color.WHITE
+
+# ---------------------------------------------------------------------------
 # Game world + rendering
 # ---------------------------------------------------------------------------
 var _world: GameWorldClass
@@ -126,6 +132,9 @@ func _ready() -> void:
 		GameState.load_save = false
 	else:
 		_world.new_game()
+	# map_changed fires during new_game/load, but compute tint explicitly here
+	# in case _ready runs before the signal handler is wired (belt-and-suspenders).
+	_day_tint = _compute_day_tint()
 
 
 func _make_font() -> Font:
@@ -140,13 +149,59 @@ func _make_font() -> Font:
 
 
 func _on_turn_ended(_n: int) -> void:
+	_day_tint = _compute_day_tint()
 	_update_camera()
 	queue_redraw()
 
 
 func _on_map_changed() -> void:
+	_day_tint = _compute_day_tint()
 	_update_camera()
 	queue_redraw()
+
+
+# ---------------------------------------------------------------------------
+# Day/night tint computation
+# Anchor colours:                  time_of_day value
+#   Midnight  (0.00) — deep blue   0.00
+#   Pre-dawn  (0.17) — dark indigo 0.17  (04:00)
+#   Dawn      (0.25) — warm amber  0.25  (06:00)
+#   Morning   (0.33) — soft gold   0.33  (08:00)
+#   Midday    (0.50) — full white  0.50  (12:00)
+#   Afternoon (0.67) — soft gold   0.67  (16:00)
+#   Dusk      (0.75) — warm amber  0.75  (18:00)
+#   Night     (0.83) — dark indigo 0.83  (20:00)
+#   Midnight  (1.00) — deep blue   (wraps)
+# ---------------------------------------------------------------------------
+func _compute_day_tint() -> Color:
+	# Only the overworld is lit by the sun.  Underground is always the same dim.
+	if _world.depth > 0:
+		return Color(0.55, 0.50, 0.45)  # dungeon — torchlight amber-dim
+
+	var t: float = _world.time_of_day   # 0.0 = midnight, 0.5 = noon
+
+	# Four anchor points that repeat symmetrically (dawn ↔ dusk).
+	# Each anchor: [time, Color].
+	const ANCHORS: Array = [
+		[0.00, Color(0.18, 0.20, 0.40)],  # midnight  — deep blue-black
+		[0.17, Color(0.22, 0.22, 0.48)],  # pre-dawn  — indigo dark
+		[0.25, Color(0.88, 0.60, 0.35)],  # dawn      — warm amber
+		[0.33, Color(0.95, 0.85, 0.65)],  # morning   — golden
+		[0.50, Color(1.00, 1.00, 1.00)],  # midday    — full white
+		[0.67, Color(0.95, 0.85, 0.65)],  # afternoon — golden
+		[0.75, Color(0.88, 0.58, 0.32)],  # dusk      — amber
+		[0.83, Color(0.22, 0.22, 0.48)],  # nightfall — indigo dark
+		[1.00, Color(0.18, 0.20, 0.40)],  # midnight  — wraps back
+	]
+
+	# Linear interpolation between the two surrounding anchors.
+	for i in range(ANCHORS.size() - 1):
+		var t0: float  = float(ANCHORS[i][0])
+		var t1: float  = float(ANCHORS[i + 1][0])
+		if t >= t0 and t <= t1:
+			var f: float = (t - t0) / (t1 - t0)
+			return (ANCHORS[i][1] as Color).lerp(ANCHORS[i + 1][1] as Color, f)
+	return Color.WHITE
 
 
 # ===========================================================================
@@ -593,7 +648,7 @@ func _draw_map() -> void:
 					ch = "\u2591"; color = C_ROAD_LIT if lit else C_ROAD_DIM
 				_:
 					ch = "?"; color = Color.WHITE
-			_put(vx, vy, ch, color)
+			_put(vx, vy, ch, color * _day_tint)
 
 
 func _draw_entities() -> void:
@@ -615,7 +670,7 @@ func _draw_entities() -> void:
 	for sp in cell_map:
 		var e = cell_map[sp]
 		draw_rect(Rect2(sp.x * CELL_W, sp.y * CELL_H, CELL_W, CELL_H), C_BG)
-		_put(sp.x, sp.y, e.char as String, e.color)
+		_put(sp.x, sp.y, e.char as String, e.color * _day_tint)
 
 
 func _draw_ui() -> void:
@@ -626,9 +681,11 @@ func _draw_ui() -> void:
 	var hp_color       := C_STATUS.lerp(Color(0.8, 0.15, 0.05), 1.0 - hp_frac)
 	var wpn     = _player.equipped.get(ItemClass.SLOT_WEAPON)
 	var wpn_str := ("  WPN: %s" % (wpn as ItemClass).name) if wpn != null else ""
-	var status := "HP: %d/%d   ATK: 1d6+%d  AC: %d   Gold: %d   Floor: %d%s" % [
+	var time_str: String = _world.get_time_string()
+	var day_str: String  = "Night" if _world.is_night else "Day"
+	var status := "HP: %d/%d   ATK: 1d6+%d  AC: %d   Gold: %d   Floor: %d   %s %s%s" % [
 		_player.hp, _player.max_hp, _player.power + _player.total_attack_bonus,
-		_player.ac, _player.gold, _floor, wpn_str
+		_player.ac, _player.gold, _floor, time_str, day_str, wpn_str
 	]
 	_puts(0, STATUS_ROW, status, hp_color)
 
