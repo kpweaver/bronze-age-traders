@@ -16,9 +16,13 @@ var player_name:  String = "Wanderer"
 var player_class: String = "Wanderer"  # stub for future class system
 
 # World map dimensions (number of overworld chunks in each direction).
-const WORLD_W := 32
-const WORLD_H := 20
+const WORLD_W := 40
+const WORLD_H := 24
 
 # Biome grid — [WORLD_H][WORLD_W] of int (BIOME_* constants from GameMap).
 # Not saved: regenerated deterministically from world_seed on every load.
 var world_biomes: Array = []
+# Village list — [{cx, cy, name}]. Regenerated from world_seed on load.
+var villages: Array = []
+# Road chunks — "cx,cy" string keys. Regenerated from world_seed on load.
+var road_chunks: Dictionary = {}

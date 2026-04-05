@@ -182,7 +182,7 @@ func _draw_class_phase() -> void:
 	_puts_centered(14, name_display, C_INPUT)
 
 	for i in range(CLASSES.size()):
-		var cls        := CLASSES[i]
+		var cls: Array = CLASSES[i]
 		var is_sel     := i == _class_cursor
 		var color      := C_SELECTED if is_sel else C_NORMAL
 		var prefix     := "> " if is_sel else "  "

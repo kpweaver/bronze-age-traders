@@ -10,6 +10,7 @@ const TILE_DUNE  := 3  # rolling dune (walkable)
 const TILE_ROCK  := 4  # rocky outcropping (blocks movement + LOS)
 const TILE_WATER := 5  # oasis water (blocks movement, transparent)
 const TILE_GRASS := 6  # lush grassland (walkable, transparent)
+const TILE_ROAD  := 7  # packed-dirt trade road (walkable, transparent)
 
 const MAP_DUNGEON   := 0
 const MAP_OVERWORLD := 1
@@ -55,7 +56,7 @@ func is_walkable(x: int, y: int) -> bool:
 	if not is_in_bounds(x, y):
 		return false
 	var t: int = tiles[y][x]
-	return t == TILE_FLOOR or t == TILE_SAND or t == TILE_DUNE or t == TILE_GRASS
+	return t == TILE_FLOOR or t == TILE_SAND or t == TILE_DUNE or t == TILE_GRASS or t == TILE_ROAD
 
 
 func is_transparent(x: int, y: int) -> bool:
@@ -63,7 +64,7 @@ func is_transparent(x: int, y: int) -> bool:
 		return false
 	var t: int = tiles[y][x]
 	# Water blocks movement but you can see across it (flat, open surface).
-	return t == TILE_FLOOR or t == TILE_SAND or t == TILE_DUNE or t == TILE_GRASS or t == TILE_WATER
+	return t == TILE_FLOOR or t == TILE_SAND or t == TILE_DUNE or t == TILE_GRASS or t == TILE_WATER or t == TILE_ROAD
 
 
 # Returns the first blocking entity at (x, y), or null.

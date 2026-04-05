@@ -1,9 +1,18 @@
 class_name Procgen
 
+const VILLAGE_NAMES := [
+	"Ugarit", "Byblos", "Jericho", "Hazor", "Megiddo",
+	"Lachish", "Gezer", "Timna", "Kadesh", "Ebla",
+	"Mari", "Nippur", "Uruk", "Ur", "Lagash",
+	"Nineveh", "Assur", "Carchemish", "Alalakh", "Qatna",
+]
+
 const GameMapClass   = preload("res://scripts/map/game_map.gd")
 const EntityClass    = preload("res://scripts/entities/entity.gd")
 const ActorClass     = preload("res://scripts/entities/actor.gd")
 const ItemClass      = preload("res://scripts/entities/item.gd")
+const NpcClass       = preload("res://scripts/entities/npc.gd")
+const NpcDataClass   = preload("res://content/npcs.gd")
 const HostileAIClass = preload("res://scripts/components/hostile_ai.gd")
 
 
@@ -248,7 +257,7 @@ static func generate_world_biomes(world_w: int, world_h: int, world_seed: int) -
 	return grid
 
 
-static func generate_overworld(map, world_x: int, world_y: int, world_seed: int, biome: int = GameMapClass.BIOME_DESERT, safe_center: bool = false) -> void:
+static func generate_overworld(map, world_x: int, world_y: int, world_seed: int, biome: int = 0, safe_center: bool = false, road_dirs: Array = [], is_village: bool = false) -> void:
 	# GDC-inspired layered generation (Grinblat, GDC 2019):
 	# Pass 1 — broad terrain via low-frequency noise (biome skeleton).
 	# Pass 2 — detail via higher-frequency noise (local dune ripple).
@@ -343,3 +352,422 @@ static func generate_overworld(map, world_x: int, world_y: int, world_seed: int,
 				var t: int = map.tiles[y][x]
 				if t == GameMapClass.TILE_ROCK or t == GameMapClass.TILE_WATER:
 					map.tiles[y][x] = GameMapClass.TILE_SAND
+
+	# Roads carved first so village buildings are placed around them, not over them.
+	if road_dirs.size() > 0:
+		_carve_roads(map, road_dirs, world_seed, world_x, world_y)
+
+	# Village structures placed after roads; they preserve existing TILE_ROAD tiles.
+	if is_village:
+		_place_village(map, world_seed, world_x, world_y)
+
+
+# ---------------------------------------------------------------------------
+# Village generation
+# ---------------------------------------------------------------------------
+
+static func generate_villages(world_w: int, world_h: int, biomes: Array, world_seed: int) -> Array:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = world_seed + 999
+
+	var cx_center: int = world_w >> 1
+	var cy_center: int = world_h >> 1
+	var result: Array  = []
+	var target: int    = 10
+	var min_dist: int  = 7   # minimum Chebyshev distance between villages
+
+	for _attempt in range(300):
+		if result.size() >= target:
+			break
+		var cx: int = rng.randi_range(1, world_w - 2)
+		var cy: int = rng.randi_range(1, world_h - 2)
+
+		# Keep away from world centre (dungeon area).
+		if maxi(absi(cx - cx_center), absi(cy - cy_center)) < 5:
+			continue
+		# Avoid mountain biomes (impassable terrain — villages shouldn't be there).
+		if biomes[cy][cx] == GameMapClass.BIOME_MOUNTAINS:
+			continue
+		# Enforce minimum spacing.
+		var too_close := false
+		for v in result:
+			if maxi(absi(cx - int(v.cx)), absi(cy - int(v.cy))) < min_dist:
+				too_close = true
+				break
+		if too_close:
+			continue
+
+		result.append({cx = cx, cy = cy, name = VILLAGE_NAMES[result.size() % VILLAGE_NAMES.size()]})
+
+	return result
+
+
+# ---------------------------------------------------------------------------
+# Road generation (Prim's MST connecting villages to world centre)
+# ---------------------------------------------------------------------------
+
+static func generate_roads(villages: Array, world_w: int, world_h: int) -> Dictionary:
+	var road_set: Dictionary = {}
+
+	if villages.is_empty():
+		return road_set
+
+	var center := Vector2i(world_w >> 1, world_h >> 1)
+	var points: Array  = [center]
+	for v in villages:
+		points.append(Vector2i(int(v.cx), int(v.cy)))
+
+	# Prim's MST: start from centre, greedily connect nearest unvisited point.
+	var connected: Array   = [center]
+	var remaining: Array   = points.slice(1)
+
+	while remaining.size() > 0:
+		var best_dist: int  = 999999
+		var best_a: Vector2i = connected[0]
+		var best_b: Vector2i = remaining[0]
+
+		for a: Vector2i in connected:
+			for b: Vector2i in remaining:
+				var d: int = absi(a.x - b.x) + absi(a.y - b.y)
+				if d < best_dist:
+					best_dist = d
+					best_a    = a
+					best_b    = b
+
+		_road_bresenham(road_set, best_a, best_b)
+		connected.append(best_b)
+		remaining.erase(best_b)
+
+	return road_set
+
+
+static func _road_bresenham(road_set: Dictionary, from: Vector2i, to: Vector2i) -> void:
+	var x0 := from.x;  var y0 := from.y
+	var x1 := to.x;    var y1 := to.y
+	var dx := absi(x1 - x0);  var dy := absi(y1 - y0)
+	var sx := 1 if x0 < x1 else -1
+	var sy := 1 if y0 < y1 else -1
+	var err := dx - dy
+	while true:
+		road_set["%d,%d" % [x0, y0]] = true
+		if x0 == x1 and y0 == y1:
+			break
+		var e2 := 2 * err
+		if e2 > -dy:
+			err -= dy;  x0 += sx
+		if e2 < dx:
+			err += dx;  y0 += sy
+
+
+# ---------------------------------------------------------------------------
+# Road carving inside an overworld chunk
+# ---------------------------------------------------------------------------
+
+static func _carve_roads(map, road_dirs: Array, world_seed: int, world_x: int, world_y: int) -> void:
+	var cx: int = map.width  >> 1
+	var cy: int = map.height >> 1
+	var center := Vector2i(cx, cy)
+
+	# Deterministic per-chunk RNG for organic bends.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = world_seed + world_x * 31337 + world_y * 13579
+
+	# Entry points per cardinal direction.
+	var edge_pts: Array = []
+	for d: Vector2i in road_dirs:
+		if   d == Vector2i( 0, -1): edge_pts.append(Vector2i(cx,              0))
+		elif d == Vector2i( 0,  1): edge_pts.append(Vector2i(cx, map.height - 1))
+		elif d == Vector2i(-1,  0): edge_pts.append(Vector2i(0,              cy))
+		elif d == Vector2i( 1,  0): edge_pts.append(Vector2i(map.width - 1,  cy))
+
+	if edge_pts.is_empty():
+		return
+
+	for ep: Vector2i in edge_pts:
+		# Insert a waypoint near the midpoint, offset perpendicular to the road's
+		# main axis, creating organic bends instead of ruler-straight roads.
+		var mid_x: int = (ep.x + center.x) >> 1
+		var mid_y: int = (ep.y + center.y) >> 1
+		var is_v: bool = absi(ep.y - center.y) >= absi(ep.x - center.x)
+		if is_v:
+			mid_x = clampi(mid_x + rng.randi_range(-10, 10), 4, map.width  - 5)
+		else:
+			mid_y = clampi(mid_y + rng.randi_range(-10, 10), 4, map.height - 5)
+		var waypoint := Vector2i(mid_x, mid_y)
+
+		_road_line_in_chunk(map, ep, waypoint)
+		_road_line_in_chunk(map, waypoint, center)
+
+
+static func _road_line_in_chunk(map, from: Vector2i, to: Vector2i) -> void:
+	# Direction-aware 3-tile-wide road. Overwrites any terrain tile (including
+	# uninitialised TILE_WALL from map init) to prevent road gaps. Buildings
+	# placed afterward will detect road overlap and reposition.
+	var tdx: int = absi(to.x - from.x)
+	var tdy: int = absi(to.y - from.y)
+	var is_h: bool = tdx >= tdy  # mostly horizontal → widen in Y
+
+	var x0 := from.x;  var y0 := from.y
+	var x1 := to.x;    var y1 := to.y
+	var dx := absi(x1 - x0);  var dy := absi(y1 - y0)
+	var sx := 1 if x0 < x1 else -1
+	var sy := 1 if y0 < y1 else -1
+	var err := dx - dy
+	while true:
+		if is_h:
+			for ry in range(-1, 2):
+				if map.is_in_bounds(x0, y0 + ry):
+					map.tiles[y0 + ry][x0] = GameMapClass.TILE_ROAD
+		else:
+			for rx in range(-1, 2):
+				if map.is_in_bounds(x0 + rx, y0):
+					map.tiles[y0][x0 + rx] = GameMapClass.TILE_ROAD
+		if x0 == x1 and y0 == y1:
+			break
+		var e2 := 2 * err
+		if e2 > -dy:
+			err -= dy;  x0 += sx
+		if e2 < dx:
+			err += dx;  y0 += sy
+
+
+# ---------------------------------------------------------------------------
+# Village structure placement inside an overworld chunk
+# ---------------------------------------------------------------------------
+
+# Building type constants used only within village generation.
+const _BT_HOME       := 0   # small dwelling
+const _BT_ADMIN      := 1   # civic / temple / administrative
+const _BT_COMMERCIAL := 2   # market stall, smithy, workshop
+
+
+static func _place_village(map, world_seed: int, world_x: int, world_y: int) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = world_seed ^ (world_x * 73856093) ^ (world_y * 19349663)
+
+	var cx: int = map.width  >> 1
+	var cy: int = map.height >> 1
+
+	# Central sand plaza — roads are already carved; preserve them.
+	for y in range(maxi(0, cy - 7), mini(map.height, cy + 8)):
+		for x in range(maxi(0, cx - 7), mini(map.width, cx + 8)):
+			if map.tiles[y][x] != GameMapClass.TILE_ROAD:
+				map.tiles[y][x] = GameMapClass.TILE_SAND
+
+	# Building composition: 1 admin, 2–3 commercial, rest homes.
+	var n_commercial: int   = rng.randi_range(2, 3)
+	var n_homes: int        = rng.randi_range(3, 5)
+	var target_buildings: int = 1 + n_commercial + n_homes
+
+	# Build the type sequence: admin first, then commercial, then homes.
+	var btype_seq: Array = [_BT_ADMIN]
+	for _i in range(n_commercial): btype_seq.append(_BT_COMMERCIAL)
+	for _i in range(n_homes):      btype_seq.append(_BT_HOME)
+
+	var placed_rects: Array      = []   # [{bx, by, bw, bh}]
+	var all_interior_tiles: Array = []
+
+	for _attempt in range(target_buildings * 20):
+		if placed_rects.size() >= target_buildings:
+			break
+
+		var bidx: int   = placed_rects.size()
+		var btype: int  = btype_seq[bidx] if bidx < btype_seq.size() else _BT_HOME
+		var angle: float = TAU * float(bidx) / float(target_buildings) \
+				+ rng.randf_range(-0.4, 0.4)
+
+		# Size and ring radius vary by type.
+		var bw: int
+		var bh: int
+		var ring_r: float
+		match btype:
+			_BT_ADMIN:
+				bw = rng.randi_range(10, 16); bh = rng.randi_range(7, 10); ring_r = 15.0
+			_BT_COMMERCIAL:
+				bw = rng.randi_range(7, 12);  bh = rng.randi_range(5, 8);  ring_r = 13.0
+			_:  # HOME
+				bw = rng.randi_range(5, 8);   bh = rng.randi_range(4, 6);  ring_r = 12.0
+
+		var dist: float = ring_r + rng.randf_range(-2.0, 4.0)
+		var bx: int  = cx + int(cos(angle) * dist) - (bw >> 1)
+		var by_: int = cy + int(sin(angle) * dist) - (bh >> 1)
+
+		# Reject if footprint goes outside map bounds.
+		if bx < 1 or by_ < 1 or bx + bw > map.width - 1 or by_ + bh > map.height - 1:
+			continue
+
+		# Reject if too many road tiles in the footprint (road bisects building).
+		var road_count: int = 0
+		for dy in range(bh):
+			for dx in range(bw):
+				if map.tiles[by_ + dy][bx + dx] == GameMapClass.TILE_ROAD:
+					road_count += 1
+		if road_count * 100 > bw * bh * 20:
+			continue
+
+		# Reject if footprint overlaps any already-placed building (1-tile padding).
+		var overlaps: bool = false
+		for r: Dictionary in placed_rects:
+			if bx   <= int(r.bx) + int(r.bw) and bx + bw >= int(r.bx) \
+			and by_ <= int(r.by) + int(r.bh) and by_ + bh >= int(r.by):
+				overlaps = true
+				break
+		if overlaps:
+			continue
+
+		# Stamp the building — walls on perimeter, floor inside.
+		var interior_tiles: Array = []
+		for dy in range(bh):
+			for dx in range(bw):
+				var px: int = bx + dx
+				var py: int = by_ + dy
+				var on_wall: bool = (dx == 0 or dx == bw - 1 or dy == 0 or dy == bh - 1)
+				if on_wall:
+					map.tiles[py][px] = GameMapClass.TILE_WALL
+				else:
+					map.tiles[py][px] = GameMapClass.TILE_FLOOR
+					interior_tiles.append(Vector2i(px, py))
+
+		# Doorway on the wall facing the plaza.
+		var face: float = angle + PI
+		var door_x: int
+		var door_y: int
+		if absf(cos(face)) >= absf(sin(face)):
+			door_x = bx if cos(face) < 0.0 else bx + bw - 1
+			door_y = by_ + (bh >> 1)
+		else:
+			door_x = bx + (bw >> 1)
+			door_y = by_ if sin(face) < 0.0 else by_ + bh - 1
+		if map.is_in_bounds(door_x, door_y):
+			map.tiles[door_y][door_x] = GameMapClass.TILE_SAND
+
+		# Furnish the building based on its type.
+		match btype:
+			_BT_ADMIN:      _furnish_admin(map, rng, bx, by_, bw, bh)
+			_BT_COMMERCIAL: _furnish_commercial(map, rng, bx, by_, bw, bh)
+			_:              _furnish_home(map, rng, bx, by_, bw, bh)
+
+		placed_rects.append({bx = bx, by = by_, bw = bw + 1, bh = bh + 1})
+		all_interior_tiles.append_array(interior_tiles)
+
+	# Spawn 2–4 NPCs at unoccupied interior floor positions.
+	if all_interior_tiles.size() > 0:
+		var npc_pool: Array   = NpcDataClass.weighted_types()
+		var npc_count: int    = rng.randi_range(2, 4)
+		var used_npc: Dictionary = {}
+		var spawned_npc: int  = 0
+		for _npi in range(npc_count * 10):
+			if spawned_npc >= npc_count:
+				break
+			var ni: int = rng.randi_range(0, all_interior_tiles.size() - 1)
+			var npc_pos: Vector2i = all_interior_tiles[ni]
+			if used_npc.has(npc_pos):
+				continue
+			# Skip tile if furniture is already blocking it.
+			var occupied := false
+			for e in map.entities:
+				if e.pos == npc_pos and e.blocks_movement:
+					occupied = true
+					break
+			if occupied:
+				continue
+			used_npc[npc_pos] = true
+			var npc_type: String     = str(npc_pool[rng.randi_range(0, npc_pool.size() - 1)])
+			var npc_data: Dictionary = NpcDataClass.get_npc(npc_type)
+			map.entities.append(NpcClass.new(npc_pos, npc_type, npc_data))
+			spawned_npc += 1
+
+
+# ---------------------------------------------------------------------------
+# Furniture helpers
+# Each function places decorative Entity objects on TILE_FLOOR tiles only.
+# Furniture is non-blocking so the player can walk through it.
+# ---------------------------------------------------------------------------
+
+# Shared — place a single furniture piece; skips non-floor or already-occupied tiles.
+static func _place_furniture(map, x: int, y: int, ch: String, col: Color, nm: String) -> void:
+	if not map.is_in_bounds(x, y) or map.tiles[y][x] != GameMapClass.TILE_FLOOR:
+		return
+	for e in map.entities:
+		if e.pos == Vector2i(x, y) and not (e is ActorClass):
+			return   # don't stack furniture
+	map.entities.append(EntityClass.new(Vector2i(x, y), ch, col, nm, false))
+
+
+# Home — hearth, beds, storage jars.
+static func _furnish_home(map, rng: RandomNumberGenerator, bx: int, by_: int, bw: int, bh: int) -> void:
+	var cx: int = bx + (bw >> 1)
+	var cy: int = by_ + (bh >> 1)
+
+	# Hearth near the centre.
+	_place_furniture(map, cx, cy, "*", Color(0.88, 0.42, 0.10), "hearth")
+
+	# 1–2 beds against the back wall.
+	var bed_wall_y: int = by_ + 1
+	for i in range(rng.randi_range(1, 2)):
+		var bx_f: int = bx + 1 + rng.randi_range(0, maxi(0, bw - 3))
+		_place_furniture(map, bx_f, bed_wall_y, "\u2261", Color(0.68, 0.52, 0.35), "bed")
+
+	# 1–3 storage jars in the corners.
+	var corners: Array = [
+		Vector2i(bx + 1,      by_ + bh - 2),
+		Vector2i(bx + bw - 2, by_ + bh - 2),
+		Vector2i(bx + 1,      by_ + 1),
+	]
+	var jar_count: int = rng.randi_range(1, mini(3, corners.size()))
+	for i in range(jar_count):
+		var ci: int = rng.randi_range(0, corners.size() - 1)
+		_place_furniture(map, corners[ci].x, corners[ci].y, "o", Color(0.72, 0.40, 0.22), "storage jar")
+
+
+# Admin — central table cluster, clay tablet racks along walls, offering stand.
+static func _furnish_admin(map, rng: RandomNumberGenerator, bx: int, by_: int, bw: int, bh: int) -> void:
+	var cx: int = bx + (bw >> 1)
+	var cy: int = by_ + (bh >> 1)
+
+	# Central table cluster (2×2 or 3×2).
+	var tw: int = rng.randi_range(2, 3)
+	for dy in range(2):
+		for dx in range(tw):
+			_place_furniture(map, cx - 1 + dx, cy - 1 + dy, "+", Color(0.42, 0.28, 0.14), "table")
+
+	# Offering / incense stand near the back wall, centred.
+	_place_furniture(map, cx, by_ + 1, "^", Color(0.88, 0.72, 0.25), "offering stand")
+
+	# Clay tablet racks along the left wall.
+	var rack_count: int = rng.randi_range(2, maxi(2, bh - 3))
+	for i in range(rack_count):
+		_place_furniture(map, bx + 1, by_ + 2 + i, "-", Color(0.82, 0.72, 0.55), "clay tablet rack")
+
+	# Clay tablet racks along the right wall.
+	rack_count = rng.randi_range(1, maxi(1, bh - 3))
+	for i in range(rack_count):
+		_place_furniture(map, bx + bw - 2, by_ + 2 + i, "-", Color(0.82, 0.72, 0.55), "clay tablet rack")
+
+	# A shelf unit in a rear corner.
+	_place_furniture(map, bx + bw - 2, by_ + 1, "#", Color(0.45, 0.30, 0.18), "shelf")
+
+
+# Commercial — counter facing the door, storage jars at the back, work surface.
+static func _furnish_commercial(map, rng: RandomNumberGenerator, bx: int, by_: int, bw: int, bh: int) -> void:
+	var cx: int = bx + (bw >> 1)
+	var cy: int = by_ + (bh >> 1)
+
+	# Counter runs across the near side of the room (facing plaza/door).
+	var counter_len: int = rng.randi_range(2, maxi(2, bw - 3))
+	var counter_y: int   = by_ + 2
+	for i in range(counter_len):
+		_place_furniture(map, bx + 1 + i, counter_y, "=", Color(0.50, 0.33, 0.16), "counter")
+
+	# Storage jars lined up at the back wall.
+	var jar_count: int = rng.randi_range(2, maxi(2, bw - 3))
+	for i in range(jar_count):
+		_place_furniture(map, bx + 1 + i, by_ + bh - 2, "o", Color(0.72, 0.40, 0.22), "storage jar")
+
+	# Work surface (anvil, loom, mill) in the centre-back.
+	_place_furniture(map, cx, cy, "+", Color(0.48, 0.32, 0.16), "work surface")
+
+	# 1–2 extra jars or tools on the side wall.
+	var side_count: int = rng.randi_range(1, 2)
+	for i in range(side_count):
+		_place_furniture(map, bx + bw - 2, by_ + 2 + i, "o", Color(0.65, 0.38, 0.20), "storage jar")

@@ -2,6 +2,8 @@ class_name SaveManager
 
 const ActorClass     = preload("res://scripts/entities/actor.gd")
 const ItemClass      = preload("res://scripts/entities/item.gd")
+const NpcClass       = preload("res://scripts/entities/npc.gd")
+const NpcDataClass   = preload("res://content/npcs.gd")
 const HostileAIClass = preload("res://scripts/components/hostile_ai.gd")
 const GameMapClass   = preload("res://scripts/map/game_map.gd")
 
@@ -31,6 +33,7 @@ static func save_game(game_map, player, floor: int, floors: Dictionary, chunk: V
 			"defense": player.defense, "power": player.power,
 			"gold": player.gold,
 			"inventory": _serialize_inventory(player.inventory),
+			"equipped":  _serialize_equipped(player.equipped),
 		},
 		"map": {
 			"width":    game_map.width,
@@ -80,8 +83,18 @@ static func _serialize_stored_chunks(chunks: Dictionary) -> Dictionary:
 static func _serialize_inventory(inventory: Array) -> Array:
 	var result := []
 	for item in inventory:
-		result.append({"item_type": item.item_type, "value": item.value,
-			"dice_count": item.dice_count, "dice_sides": item.dice_sides})
+		result.append({"item_type": item.item_type, "value": item.value})
+	return result
+
+
+static func _serialize_equipped(equipped: Dictionary) -> Dictionary:
+	var result: Dictionary = {}
+	for slot: String in equipped:
+		var item = equipped[slot]
+		if item != null:
+			result[slot] = {"item_type": str(item.item_type), "value": int(item.value)}
+		else:
+			result[slot] = null
 	return result
 
 
@@ -97,7 +110,14 @@ static func _serialize_entities(entities: Array, player) -> Array:
 			"name": e.name,
 			"blocks_movement": e.blocks_movement,
 		}
-		if e is ActorClass:
+		if e is NpcClass:
+			entry["type"]         = "npc"
+			entry["npc_type"]     = (e as NpcClass).npc_type
+			entry["hp"]           = e.hp
+			entry["max_hp"]       = e.max_hp
+			entry["dialogue_idx"] = (e as NpcClass)._dialogue_idx
+			entry["trade_stock"]  = (e as NpcClass).trade_stock.duplicate(true)
+		elif e is ActorClass:
 			entry["type"]    = "actor"
 			entry["hp"]      = e.hp
 			entry["max_hp"]  = e.max_hp
@@ -154,8 +174,14 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 	player.hp   = int(pd["hp"])
 	player.gold = int(pd.get("gold", 0))
 	for inv: Dictionary in pd.get("inventory", []):
-		var item = ItemClass.new(Vector2i(0, 0), inv["item_type"], int(inv["value"]))
+		var item = ItemClass.new(Vector2i(0, 0), str(inv["item_type"]), int(inv.get("value", 0)))
 		player.inventory.append(item)
+	# Restore equipped gear (all fields re-derived from item_type in Item._init).
+	for slot: String in pd.get("equipped", {}).keys():
+		var eq_data = pd["equipped"][slot]
+		if eq_data != null and eq_data is Dictionary:
+			var eq_item = ItemClass.new(Vector2i(0,0), str(eq_data["item_type"]), int(eq_data.get("value",0)))
+			player.equipped[slot] = eq_item
 	player.game_map = game_map
 	game_map.entities.append(player)
 
@@ -163,6 +189,18 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 		var color := Color(float(ed["cr"]), float(ed["cg"]), float(ed["cb"]))
 		var pos   := Vector2i(int(ed["x"]), int(ed["y"]))
 		match ed["type"]:
+			"npc":
+				var npc_type: String     = str(ed.get("npc_type", "merchant"))
+				var npc_data: Dictionary = NpcDataClass.get_npc(npc_type)
+				var npc = NpcClass.new(pos, npc_type, npc_data)
+				npc.hp             = int(ed.get("hp", npc.max_hp))
+				npc._dialogue_idx  = int(ed.get("dialogue_idx", 0))
+				# Restore per-instance stock (qtys may have changed from purchases).
+				var saved_stock = ed.get("trade_stock", [])
+				if not (saved_stock as Array).is_empty():
+					npc.trade_stock = (saved_stock as Array).duplicate(true)
+				npc.game_map = game_map
+				game_map.entities.append(npc)
 			"actor":
 				var actor = ActorClass.new(pos, ed["char"], color, ed["name"],
 						int(ed["max_hp"]), int(ed["defense"]), int(ed["power"]))
@@ -173,7 +211,7 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 				actor.game_map = game_map
 				game_map.entities.append(actor)
 			"item":
-				var item = ItemClass.new(pos, ed["item_type"], int(ed["value"]))
+				var item = ItemClass.new(pos, str(ed["item_type"]), int(ed["value"]))
 				item.game_map = game_map
 				game_map.entities.append(item)
 			"entity":
@@ -239,13 +277,24 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 			var color := Color(float(ed["cr"]), float(ed["cg"]), float(ed["cb"]))
 			var pos   := Vector2i(int(ed["x"]), int(ed["y"]))
 			match ed["type"]:
+				"npc":
+					var npc_type: String     = str(ed.get("npc_type", "merchant"))
+					var npc_data: Dictionary = NpcDataClass.get_npc(npc_type)
+					var npc = NpcClass.new(pos, npc_type, npc_data)
+					npc.hp            = int(ed.get("hp", npc.max_hp))
+					npc._dialogue_idx = int(ed.get("dialogue_idx", 0))
+					var saved_stock = ed.get("trade_stock", [])
+					if not (saved_stock as Array).is_empty():
+						npc.trade_stock = (saved_stock as Array).duplicate(true)
+					npc.game_map = cmap
+					cmap.entities.append(npc)
 				"entity":
 					var ent = load("res://scripts/entities/entity.gd").new(
 							pos, ed["char"], color, ed["name"], bool(ed["blocks_movement"]))
 					ent.game_map = cmap
 					cmap.entities.append(ent)
 				"item":
-					var item = ItemClass.new(pos, ed["item_type"], int(ed["value"]))
+					var item = ItemClass.new(pos, str(ed["item_type"]), int(ed.get("value", 0)))
 					item.game_map = cmap
 					cmap.entities.append(item)
 		chunks[c] = cmap

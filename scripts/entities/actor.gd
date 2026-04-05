@@ -1,6 +1,8 @@
 class_name Actor
 extends "res://scripts/entities/entity.gd"
 
+const ItemClass = preload("res://scripts/entities/item.gd")
+
 const MAX_INVENTORY := 20
 
 var max_hp: int
@@ -8,14 +10,40 @@ var hp: int
 var defense: int
 var power: int
 var ai          # HostileAI or null — untyped to break circular dependency
-var inventory: Array = []  # Array of Item
+var inventory: Array = []  # Array of Item (non-equipped)
 var gold: int = 0
+
+# Equipment slots — values are Item instances or null.
+var equipped: Dictionary = {
+	"weapon": null,
+	"body":   null,
+	"feet":   null,
+	"head":   null,
+}
 
 var is_alive: bool:
 	get: return hp > 0
 
+# Sum of defense_bonus across all equipped items.
+var total_defense_bonus: int:
+	get:
+		var b: int = 0
+		for s: String in equipped:
+			if equipped[s] != null:
+				b += int(equipped[s].defense_bonus)
+		return b
+
+# Sum of attack_bonus across all equipped items.
+var total_attack_bonus: int:
+	get:
+		var b: int = 0
+		for s: String in equipped:
+			if equipped[s] != null:
+				b += int(equipped[s].attack_bonus)
+		return b
+
 var ac: int:
-	get: return 10 + defense
+	get: return 10 + defense + total_defense_bonus
 
 
 func _init(
@@ -52,10 +80,10 @@ func attack(target: Actor) -> String:
 	if roll < target.ac:
 		return "%s %s %s but %s. [to hit: %d vs AC %d]" % \
 			[_subj(), v_attack, target._obj(), v_miss, roll, target.ac]
-	var dmg: int = randi_range(1, 6) + power
+	var dmg: int = randi_range(1, 6) + power + total_attack_bonus
 	target.take_damage(dmg)
 	return "%s %s %s for %d damage. [to hit: %d vs AC %d, 1d6+%d = %d]" % \
-		[_subj(), v_hit, target._obj(), dmg, roll, target.ac, power, dmg]
+		[_subj(), v_hit, target._obj(), dmg, roll, target.ac, power + total_attack_bonus, dmg]
 
 
 func take_damage(amount: int) -> void:
@@ -68,3 +96,34 @@ func die() -> String:
 	blocks_movement = false
 	ai              = null
 	return "You fall." if name == "you" else "The %s falls." % name
+
+
+# Move item from inventory into the matching equipment slot.
+# Any previously equipped item is swapped back into inventory.
+# Returns a log message.
+func equip(item) -> String:
+	var s: String = str(item.slot)
+	if s == ItemClass.SLOT_NONE:
+		return "You can't equip the %s." % item.name
+	if not equipped.has(s):
+		return "Unknown equipment slot."
+	var old = equipped[s]
+	equipped[s] = item
+	inventory.erase(item)
+	if old != null:
+		inventory.append(old)
+		return "You equip the %s (replacing the %s)." % [item.name, old.name]
+	return "You equip the %s." % item.name
+
+
+# Move equipped item from slot back into inventory.
+# Returns a log message, or "" if slot is empty.
+func unequip(slot_key: String) -> String:
+	var item = equipped.get(slot_key)
+	if item == null:
+		return ""
+	if inventory.size() >= MAX_INVENTORY:
+		return "Your pack is full — can't unequip the %s." % item.name
+	equipped[slot_key] = null
+	inventory.append(item)
+	return "You unequip the %s." % item.name
