@@ -113,8 +113,6 @@ var _messages:
 	get: return _world.messages
 var _game_over:
 	get: return _world.game_over
-var _nearby_npc:
-	get: return _world.nearby_npc
 
 
 # ===========================================================================
@@ -690,7 +688,7 @@ func _draw_ui() -> void:
 	_puts(0, STATUS_ROW, status, hp_color)
 
 	for i in range(_messages.size()):
-		var is_last := i == _messages.size() - 1
+		var is_last: bool = i == _messages.size() - 1
 		_puts(0, MSG_START_ROW + i, _messages[i], C_MSG_RECENT if is_last else C_MSG_OLD)
 
 
@@ -1144,8 +1142,8 @@ func _draw_world_map() -> void:
 			var this_chunk := Vector2i(cx, cy)
 			var sx: int = wm_left + cx * wm_cell
 			var sy: int = wm_top  + cy
-			var is_current := this_chunk == _chunk
-			var is_lk_curs := _world_look_mode and this_chunk == _world_look_cursor
+			var is_current: bool = this_chunk == _chunk
+			var is_lk_curs: bool = _world_look_mode and this_chunk == _world_look_cursor
 
 			var ch: String
 			var color: Color
@@ -1173,7 +1171,7 @@ func _draw_world_map() -> void:
 				_put(sx + 1, sy, "]", C_STATUS)
 
 	var info_y: int = wm_top + GameState.WORLD_H + 2
-	var info_c := _world_look_cursor if _world_look_mode else _chunk
+	var info_c: Vector2i = _world_look_cursor if _world_look_mode else _chunk
 	var info_biome := _world.get_chunk_biome(info_c)
 	var info_vill: Variant = _world.get_village_at_chunk(info_c.x, info_c.y)
 
