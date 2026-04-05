@@ -12,6 +12,10 @@ var buy_mult: float    = 0.70  # fraction of item.base_value we pay when buying 
 var sell_mult: float   = 1.35  # multiplier on item.base_value when selling to player
 var _dialogue_idx: int = 0
 
+# Behaviour / movement state
+var home_pos: Vector2i  = Vector2i.ZERO  # tile where this NPC was spawned
+var wander_radius: int  = 8              # max tiles from home_pos willing to wander
+
 
 func _init(p_pos: Vector2i, p_type: String, p_data: Dictionary) -> void:
 	var col := Color(
@@ -28,13 +32,15 @@ func _init(p_pos: Vector2i, p_type: String, p_data: Dictionary) -> void:
 		int(p_data.get("defense", 0)),
 		int(p_data.get("power", 1))
 	)
-	npc_type    = p_type
-	dialogue    = p_data.get("dialogue", ["..."])
-	is_merchant = bool(p_data.get("is_merchant", false))
-	trade_stock = p_data.get("trade_stock", []).duplicate(true)
-	buy_mult    = float(p_data.get("buy_mult",  0.70))
-	sell_mult   = float(p_data.get("sell_mult", 1.35))
-	ai          = null  # peaceful
+	npc_type      = p_type
+	dialogue      = p_data.get("dialogue", ["..."])
+	is_merchant   = bool(p_data.get("is_merchant", false))
+	trade_stock   = p_data.get("trade_stock", []).duplicate(true)
+	buy_mult      = float(p_data.get("buy_mult",  0.70))
+	sell_mult     = float(p_data.get("sell_mult", 1.35))
+	home_pos      = p_pos
+	wander_radius = int(p_data.get("wander_radius", 8))
+	ai            = null  # peaceful by default — attach WanderAI etc. at spawn
 
 
 # Return the next cycling dialogue line (advances internal index).

@@ -161,7 +161,7 @@ func _init(p_pos: Vector2i, p_type: String, p_value: int) -> void:
 		TYPE_DAGGER:
 			ch = ")"; col = Color(0.78, 0.72, 0.55); nm = "dagger"
 			category = CATEGORY_EQUIPMENT; slot = SLOT_WEAPON
-			attack_bonus = 1; base_value = 15; material = "iron"
+			attack_bonus = 1; base_value = 15; material = "copper"
 		TYPE_SHORT_SWORD:
 			ch = ")"; col = Color(0.85, 0.82, 0.60); nm = "short sword"
 			category = CATEGORY_EQUIPMENT; slot = SLOT_WEAPON

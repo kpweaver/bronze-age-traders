@@ -19,11 +19,12 @@ static func delete_save() -> void:
 		DirAccess.open("user://").remove("save.json")
 
 
-static func save_game(game_map, player, floor: int, floors: Dictionary, chunk: Vector2i, chunks: Dictionary) -> void:
+static func save_game(game_map, player, floor: int, floors: Dictionary, chunk: Vector2i, chunks: Dictionary, turn: int = 0) -> void:
 	var data := {
 		"floor": floor,
 		"chunk_x": chunk.x,
 		"chunk_y": chunk.y,
+		"turn": turn,
 		"world_seed": GameState.world_seed,
 		"player_name":  GameState.player_name,
 		"player_class": GameState.player_class,
@@ -146,7 +147,7 @@ static func load_game() -> Dictionary:
 	return parsed if parsed is Dictionary else {}
 
 
-# Returns [game_map, player, floor, floors, chunk, chunks].
+# Returns [game_map, player, floor, floors, chunk, chunks, turn].
 static func restore(data: Dictionary, fov_radius: int) -> Array:
 	GameState.world_seed   = int(data.get("world_seed", 0))
 	GameState.player_name  = str(data.get("player_name",  "Wanderer"))
@@ -299,4 +300,5 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 					cmap.entities.append(item)
 		chunks[c] = cmap
 
-	return [game_map, player, floor, floors, chunk, chunks]
+	var turn: int = int(data.get("turn", 0))
+	return [game_map, player, floor, floors, chunk, chunks, turn]

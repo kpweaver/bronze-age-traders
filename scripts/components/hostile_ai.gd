@@ -1,17 +1,14 @@
 class_name HostileAI
-extends RefCounted
+extends "res://scripts/components/ai_base.gd"
 
 const ActorClass   = preload("res://scripts/entities/actor.gd")
 const GameMapClass = preload("res://scripts/map/game_map.gd")
 
-var actor  # Actor — untyped, loaded via preload below
-
 
 func _init(p_actor) -> void:
-	actor = p_actor
+	super._init(p_actor)
 
 
-# Called once per enemy turn. Returns a message string or "".
 func take_turn(player, game_map) -> String:
 	# Only act when in the player's field of view
 	if not game_map.visible[actor.pos.y][actor.pos.x]:
