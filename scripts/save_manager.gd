@@ -5,6 +5,7 @@ const ItemClass      = preload("res://scripts/entities/item.gd")
 const NpcClass       = preload("res://scripts/entities/npc.gd")
 const NpcDataClass   = preload("res://content/npcs.gd")
 const HostileAIClass = preload("res://scripts/components/hostile_ai.gd")
+const WanderAIClass  = preload("res://scripts/components/wander_ai.gd")
 const GameMapClass   = preload("res://scripts/map/game_map.gd")
 
 const SAVE_PATH := "user://save.json"
@@ -200,6 +201,8 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 				var saved_stock = ed.get("trade_stock", [])
 				if not (saved_stock as Array).is_empty():
 					npc.trade_stock = (saved_stock as Array).duplicate(true)
+				if not npc.is_merchant:
+					npc.ai = WanderAIClass.new(npc, 0.35)
 				npc.game_map = game_map
 				game_map.entities.append(npc)
 			"actor":
@@ -287,6 +290,8 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 					var saved_stock = ed.get("trade_stock", [])
 					if not (saved_stock as Array).is_empty():
 						npc.trade_stock = (saved_stock as Array).duplicate(true)
+					if not npc.is_merchant:
+						npc.ai = WanderAIClass.new(npc, 0.35)
 					npc.game_map = cmap
 					cmap.entities.append(npc)
 				"entity":

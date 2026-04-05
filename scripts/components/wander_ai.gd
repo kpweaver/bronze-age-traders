@@ -1,0 +1,55 @@
+class_name WanderAI
+extends "res://scripts/components/ai_base.gd"
+
+# Peaceful wandering AI for village NPCs.
+# Each turn the NPC takes a random walkable step within wander_radius of its
+# home_pos.  It only moves when visible to the player (saves processing and
+# looks more natural — you see them actually moving around).
+
+const GameMapClass = preload("res://scripts/map/game_map.gd")
+
+# How often the NPC moves: 1.0 = every visible turn, 0.33 = roughly 1-in-3.
+var move_chance: float = 0.40
+
+
+func _init(p_actor, p_move_chance: float = 0.40) -> void:
+	super._init(p_actor)
+	move_chance = p_move_chance
+
+
+func take_turn(player, game_map) -> String:
+	# Only animate when the player can see the NPC.
+	if not game_map.visible[actor.pos.y][actor.pos.x]:
+		return ""
+
+	if randf() > move_chance:
+		return ""
+
+	# Build list of valid candidate tiles:
+	#   • walkable
+	#   • not blocked by another entity
+	#   • within wander_radius of home_pos (Chebyshev distance)
+	var candidates: Array = []
+	for dy in range(-1, 2):
+		for dx in range(-1, 2):
+			if dx == 0 and dy == 0:
+				continue
+			var nx: int = actor.pos.x + dx
+			var ny: int = actor.pos.y + dy
+			if not game_map.is_in_bounds(nx, ny):
+				continue
+			if not game_map.is_walkable(nx, ny):
+				continue
+			if game_map.get_blocking_entity_at(nx, ny) != null:
+				continue
+			# Stay within wander_radius of home.
+			var cheb: int = maxi(absi(nx - actor.home_pos.x), absi(ny - actor.home_pos.y))
+			if cheb > actor.wander_radius:
+				continue
+			candidates.append(Vector2i(nx, ny))
+
+	if candidates.is_empty():
+		return ""
+
+	actor.pos = candidates[randi() % candidates.size()]
+	return ""

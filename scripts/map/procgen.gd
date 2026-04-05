@@ -14,6 +14,7 @@ const ItemClass      = preload("res://scripts/entities/item.gd")
 const NpcClass       = preload("res://scripts/entities/npc.gd")
 const NpcDataClass   = preload("res://content/npcs.gd")
 const HostileAIClass = preload("res://scripts/components/hostile_ai.gd")
+const WanderAIClass  = preload("res://scripts/components/wander_ai.gd")
 
 
 class RectRoom:
@@ -674,7 +675,12 @@ static func _place_village(map, world_seed: int, world_x: int, world_y: int) -> 
 			used_npc[npc_pos] = true
 			var npc_type: String     = str(npc_pool[rng.randi_range(0, npc_pool.size() - 1)])
 			var npc_data: Dictionary = NpcDataClass.get_npc(npc_type)
-			map.entities.append(NpcClass.new(npc_pos, npc_type, npc_data))
+			var npc := NpcClass.new(npc_pos, npc_type, npc_data)
+			# Non-merchant NPCs wander; merchants stay at their stall.
+			if not npc.is_merchant:
+				npc.ai = WanderAIClass.new(npc, 0.35)
+			npc.game_map = map
+			map.entities.append(npc)
 			spawned_npc += 1
 
 
