@@ -739,6 +739,15 @@ static func _furnish_home(map, rng: RandomNumberGenerator, bx: int, by_: int, bw
 		_place_furniture(map, corners[ci].x, corners[ci].y, "o", Color(0.72, 0.40, 0.22), "storage jar")
 
 
+# Readable tablets that can appear in admin/scribe buildings.
+const READABLE_TABLETS: Array = [
+	"tablet_traders_ledger",
+	"tablet_hymn_shamash",
+	"tablet_law_fragment",
+	"tablet_caravan_letter",
+	"tablet_mythic_fragment",
+]
+
 # Admin — central table cluster, clay tablet racks along walls, offering stand.
 static func _furnish_admin(map, rng: RandomNumberGenerator, bx: int, by_: int, bw: int, bh: int) -> void:
 	var cx: int = bx + (bw >> 1)
@@ -765,6 +774,29 @@ static func _furnish_admin(map, rng: RandomNumberGenerator, bx: int, by_: int, b
 
 	# A shelf unit in a rear corner.
 	_place_furniture(map, bx + bw - 2, by_ + 1, "#", Color(0.45, 0.30, 0.18), "shelf")
+
+	# Place 1–2 readable tablets on floor tiles — something to find and read.
+	var tablet_count: int = rng.randi_range(1, 2)
+	var placed_tablets: int = 0
+	for _attempt in range(30):
+		if placed_tablets >= tablet_count:
+			break
+		var tx: int = rng.randi_range(bx + 1, bx + bw - 2)
+		var ty: int = rng.randi_range(by_ + 1, by_ + bh - 2)
+		if map.tiles[ty][tx] != GameMapClass.TILE_FLOOR:
+			continue
+		var occupied := false
+		for e in map.entities:
+			if e.pos == Vector2i(tx, ty):
+				occupied = true
+				break
+		if occupied:
+			continue
+		var ttype: String = READABLE_TABLETS[rng.randi_range(0, READABLE_TABLETS.size() - 1)]
+		var tablet = ItemClass.new(Vector2i(tx, ty), ttype, 0)
+		tablet.game_map = map
+		map.entities.append(tablet)
+		placed_tablets += 1
 
 
 # Commercial — counter facing the door, storage jars at the back, work surface.

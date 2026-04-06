@@ -62,11 +62,20 @@ var _escape_cursor: int = 0
 # ---------------------------------------------------------------------------
 # Overlay screens
 # ---------------------------------------------------------------------------
-enum Screen { NONE, ESCAPE, INVENTORY, CHARACTER, SETTINGS, LOOK, WORLD_MAP, TRADE, DISAMBIGUATE, HELP }
+enum Screen { NONE, ESCAPE, INVENTORY, CHARACTER, SETTINGS, LOOK, WORLD_MAP, TRADE, DISAMBIGUATE, HELP, READER, DIALOGUE }
 var _screen: Screen              = Screen.NONE
 var _world_look_mode: bool       = false
 var _world_look_cursor: Vector2i = Vector2i.ZERO
 var _world_entry_chunk: Vector2i = Vector2i.ZERO
+
+# Readable item state
+var _reader_item                  = null
+var _reader_lines: Array[String]  = []
+var _reader_scroll: int           = 0
+
+# Dialogue state
+var _dialogue_npc                 = null
+var _dialogue_line: String        = ""
 
 # NPC trade state
 var _trade_npc        = null
@@ -240,6 +249,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			_screen = Screen.NONE
 			queue_redraw()
 			return
+		Screen.READER:
+			_handle_reader_input(event)
+			return
+		Screen.DIALOGUE:
+			_handle_dialogue_input(event)
+			return
 
 	# Escape — always valid.
 	if event.physical_keycode == KEY_ESCAPE:
@@ -342,6 +357,9 @@ func _unhandled_input(event: InputEvent) -> void:
 
 	get_viewport().set_input_as_handled()
 	_world.do_player_turn(dir, event.shift_pressed and dir != Vector2i.ZERO)
+	# Open dialogue panel when the player bumps a non-wildlife NPC.
+	if _world.nearby_npc != null and not (_world.nearby_npc as NpcClass).is_wildlife:
+		_open_dialogue(_world.nearby_npc)
 
 
 func _handle_escape_input(event: InputEvent) -> void:
@@ -399,7 +417,7 @@ func _handle_inventory_input(event: InputEvent) -> void:
 				queue_redraw()
 			return
 
-	# a–t — use / equip (unshifted only).
+	# a–t — use / equip / read depending on item category (unshifted only).
 	if not event.shift_pressed and key >= KEY_A and key <= KEY_T:
 		var idx: int = key - KEY_A
 		if idx < _player.inventory.size():
@@ -418,8 +436,83 @@ func _handle_inventory_input(event: InputEvent) -> void:
 					_screen = Screen.NONE
 					_world.do_enemy_turns()
 					_world.end_turn()
+			elif item.category == ItemClass.CATEGORY_READABLE:
+				_open_reader(item)
 			else:
 				queue_redraw()
+
+
+# ---------------------------------------------------------------------------
+# Reader (readable items)
+# ---------------------------------------------------------------------------
+func _open_reader(item) -> void:
+	_reader_item  = item
+	_reader_scroll = 0
+	_reader_lines  = _word_wrap(item.text, 96)
+	_screen        = Screen.READER
+	queue_redraw()
+
+
+func _word_wrap(text: String, max_width: int) -> Array[String]:
+	var lines: Array[String] = []
+	for paragraph in text.split("\n"):
+		if paragraph.strip_edges().is_empty():
+			lines.append("")
+			continue
+		var words: PackedStringArray = paragraph.split(" ")
+		var current: String = ""
+		for word in words:
+			if current.is_empty():
+				current = word
+			elif current.length() + 1 + word.length() <= max_width:
+				current += " " + word
+			else:
+				lines.append(current)
+				current = word
+		lines.append(current)
+	return lines
+
+
+func _handle_reader_input(event: InputEvent) -> void:
+	get_viewport().set_input_as_handled()
+	match event.physical_keycode:
+		KEY_ESCAPE, KEY_SPACE, KEY_ENTER, KEY_KP_ENTER:
+			_screen = Screen.NONE
+			_reader_item = null
+			queue_redraw()
+		KEY_UP, KEY_KP_8:
+			_reader_scroll = maxi(0, _reader_scroll - 1)
+			queue_redraw()
+		KEY_DOWN, KEY_KP_2:
+			var max_scroll: int = maxi(0, _reader_lines.size() - 14)
+			_reader_scroll = mini(_reader_scroll + 1, max_scroll)
+			queue_redraw()
+
+
+# ---------------------------------------------------------------------------
+# Dialogue
+# ---------------------------------------------------------------------------
+func _open_dialogue(npc) -> void:
+	_dialogue_npc  = npc
+	_dialogue_line = (npc as NpcClass).greet()
+	_screen        = Screen.DIALOGUE
+	queue_redraw()
+
+
+func _handle_dialogue_input(event: InputEvent) -> void:
+	get_viewport().set_input_as_handled()
+	match event.physical_keycode:
+		KEY_ESCAPE:
+			_screen = Screen.NONE
+			_dialogue_npc = null
+			queue_redraw()
+		KEY_SPACE, KEY_ENTER, KEY_KP_ENTER:
+			# Advance to the next dialogue line.
+			_dialogue_line = (_dialogue_npc as NpcClass).greet()
+			queue_redraw()
+		KEY_T:
+			if (_dialogue_npc as NpcClass).is_merchant:
+				_open_trade(_dialogue_npc)
 
 
 func _handle_character_input(event: InputEvent) -> void:
@@ -619,6 +712,8 @@ func _draw() -> void:
 		Screen.TRADE:        _draw_trade_screen()
 		Screen.DISAMBIGUATE: _draw_disambig_overlay()
 		Screen.HELP:         _draw_help_screen()
+		Screen.READER:       _draw_reader_screen()
+		Screen.DIALOGUE:     _draw_dialogue_screen()
 
 
 func _draw_map() -> void:
@@ -783,6 +878,8 @@ func _draw_inventory() -> void:
 				tag = "  [equip]"
 			elif item.category == ItemClass.CATEGORY_USABLE:
 				tag = "  (%s HP)" % item.dice_label()
+			elif item.category == ItemClass.CATEGORY_READABLE:
+				tag = "  [read]"
 			elif item.category == ItemClass.CATEGORY_TRADE and item.base_value > 0:
 				tag = "  (%dg)" % item.base_value
 			_puts(PACK_X, BOX_Y + 4 + i,
@@ -813,7 +910,7 @@ func _draw_inventory() -> void:
 		else:
 			_puts(EQUIP_X, BOX_Y + 4 + si * 2, "%s: -" % s_lbl, C_MSG_OLD)
 
-	var hint := "[a-t] use/equip   [w/b/f/h] unequip   [Esc] close"
+	var hint := "[a-t] use / equip / read   [w/b/f/h] unequip   [Esc] close"
 	_puts(BOX_X + ((BOX_W - hint.length()) >> 1), BOX_Y + BOX_H - 2, hint, C_DIVIDER)
 
 
@@ -873,6 +970,42 @@ func _draw_look_cursor() -> void:
 	)
 	_puts(0, MSG_START_ROW,     _look_description(),                  C_MSG_RECENT)
 	_puts(0, MSG_START_ROW + 1, "l / Esc / Enter to exit look mode",  C_DIVIDER)
+
+
+# ---------------------------------------------------------------------------
+# Overlay: reader screen (clay tablets, scrolls, etc.)
+# ---------------------------------------------------------------------------
+func _draw_reader_screen() -> void:
+	if _reader_item == null:
+		return
+	const BOX_X := 6
+	const BOX_Y := 3
+	const BOX_W := 108
+	const BOX_H := 24
+	const TEXT_X := BOX_X + 4
+	const TEXT_W := BOX_W - 8
+	const VISIBLE_LINES := 18
+
+	draw_rect(Rect2(Vector2.ZERO, Vector2(COLS * CELL_W, ROWS * CELL_H)), Color(0, 0, 0, 0.88))
+	draw_rect(Rect2(BOX_X * CELL_W, BOX_Y * CELL_H, BOX_W * CELL_W, BOX_H * CELL_H),
+			Color(0.12, 0.09, 0.05))
+	_draw_box(BOX_X, BOX_Y, BOX_W, BOX_H)
+
+	var title := "-=[ %s ]=-" % _reader_item.name.to_upper()
+	_puts(BOX_X + ((BOX_W - title.length()) >> 1), BOX_Y, title, C_STATUS)
+
+	var visible := _reader_lines.slice(_reader_scroll, _reader_scroll + VISIBLE_LINES)
+	for i in range(visible.size()):
+		_puts(TEXT_X, BOX_Y + 2 + i, str(visible[i]), C_MSG_RECENT)
+
+	# Scroll indicators
+	if _reader_scroll > 0:
+		_puts(BOX_X + BOX_W - 4, BOX_Y + 2, "/\\", C_DIVIDER)
+	if _reader_scroll + VISIBLE_LINES < _reader_lines.size():
+		_puts(BOX_X + BOX_W - 4, BOX_Y + BOX_H - 3, "\\/", C_DIVIDER)
+
+	var hint := "[Esc / Space] close   [Up / Down] scroll"
+	_puts(BOX_X + ((BOX_W - hint.length()) >> 1), BOX_Y + BOX_H - 2, hint, C_DIVIDER)
 
 
 # ---------------------------------------------------------------------------
@@ -981,6 +1114,39 @@ func _help_row(x: int, y: int, key: String, desc: String) -> void:
 
 # ---------------------------------------------------------------------------
 # Overlay: trade screen
+# ---------------------------------------------------------------------------
+# Overlay: dialogue panel
+# ---------------------------------------------------------------------------
+func _draw_dialogue_screen() -> void:
+	if _dialogue_npc == null:
+		return
+	const BOX_X := 2
+	const BOX_Y := 30
+	const BOX_W := 116
+	const BOX_H := 9
+	const TEXT_X := BOX_X + 4
+	const TEXT_W := BOX_W - 8
+
+	# Dim only the bottom portion so the map stays readable above.
+	draw_rect(Rect2(BOX_X * CELL_W, BOX_Y * CELL_H, BOX_W * CELL_W, BOX_H * CELL_H),
+			Color(0.08, 0.05, 0.03, 0.96))
+	_draw_box(BOX_X, BOX_Y, BOX_W, BOX_H)
+
+	var npc: NpcClass = _dialogue_npc as NpcClass
+	var title := "-=[ %s ]=-" % npc.name.to_upper()
+	_puts(BOX_X + ((BOX_W - title.length()) >> 1), BOX_Y, title, C_STATUS)
+
+	# Word-wrap the dialogue line into the box.
+	var wrapped: Array[String] = _word_wrap(_dialogue_line, TEXT_W)
+	for i in range(mini(wrapped.size(), 4)):
+		_puts(TEXT_X, BOX_Y + 2 + i, str(wrapped[i]), C_MSG_RECENT)
+
+	var hint := "[Space] Next   [T] Trade   [Esc] Close"
+	if not npc.is_merchant:
+		hint = "[Space] Next   [Esc] Close"
+	_puts(BOX_X + ((BOX_W - hint.length()) >> 1), BOX_Y + BOX_H - 2, hint, C_DIVIDER)
+
+
 # ---------------------------------------------------------------------------
 func _draw_trade_screen() -> void:
 	if _trade_npc == null:

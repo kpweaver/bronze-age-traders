@@ -112,6 +112,7 @@ that file.
 | `dice_sides`   | int     | no       | Usable items: sides per die |
 | `attack_bonus` | int     | no       | Equipment: added to attacker's damage roll |
 | `defense_bonus`| int     | no       | Equipment: added to wearer's AC |
+| `text`         | String  | readable | Full text shown in the reader screen (use `\n` for line breaks) |
 
 Missing numeric fields default to 0; missing string fields default to `""`.
 
@@ -122,7 +123,25 @@ Missing numeric fields default to 0; missing string fields default to `""`.
 2. The systems code will automatically pick it up — no other files need editing.
 3. To make it available in a merchant's stock, add it to the NPC's `trade_stock` in `npcs.gd`.
 
-### Example skeleton
+### Adding a readable tablet / scroll
+
+Use `category: 4` and include a `text` field. The item will show `[read]` in the inventory
+and open a full-screen reader when selected. Tablets spawn automatically in admin/scribe
+buildings (procgen picks from the pool in `scripts/map/procgen.gd`).
+
+```gdscript
+"tablet_my_new_tablet": {
+    "char": "-", "cr": 0.82, "cg": 0.70, "cb": 0.48,
+    "name": "my tablet name", "category": 4, "slot": "",
+    "base_value": 15, "material": "clay",
+    "text": "First paragraph of text.\n\nSecond paragraph after a blank line.",
+},
+```
+
+To add it to the spawn pool, also add the key string to `READABLE_TABLETS` in
+`scripts/map/procgen.gd`.
+
+### Example skeleton (equipment)
 
 ```gdscript
 "obsidian_blade": {

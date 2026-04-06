@@ -71,9 +71,6 @@ var turn: int           = 0          # global turn counter — increments every 
 var _resting: bool      = false      # true when the player waited this turn (affects fatigue)
 var _thirst_acc: float  = 0.0        # fractional thirst accumulator for rate < 1.0
 
-# Minimum turns between random encounter rolls (prevents back-to-back spawns).
-const ENCOUNTER_COOLDOWN: int = 90  # ~3 hours at 2 min/turn
-var _last_encounter_turn: int = -100
 
 # Time of day: 0.0 = midnight, 0.25 = 06:00, 0.5 = noon, 0.75 = 18:00.
 var time_of_day: float:
@@ -228,9 +225,7 @@ func do_player_turn(dir: Vector2i, force_attack: bool = false) -> void:
 					nearby_npc = target
 					var npc: NpcClass = target as NpcClass
 					if npc.is_wildlife:
-						add_msg(npc.greet())   # observation, not speech
-					else:
-						add_msg("%s says: \"%s\"" % [npc.name.capitalize(), npc.greet()])
+						add_msg(npc.greet())   # observation text in log; no dialogue panel
 			elif target is ActorClass and (target as ActorClass).is_alive:
 				add_msg(player.attack(target as ActorClass))
 				# Combat is exhausting — extra fatigue on top of the base drain.
@@ -288,7 +283,6 @@ func end_turn() -> void:
 	if depth == 0:
 		_drain_thirst()
 	_drain_fatigue()
-	_check_random_encounter()
 	turn_ended.emit(turn)
 
 
@@ -410,6 +404,7 @@ func chunk_transition(dir: Vector2i) -> void:
 				chunk.x * OVERWORLD_W, chunk.y * OVERWORLD_H,
 				GameState.world_seed, get_chunk_biome(chunk), false,
 				get_road_dirs(chunk), is_village_chunk(chunk.x, chunk.y))
+		_place_chunk_encounter(new_map, chunk, Vector2i(new_x, new_y))
 		map = new_map
 
 	player.pos      = Vector2i(new_x, new_y)
@@ -738,81 +733,77 @@ func _drain_fatigue() -> void:
 
 
 # ===========================================================================
-# Random encounters (overworld only)
+# Chunk encounters (overworld only)
 # ===========================================================================
 
-# Called every turn; rolls for and spawns overworld random encounters.
-func _check_random_encounter() -> void:
-	if depth != 0 or game_over:
-		return
-	if turn - _last_encounter_turn < ENCOUNTER_COOLDOWN:
-		return
-
-	# Night-time bandit encounter — ~1-in-40 chance per eligible turn.
-	if is_night and randf() < 0.025:
-		_spawn_bandits()
+# Called once when a fresh (never-visited) overworld chunk is generated.
+# Rolls for and pre-places encounter entities so the player discovers them
+# naturally through FOV rather than watching them appear from thin air.
+func _place_chunk_encounter(target_map, target_chunk: Vector2i, player_entry: Vector2i) -> void:
+	if is_village_chunk(target_chunk.x, target_chunk.y):
 		return
 
-	# Road caravan encounter (day only) — ~1-in-60 chance per eligible turn.
-	if not is_night and is_road_chunk(chunk.x, chunk.y) and randf() < 0.017:
-		_spawn_caravan()
+	var biome: int   = get_chunk_biome(target_chunk)
+	var is_road: bool = is_road_chunk(target_chunk.x, target_chunk.y)
+
+	# Bandit chance — higher at night and in hostile biomes.
+	var bandit_chance: float = 0.15 if is_night else 0.07
+	if biome == GameMapClass.BIOME_BADLANDS:
+		bandit_chance *= 1.6
+	elif biome == GameMapClass.BIOME_MOUNTAINS:
+		bandit_chance *= 1.3
+
+	# Traveling merchant — roads only, daytime.
+	var merchant_chance: float = 0.25 if (is_road and not is_night) else 0.0
+
+	var roll: float = randf()
+	if roll < bandit_chance:
+		_place_bandits_in(target_map, player_entry)
+	elif roll < bandit_chance + merchant_chance:
+		_place_merchant_in(target_map, player_entry)
 
 
-# Spawns 1-2 desert bandits near the player.
-func _spawn_bandits() -> void:
-	var count: int   = randi_range(1, 2)
-	var spawned: int = 0
-	# Try several random positions; give up if none are suitable.
-	for _attempt in range(count * 10):
-		if spawned >= count:
-			break
-		var angle: float = randf() * TAU
-		var dist: int    = randi_range(5, 10)
-		var tx: int      = player.pos.x + int(cos(angle) * dist)
-		var ty: int      = player.pos.y + int(sin(angle) * dist)
-		if not map.is_in_bounds(tx, ty):
+# Returns a random walkable position at least min_dist tiles from player_entry,
+# or Vector2i(-1,-1) if no suitable tile is found after max_attempts tries.
+func _find_encounter_pos(target_map, player_entry: Vector2i, min_dist: int = 20) -> Vector2i:
+	for _attempt in range(60):
+		var tx: int = randi_range(5, OVERWORLD_W - 6)
+		var ty: int = randi_range(5, OVERWORLD_H - 6)
+		if not target_map.is_walkable(tx, ty):
 			continue
-		if not map.is_walkable(tx, ty):
+		if target_map.get_blocking_entity_at(tx, ty) != null:
 			continue
-		if map.get_blocking_entity_at(tx, ty) != null:
+		var d: float = Vector2(tx, ty).distance_to(Vector2(player_entry))
+		if d < min_dist:
 			continue
-		var bandit := ActorClass.new(
-				Vector2i(tx, ty), "B", Color(0.72, 0.32, 0.20),
+		return Vector2i(tx, ty)
+	return Vector2i(-1, -1)
+
+
+# Places 1–2 desert bandits in target_map, away from the player entry point.
+func _place_bandits_in(target_map, player_entry: Vector2i) -> void:
+	var count: int = randi_range(1, 2)
+	for _i in range(count):
+		var pos: Vector2i = _find_encounter_pos(target_map, player_entry)
+		if pos.x == -1:
+			return
+		var bandit := ActorClass.new(pos, "B", Color(0.72, 0.32, 0.20),
 				"desert bandit", 12, 1, 3)
 		bandit.ai       = HostileAIClass.new(bandit)
-		bandit.game_map = map
-		map.entities.append(bandit)
-		spawned += 1
-
-	if spawned > 0:
-		_last_encounter_turn = turn
-		var plural: String = "Bandits emerge" if spawned > 1 else "A bandit emerges"
-		add_msg("%s from the night!" % plural)
+		bandit.game_map = target_map
+		target_map.entities.append(bandit)
 
 
-# Spawns a lone traveling merchant on a road chunk.
-func _spawn_caravan() -> void:
-	var tx: int = 0
-	var ty: int = 0
-	var found: bool = false
-	for _attempt in range(25):
-		var angle: float = randf() * TAU
-		var dist: int    = randi_range(6, 14)
-		tx = player.pos.x + int(cos(angle) * dist)
-		ty = player.pos.y + int(sin(angle) * dist)
-		if map.is_in_bounds(tx, ty) and map.is_walkable(tx, ty) \
-				and map.get_blocking_entity_at(tx, ty) == null:
-			found = true
-			break
-	if not found:
+# Places a lone traveling merchant in target_map, away from the player entry point.
+func _place_merchant_in(target_map, player_entry: Vector2i) -> void:
+	var pos: Vector2i = _find_encounter_pos(target_map, player_entry)
+	if pos.x == -1:
 		return
 	var npc_data: Dictionary = NpcDataClass.get_npc("merchant")
-	var npc := NpcClass.new(Vector2i(tx, ty), "merchant", npc_data)
+	var npc := NpcClass.new(pos, "merchant", npc_data)
 	npc.ai       = DocileAIClass.new(npc, 0.25, false)  # travels day and night; flees if attacked
-	npc.game_map = map
-	map.entities.append(npc)
-	_last_encounter_turn = turn
-	add_msg("A traveling merchant appears on the road ahead.")
+	npc.game_map = target_map
+	target_map.entities.append(npc)
 
 
 # Biome labels for in-game log messages.

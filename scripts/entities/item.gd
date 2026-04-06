@@ -10,6 +10,7 @@ const CATEGORY_GOLD      := 0   # currency — auto-collected into player.gold
 const CATEGORY_USABLE    := 1   # consumable (potions, draughts)
 const CATEGORY_TRADE     := 2   # trade goods (metals, cloth, oil, etc.)
 const CATEGORY_EQUIPMENT := 3   # wearable gear — goes into an equipment slot
+const CATEGORY_READABLE  := 4   # clay tablets, scrolls — press R in inventory to read
 
 # ---------------------------------------------------------------------------
 # Equipment slots
@@ -95,6 +96,8 @@ var dice_sides: int    = 0
 var attack_bonus: int  = 0   # equipment — added to attacker's damage roll
 var defense_bonus: int = 0   # equipment — added to wearer's AC
 
+var text: String       = ""  # readable items — full text shown in the reader screen
+
 
 func _init(p_pos: Vector2i, p_type: String, p_value: int) -> void:
 	item_type = p_type
@@ -108,8 +111,9 @@ func _init(p_pos: Vector2i, p_type: String, p_value: int) -> void:
 	base_value   = int(d.get("base_value", 0))
 	dice_count   = int(d.get("dice_count", 0))
 	dice_sides   = int(d.get("dice_sides", 0))
-	attack_bonus = int(d.get("attack_bonus", 0))
+	attack_bonus  = int(d.get("attack_bonus",  0))
 	defense_bonus = int(d.get("defense_bonus", 0))
+	text          = str(d.get("text", ""))
 	# Gold coins carry a runtime quantity — use p_value directly.
 	if category == CATEGORY_GOLD:
 		value = p_value

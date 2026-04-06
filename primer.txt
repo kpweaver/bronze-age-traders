@@ -40,8 +40,7 @@ Every keypress the player makes triggers this sequence:
   2. game_world.gd moves the player (or attacks, or opens a door, etc.)
   3. game_world.do_enemy_turns() runs every NPC and monster's AI for one tick
   4. game_world.end_turn() updates FOV, increments the turn counter, drains
-     thirst (on the overworld), checks for random encounters, then fires the
-     turn_ended signal
+     thirst (on the overworld), then fires the turn_ended signal
   5. ascii_map.gd receives the signal and redraws the screen
 
 One player action = one turn = 2 real minutes of in-game time.
@@ -125,7 +124,6 @@ One player action = one turn = 2 real minutes of in-game time.
     FOV_OVERWORLD    = 24   — tiles you can see during the day (daytime radius).
     FOV_NIGHT        = 1    — tiles you can see at night (near-zero).
     FOV_RADIUS       = 8    — sight radius inside dungeons.
-    ENCOUNTER_COOLDOWN = 90 — minimum turns between random encounter rolls.
 
   SURVIVAL SYSTEMS (thirst + fatigue):
     Both systems operate on `party` — an array in game_world that starts as
@@ -164,10 +162,14 @@ One player action = one turn = 2 real minutes of in-game time.
     0.25 = 6am, 0.5 = noon, 0.75 = 6pm. The game starts at 0.25 (dawn).
     overworld_fov() interpolates sight range smoothly across dawn and dusk.
 
-  RANDOM ENCOUNTERS:
-    _check_random_encounter() runs each turn. At night: ~2.5% chance of
-    bandits spawning nearby. On road chunks during day: ~1.7% chance of a
-    traveling merchant appearing.
+  CHUNK ENCOUNTERS:
+    When the player crosses into a never-visited overworld chunk,
+    _place_chunk_encounter() rolls once and may silently pre-place entities
+    somewhere in that chunk (away from the entry edge). The player finds
+    them naturally through FOV — nothing "pops in" mid-travel.
+    Chances: bandits 7–15% (higher at night / in badlands/mountains);
+    traveling merchant 25% on road chunks during daytime.
+    Village chunks are skipped entirely.
 
   WILDLIFE:
     Four species roam overworld chunks: gazelle (desert/steppe), onager
@@ -193,8 +195,17 @@ One player action = one turn = 2 real minutes of in-game time.
 
   SCREENS/OVERLAYS:
     The Screen enum lists all overlay modes: INVENTORY, CHARACTER, TRADE,
-    WORLD_MAP, LOOK, SETTINGS, HELP, ESCAPE. Each has its own _draw_*() and
-    _handle_*_input() function pair.
+    WORLD_MAP, LOOK, SETTINGS, HELP, ESCAPE, READER, DIALOGUE. Each has its
+    own _draw_*() and _handle_*_input() function pair.
+
+    READER: Full-screen overlay for readable items (clay tablets). Opened by
+    pressing the item's letter key in the inventory. Supports up/down scrolling.
+    Space or Esc closes it. No turn is consumed.
+
+    DIALOGUE: Bottom-panel overlay that opens automatically when the player
+    bumps a non-wildlife NPC. Shows NPC name + current dialogue line. Space/
+    Enter advances to the next line. T opens the trade screen (merchants only).
+    Esc closes. Dialogue lines cycle from content/npcs.gd.
 
   COLOURS:
     All colour constants are at the top of the file (C_BG, C_STATUS, etc.).

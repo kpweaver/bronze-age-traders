@@ -111,6 +111,41 @@ const DATA: Dictionary = {
 		"base_value": 15, "material": "clay",
 	},
 
+	# ── Readable tablets (category 4) ────────────────────────────────────────
+	# Add new entries here to put new readable content in the world.
+	# Tablets spawn in admin/scribe buildings and are found as loot.
+	# The 'text' field is displayed verbatim in the reader screen.
+	"tablet_traders_ledger": {
+		"char": "=", "cr": 0.82, "cg": 0.70, "cb": 0.48,
+		"name": "trader's ledger", "category": 4, "slot": "",
+		"base_value": 12, "material": "clay",
+		"text": "Third month. Harrani, son of Kabti, records:\n\nSix talents of tin received from the mountain pass caravan. Copper: twenty-two ingots, of which ten are promised to the palace.\n\nOutstanding debt from Imgur-Enlil: four shekels of silver, now three months late. Send no more goods until settled.\n\nThe road south is closed. Send no wagons until Nisanu.",
+	},
+	"tablet_hymn_shamash": {
+		"char": "=", "cr": 0.82, "cg": 0.70, "cb": 0.48,
+		"name": "hymn to Shamash", "category": 4, "slot": "",
+		"base_value": 18, "material": "clay",
+		"text": "O Shamash, you rise upon the mountain of heaven and earth.\nYou open the bolt of the shining sky.\n\nThe great gods kneel before you. The Anunnaki bow low.\nYour fierce light covers the land like a net.\n\nYou set the prisoner free, you lift the bowed-down.\nYou cross the sea, its depths and its breadth.",
+	},
+	"tablet_law_fragment": {
+		"char": "=", "cr": 0.82, "cg": 0.70, "cb": 0.48,
+		"name": "law tablet", "category": 4, "slot": "",
+		"base_value": 20, "material": "clay",
+		"text": "If a man's ox gores another man's ox to death — both men shall share the loss. They shall sell the dead ox and divide the price between them.\n\nIf the ox was known to gore and the owner had warning — the owner shall pay ox for ox.\n\nIf a man strikes a free man without cause, he shall pay ten shekels of silver.",
+	},
+	"tablet_caravan_letter": {
+		"char": "=", "cr": 0.82, "cg": 0.70, "cb": 0.48,
+		"name": "caravan letter", "category": 4, "slot": "",
+		"base_value": 8, "material": "clay",
+		"text": "To Puzur-Ashur, merchant of the lower road —\n\nI have heard the badlands road is watched by men who are not toll collectors. Three wagons lost near the second waystation this season.\n\nSend your goods north by Anat's road, or wait until the rains. Trust no one who offers to guide you through the passes.\n\nYour brother in trade, Iqisham-Adad.",
+	},
+	"tablet_mythic_fragment": {
+		"char": "=", "cr": 0.82, "cg": 0.70, "cb": 0.48,
+		"name": "mythic fragment", "category": 4, "slot": "",
+		"base_value": 25, "material": "clay",
+		"text": "He who saw the deep — the land's foundation —\nwho knew the ways, was wise in all things:\n\nGilgamesh, who built the walls of great Uruk, who cut cedar in the mountains, who killed the Bull of Heaven. He walked the long road, was weary, found rest at last.\n\nHe carved his story into lapis lazuli stone, that those who come after might read it.",
+	},
+
 	# ── Hunting yields ───────────────────────────────────────────────────────
 	# Produced by skinning/butchering wildlife — not sold in shops by default.
 	"game_meat": {
