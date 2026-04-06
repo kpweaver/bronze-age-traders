@@ -196,6 +196,87 @@ const DATA: Dictionary = {
 		],
 		"spawn_weight": 1,
 	},
+	# -----------------------------------------------------------------------
+	# Wildlife — overworld roaming animals spawned by procgen, not villages.
+	# is_wildlife: true changes the bump-message format in game_world.gd.
+	# wander_radius is larger than village NPCs so they roam freely.
+	# -----------------------------------------------------------------------
+	"gazelle": {
+		"name": "gazelle", "char": "g",
+		"cr": 0.85, "cg": 0.73, "cb": 0.38,
+		"max_hp": 6, "defense": 0, "power": 1,
+		"is_merchant": false, "is_wildlife": true,
+		"wander_radius": 30, "move_chance": 0.55,
+		"dialogue": [
+			"The gazelle watches you with dark eyes, poised to bolt.",
+			"The gazelle flicks its ears and takes a few skittish steps away.",
+			"A pair of slender horns catch the light as the gazelle turns.",
+		],
+		"skin_table": {
+			"poor":  [{"item_type": "tough_meat",  "qty": 1}],
+			"good":  [{"item_type": "game_meat",   "qty": 1}, {"item_type": "light_hide",   "qty": 1}],
+			"great": [{"item_type": "game_meat",   "qty": 2}, {"item_type": "light_hide",   "qty": 1}],
+			"crit":  [{"item_type": "game_meat",   "qty": 2}, {"item_type": "light_hide",   "qty": 1}, {"item_type": "gazelle_horn", "qty": 1}],
+		},
+		"spawn_weight": 0,  # spawned by procgen, not village pools
+	},
+	"onager": {
+		"name": "onager", "char": "q",
+		"cr": 0.72, "cg": 0.60, "cb": 0.42,
+		"max_hp": 14, "defense": 0, "power": 2,
+		"is_merchant": false, "is_wildlife": true,
+		"wander_radius": 25, "move_chance": 0.40,
+		"dialogue": [
+			"The wild ass regards you with flat, suspicious eyes.",
+			"The onager stamps a hoof and sidesteps away.",
+			"A braying call rises from the onager and fades into the hot air.",
+		],
+		"skin_table": {
+			"poor":  [{"item_type": "tough_meat",  "qty": 2}],
+			"good":  [{"item_type": "game_meat",   "qty": 2}, {"item_type": "heavy_hide",   "qty": 1}],
+			"great": [{"item_type": "game_meat",   "qty": 3}, {"item_type": "heavy_hide",   "qty": 1}],
+			"crit":  [{"item_type": "game_meat",   "qty": 3}, {"item_type": "heavy_hide",   "qty": 2}],
+		},
+		"spawn_weight": 0,
+	},
+	"ibex": {
+		"name": "ibex", "char": "i",
+		"cr": 0.50, "cg": 0.40, "cb": 0.28,
+		"max_hp": 10, "defense": 1, "power": 2,
+		"is_merchant": false, "is_wildlife": true,
+		"wander_radius": 20, "move_chance": 0.25,
+		"dialogue": [
+			"The ibex picks its way across the rock with unhurried grace.",
+			"Curved horns sweep back as the ibex turns to study you.",
+			"The ibex stands motionless for a long moment, then moves on.",
+		],
+		"skin_table": {
+			"poor":  [{"item_type": "tough_meat",  "qty": 1}],
+			"good":  [{"item_type": "game_meat",   "qty": 1}, {"item_type": "light_hide",   "qty": 1}],
+			"great": [{"item_type": "game_meat",   "qty": 2}, {"item_type": "light_hide",   "qty": 1}],
+			"crit":  [{"item_type": "game_meat",   "qty": 2}, {"item_type": "light_hide",   "qty": 1}, {"item_type": "ibex_horn",    "qty": 1}],
+		},
+		"spawn_weight": 0,
+	},
+	"hyena": {
+		"name": "hyena", "char": "h",
+		"cr": 0.62, "cg": 0.54, "cb": 0.38,
+		"max_hp": 16, "defense": 1, "power": 3,
+		"is_merchant": false, "is_wildlife": true,
+		"wander_radius": 35, "move_chance": 0.35,
+		"dialogue": [
+			"The hyena circles at a distance, watching.",
+			"A low, rising whoop from the hyena carries through the still air.",
+			"The hyena's spotted flanks heave as it trots a slow perimeter.",
+		],
+		"skin_table": {
+			"poor":  [{"item_type": "coarse_hide",  "qty": 1}],
+			"good":  [{"item_type": "tough_meat",   "qty": 1}, {"item_type": "coarse_hide",  "qty": 1}],
+			"great": [{"item_type": "tough_meat",   "qty": 2}, {"item_type": "coarse_hide",  "qty": 1}],
+			"crit":  [{"item_type": "tough_meat",   "qty": 2}, {"item_type": "coarse_hide",  "qty": 2}],
+		},
+		"spawn_weight": 0,
+	},
 	"water_carrier": {
 		"name": "water carrier", "char": "@",
 		"cr": 0.60, "cg": 0.68, "cb": 0.78,

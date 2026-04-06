@@ -6,6 +6,7 @@ const NpcClass       = preload("res://scripts/entities/npc.gd")
 const NpcDataClass   = preload("res://content/npcs.gd")
 const HostileAIClass = preload("res://scripts/components/hostile_ai.gd")
 const WanderAIClass  = preload("res://scripts/components/wander_ai.gd")
+const DocileAIClass  = preload("res://scripts/components/docile_ai.gd")
 const GameMapClass   = preload("res://scripts/map/game_map.gd")
 
 const SAVE_PATH := "user://save.json"
@@ -34,6 +35,15 @@ static func save_game(game_map, player, floor: int, floors: Dictionary, chunk: V
 			"hp": player.hp, "max_hp": player.max_hp,
 			"defense": player.defense, "power": player.power,
 			"gold": player.gold,
+			"thirst": player.thirst,
+			"fatigue": player.fatigue,
+			"str_score": player.str_score,
+			"dex_score": player.dex_score,
+			"con_score": player.con_score,
+			"int_score": player.int_score,
+			"wis_score": player.wis_score,
+			"cha_score": player.cha_score,
+			"thirst_rate": player.thirst_rate,
 			"inventory": _serialize_inventory(player.inventory),
 			"equipped":  _serialize_equipped(player.equipped),
 		},
@@ -119,6 +129,9 @@ static func _serialize_entities(entities: Array, player) -> Array:
 			entry["max_hp"]       = e.max_hp
 			entry["dialogue_idx"] = (e as NpcClass)._dialogue_idx
 			entry["trade_stock"]  = (e as NpcClass).trade_stock.duplicate(true)
+			# Persist flee state so a scared animal stays scared after reload.
+			var ai = (e as NpcClass).ai
+			entry["fleeing"] = (ai is DocileAIClass) and (ai as DocileAIClass)._fleeing
 		elif e is ActorClass:
 			entry["type"]    = "actor"
 			entry["hp"]      = e.hp
@@ -173,8 +186,17 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 		"@", Color(0.80, 0.50, 0.20), "you",
 		int(pd["max_hp"]), int(pd["defense"]), int(pd["power"])
 	)
-	player.hp   = int(pd["hp"])
-	player.gold = int(pd.get("gold", 0))
+	player.hp          = int(pd["hp"])
+	player.gold        = int(pd.get("gold", 0))
+	player.thirst      = int(pd.get("thirst",  0))
+	player.fatigue     = int(pd.get("fatigue", 0))
+	player.str_score   = int(pd.get("str_score", 10))
+	player.dex_score   = int(pd.get("dex_score", 10))
+	player.con_score   = int(pd.get("con_score", 10))
+	player.int_score   = int(pd.get("int_score", 10))
+	player.wis_score   = int(pd.get("wis_score", 10))
+	player.cha_score   = int(pd.get("cha_score", 10))
+	player.thirst_rate = float(pd.get("thirst_rate", 1.0))
 	for inv: Dictionary in pd.get("inventory", []):
 		var item = ItemClass.new(Vector2i(0, 0), str(inv["item_type"]), int(inv.get("value", 0)))
 		player.inventory.append(item)
@@ -202,7 +224,10 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 				if not (saved_stock as Array).is_empty():
 					npc.trade_stock = (saved_stock as Array).duplicate(true)
 				if not npc.is_merchant:
-					npc.ai = WanderAIClass.new(npc, 0.35)
+					var mc: float = float(NpcDataClass.get_npc(npc.npc_type).get("move_chance", 0.35))
+					var dai := DocileAIClass.new(npc, mc, not npc.is_wildlife)
+					dai._fleeing = bool(ed.get("fleeing", false))
+					npc.ai = dai
 				npc.game_map = game_map
 				game_map.entities.append(npc)
 			"actor":
@@ -290,8 +315,10 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 					var saved_stock = ed.get("trade_stock", [])
 					if not (saved_stock as Array).is_empty():
 						npc.trade_stock = (saved_stock as Array).duplicate(true)
-					if not npc.is_merchant:
-						npc.ai = WanderAIClass.new(npc, 0.35)
+					var mc2: float = float(NpcDataClass.get_npc(npc_type).get("move_chance", 0.35))
+					var dai2 := DocileAIClass.new(npc, mc2, not npc.is_wildlife)
+					dai2._fleeing = bool(ed.get("fleeing", false))
+					npc.ai = dai2
 					npc.game_map = cmap
 					cmap.entities.append(npc)
 				"entity":

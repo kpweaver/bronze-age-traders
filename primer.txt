@@ -1,0 +1,451 @@
+================================================================================
+  BRONZE AGE TRADERS — CODEBASE PRIMER
+  For developers with amateur experience, no formal training required.
+================================================================================
+
+This document explains how the game is structured and where to find things when
+you want to make changes. Read it top-to-bottom once, then use it as a reference.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  THE BIG PICTURE
+────────────────────────────────────────────────────────────────────────────────
+
+The game is a turn-based roguelike built in Godot 4, using GDScript. Everything
+renders as ASCII characters (letters, symbols) on a grid, mimicking an old
+terminal. The visual effect is deliberate — it's the aesthetic.
+
+The engine handles drawing and input. All the actual game logic is in .gd files
+(GDScript), which live in three main folders:
+
+  content/      — Data files. Items and NPCs are defined here as dictionaries.
+                  This is the safest place to make changes as a beginner.
+
+  scripts/      — The simulation and logic engine. Combat, movement, time,
+                  thirst, map generation, saving/loading all live here.
+
+  ui/           — The title screen and character creation screen.
+
+There are also .tscn files (Godot scene files), but you rarely need to touch
+them — they just wire the GDScript files to the engine.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  THE TURN LOOP — HOW A SINGLE TURN WORKS
+────────────────────────────────────────────────────────────────────────────────
+
+Every keypress the player makes triggers this sequence:
+
+  1. ascii_map.gd reads the key and calls game_world.do_player_turn(direction)
+  2. game_world.gd moves the player (or attacks, or opens a door, etc.)
+  3. game_world.do_enemy_turns() runs every NPC and monster's AI for one tick
+  4. game_world.end_turn() updates FOV, increments the turn counter, drains
+     thirst (on the overworld), checks for random encounters, then fires the
+     turn_ended signal
+  5. ascii_map.gd receives the signal and redraws the screen
+
+One player action = one turn = 2 real minutes of in-game time.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  FILE-BY-FILE GUIDE
+────────────────────────────────────────────────────────────────────────────────
+
+── content/items.gd ──────────────────────────────────────────────────────────
+
+  WHAT IT IS: A dictionary of every item in the game. Each entry describes one
+  item type — its glyph, colour, name, category, and stats.
+
+  WHEN TO EDIT: Add a new weapon, trade good, or consumable. Change an item's
+  colour, display name, or base gold value.
+
+  KEY FIELDS:
+    char        — the single character shown on the map (e.g. ")" for weapons)
+    cr/cg/cb    — colour as red/green/blue values, each between 0.0 and 1.0
+    name        — display name shown to the player
+    category    — 0=gold  1=usable (food/herbs)  2=trade good  3=equipment
+    slot        — for equipment: "weapon" "body" "feet" "head" or "" for none
+    base_value  — price in gold coins (used by merchants as a baseline)
+    attack_bonus / defense_bonus — combat stats for equipment
+    dice_count / dice_sides — for usable items: how much HP they restore
+                              (e.g. dice_count=2, dice_sides=4 → heals 2d4 HP)
+
+  SAFE TO CHANGE: Everything in here. Adding a new entry won't break anything
+  as long as you follow the format of existing entries.
+
+
+── content/npcs.gd ───────────────────────────────────────────────────────────
+
+  WHAT IT IS: A dictionary of every NPC type — merchants, wanderers, guards,
+  etc. Each entry defines stats, appearance, dialogue, and trade inventory.
+
+  WHEN TO EDIT: Add a new NPC type, change a merchant's prices, write new
+  dialogue, or adjust how common an NPC is in villages (spawn_weight).
+
+  KEY FIELDS:
+    dialogue    — list of strings the NPC cycles through when bumped
+    trade_stock — list of items the merchant sells: {item_type, qty, price}
+    spawn_weight — how often this NPC appears (1=rare, 3=common)
+    is_merchant — true means the player can open the trade screen with them
+    buy_mult    — fraction of base_value the merchant pays for player's goods
+    sell_mult   — multiplier on base_value for what the merchant charges
+
+  SAFE TO CHANGE: Everything in here. See content/CLAUDE.md for full field docs.
+
+
+── scripts/game_state.gd ─────────────────────────────────────────────────────
+
+  WHAT IT IS: A small "global blackboard" that persists across scenes. Think of
+  it as a shared notepad the whole game can read from and write to.
+
+  KEY VARIABLES:
+    world_seed   — the random number that generates the entire world. Change
+                   this for a different map layout.
+    god_mode     — when true: no thirst drain, player kills in one hit, takes
+                   no damage. Toggle in-game with G (check the settings screen).
+    auto_pickup  — whether the player auto-grabs items they step on.
+    WORLD_W/H    — size of the world in chunks (40×24 = 960 chunks total).
+    world_biomes — the biome grid for the entire world.
+    villages     — list of village locations (regenerated from world_seed).
+    road_chunks  — which chunks have roads running through them.
+
+  SAFE TO CHANGE: The constants (WORLD_W, WORLD_H, god_mode default). Be
+  careful with world_biomes and villages — those are computed, not hardcoded.
+
+
+── scripts/game_world.gd ─────────────────────────────────────────────────────
+
+  WHAT IT IS: The simulation heart. Handles the turn loop, day/night cycle,
+  thirst, random encounters, map transitions (entering dungeons, crossing chunk
+  borders), and coordinates all the other systems.
+
+  IMPORTANT CONSTANTS (safe to tweak):
+    TURNS_PER_DAY    = 720  — 720 turns × 2 min = 24 hours. Change this to
+                              speed up or slow down the day/night cycle.
+    FOV_OVERWORLD    = 24   — tiles you can see during the day (daytime radius).
+    FOV_NIGHT        = 1    — tiles you can see at night (near-zero).
+    FOV_RADIUS       = 8    — sight radius inside dungeons.
+    ENCOUNTER_COOLDOWN = 90 — minimum turns between random encounter rolls.
+
+  SURVIVAL SYSTEMS (thirst + fatigue):
+    Both systems operate on `party` — an array in game_world that starts as
+    [player] and will hold followers/pack animals when that feature is added.
+    This means every member of the party automatically gets thirst and fatigue.
+
+    THIRST (overworld only):
+      _drain_thirst() runs every overworld turn. If any adjacent tile is
+      TILE_WATER, thirst resets to 0. Otherwise thirst += 1 per turn.
+      At 90% of THIRST_MAX the player takes 1 HP/turn until they find water
+      or die. THIRST_MAX = 720 turns = 1 in-game day.
+
+    FATIGUE (everywhere — overworld and dungeons):
+      _drain_fatigue() runs every turn. Fatigue += 1 per movement turn,
+      +2 extra on combat turns (the attack adds it directly in do_player_turn).
+      Night travel on the overworld adds +1 extra drain.
+      Waiting ('.') RECOVERS 3 fatigue per turn — rest is a meaningful choice.
+      At 90% of FATIGUE_MAX the player takes 1 HP/turn. FATIGUE_MAX = 720.
+
+    ATTRIBUTES AND SURVIVAL:
+      CON modifier slows thirst drain (actor.thirst_rate = 1.0 - con_mod*0.1).
+      CON modifier speeds fatigue recovery when resting (3 + con_mod per turn).
+      STR modifier adds to melee damage (actor.power += str_mod).
+      DEX modifier adds to Armour Class (10 + defense + dex_mod + gear).
+      These are set at game start by _apply_archetype() in game_world.gd.
+
+    SHARED PARTY VALUES:
+      Thirst and fatigue are shared — one bar represents the whole party.
+      The player's thirst/fatigue values stand in for everyone. When
+      followers are added, their individual rates (thirst_rate, fatigue_rate)
+      can influence the shared drain rate. To add a follower later:
+        party.append(follower_actor)
+
+  DAY/NIGHT:
+    time_of_day is a float from 0.0 (midnight) to 1.0 (next midnight).
+    0.25 = 6am, 0.5 = noon, 0.75 = 6pm. The game starts at 0.25 (dawn).
+    overworld_fov() interpolates sight range smoothly across dawn and dusk.
+
+  RANDOM ENCOUNTERS:
+    _check_random_encounter() runs each turn. At night: ~2.5% chance of
+    bandits spawning nearby. On road chunks during day: ~1.7% chance of a
+    traveling merchant appearing.
+
+  WILDLIFE:
+    Four species roam overworld chunks: gazelle (desert/steppe), onager
+    (steppe), ibex (mountains/badlands), and hyena (desert/badlands).
+    They are spawned by _spawn_wildlife() in procgen.gd when a chunk is
+    first generated. Village chunks get no wildlife. They use WanderAI
+    with species-specific move probabilities; bumping into one prints an
+    observation line rather than the usual "NPC says:" message.
+    To add a species: add an entry to content/npcs.gd with is_wildlife: true
+    and spawn_weight: 0, then add it to the table in _spawn_wildlife().
+
+
+── scripts/ascii_map.gd ──────────────────────────────────────────────────────
+
+  WHAT IT IS: The renderer and input handler. Draws every character on screen,
+  handles all key input, and manages overlay screens (inventory, trade, map,
+  etc.). This is the biggest file in the project.
+
+  STATUS BAR (bottom of screen):
+    Shows HP, attack, AC, gold, floor number, current date (Babylonian
+    calendar), time of day phase, thirst % (overworld only), fatigue %,
+    and equipped weapon.
+
+  SCREENS/OVERLAYS:
+    The Screen enum lists all overlay modes: INVENTORY, CHARACTER, TRADE,
+    WORLD_MAP, LOOK, SETTINGS, HELP, ESCAPE. Each has its own _draw_*() and
+    _handle_*_input() function pair.
+
+  COLOURS:
+    All colour constants are at the top of the file (C_BG, C_STATUS, etc.).
+    These are safe to change to retune the visual palette.
+
+  CAUTION: This file is large and handles a lot. If you're making small tweaks
+  (colours, status bar text), it's fine. For structural changes, go carefully.
+
+
+── scripts/map/game_map.gd ───────────────────────────────────────────────────
+
+  WHAT IT IS: The map data structure. Stores the tile grid, explored/visible
+  arrays (for fog of war), and the entity list for one map (one chunk or one
+  dungeon floor).
+
+  TILE CONSTANTS:
+    TILE_WALL   = 0  (dungeon wall — blocks movement and sight)
+    TILE_FLOOR  = 1  (dungeon floor)
+    TILE_SAND   = 2  (open desert, walkable)
+    TILE_DUNE   = 3  (dune, walkable but slower-feel)
+    TILE_ROCK   = 4  (rocky outcrop, blocks movement)
+    TILE_WATER  = 5  (oasis water, blocks movement — quenches thirst if adjacent)
+    TILE_GRASS  = 6  (lush grass near water, walkable)
+    TILE_ROAD   = 7  (trade road, walkable — faster travel feel eventually)
+
+  FOV is computed here using a shadowcasting algorithm. You don't need to touch
+  this unless you're changing how sight works fundamentally.
+
+
+── scripts/map/procgen.gd ────────────────────────────────────────────────────
+
+  WHAT IT IS: All procedural generation — dungeon rooms, overworld terrain,
+  village layouts, and the world-level road network.
+
+  KEY FUNCTIONS:
+    generate_dungeon()    — creates a dungeon floor with rooms and corridors.
+    generate_overworld()  — creates one overworld chunk with terrain, optional
+                            village, and roads entering from adjacent chunks.
+    generate_roads()      — builds the world-level road network as an MST
+                            (minimum spanning tree) connecting all villages.
+    generate_world_biomes() — assigns a biome to every chunk in the world grid.
+    generate_villages()   — places villages at random chunk positions.
+
+  WORLD SCALE:
+    Each overworld chunk is 200×200 tiles. Each tile = 0.1 miles (528 feet).
+    So one chunk = 20×20 miles — roughly the territory of one city-state.
+    The world is 40×24 chunks = 800×480 miles total.
+
+
+── scripts/entities/ ─────────────────────────────────────────────────────────
+
+  These are the "things" that exist in the game world.
+
+  entity.gd   — The base class. Everything on the map is an Entity.
+                Has: pos (tile position), char (display glyph), color, name,
+                blocks_movement.
+
+  actor.gd    — Extends Entity. Living beings that can move, fight, and die.
+                Adds: hp, max_hp, defense, power, inventory, equipped gear,
+                thirst, fatigue. The player is an Actor. So are monsters.
+                Also holds the six D&D-style attribute scores (str_score through
+                cha_score, default 10) and their computed modifiers.
+                THIRST_MAX = FATIGUE_MAX = 720 turns (1 in-game day).
+
+  npc.gd      — Extends Actor. Village inhabitants built from content/npcs.gd
+                data. Adds: dialogue cycling, trade stock, merchant logic.
+
+  item.gd     — Extends Entity. A physical item on the ground or in inventory.
+                Reads all its stats from content/items.gd at creation time.
+
+
+── scripts/components/ ───────────────────────────────────────────────────────
+
+  AI behaviours are modular "components" attached to actors via actor.ai.
+
+  ai_base.gd    — Base class. Defines the take_turn(player, map) interface.
+                  All AI types inherit from this.
+
+  hostile_ai.gd — Beelines toward the player. Attacks when adjacent.
+                  Used by monsters and bandits.
+
+  wander_ai.gd  — Wanders randomly within wander_radius of home position.
+                  Respects diurnal flag (stays put at night if diurnal=true).
+                  Kept for WanderAI instances that don't need flee behaviour.
+
+  docile_ai.gd  — Wanders peacefully (same logic as WanderAI), but detects
+                  HP loss between turns and permanently switches to flee mode:
+                  each turn it moves to the adjacent tile farthest from the
+                  player. Used by wildlife (diurnal=false) and village NPCs
+                  (diurnal=true). Fear state persists across save/load.
+
+  To attach an AI:
+    actor.ai = HostileAIClass.new(actor)             # aggressive
+    actor.ai = DocileAIClass.new(actor, 0.35, true)  # peaceful+diurnal
+    actor.ai = DocileAIClass.new(actor, 0.55, false) # wildlife (nocturnal ok)
+
+
+── scripts/save_manager.gd ───────────────────────────────────────────────────
+
+  WHAT IT IS: Saves and loads the game to a JSON file at user://save.json.
+  Serialises the current map, player stats, inventory, equipped items, all
+  entities, and all visited chunks/floors.
+
+  If you add a new variable to Actor (like a new survival stat), you need to
+  add it here in two places: save_game() to write it, and restore() to read it.
+  Look at how "thirst" is handled as a template for this.
+
+
+── ui/char_create.gd ─────────────────────────────────────────────────────────
+
+  WHAT IT IS: The character creation screen shown after starting a new game.
+  Collects player name and class, then calls game_world.new_game().
+
+  CLASSES (defined in the CLASSES constant at the top of the file):
+    Wanderer — balanced, all stats 10.
+    Soldier  — STR 14, DEX 12, CON 14. More HP, stronger attacks, better rest.
+    Merchant — STR 8, INT 14, CHA 14. Smaller pack, strong future trade skills.
+    Scout    — DEX 14, CON 12, WIS 12. High AC, better endurance, awareness.
+
+  To add a new class, append an entry to CLASSES following the existing format
+  and add the matching case to _apply_archetype() in game_world.gd.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  HOW DATA FLOWS — A WORKED EXAMPLE
+────────────────────────────────────────────────────────────────────────────────
+
+Say you want to understand how a merchant ends up in the world with items to sell.
+
+  1. content/npcs.gd defines "merchant" with a trade_stock list.
+
+  2. When the player enters a village chunk, procgen.gd calls _place_village(),
+     which spawns NPCs using NpcDataClass.get_npc("merchant") to fetch the data.
+
+  3. NPC.new() reads that dictionary and copies the trade_stock onto the instance.
+     Each NPC gets its own copy so purchases affect only that NPC's stock.
+
+  4. game_world.do_player_turn() detects a bump into the NPC. It calls
+     npc.greet() and stores the NPC in nearby_npc.
+
+  5. The player presses T (trade). ascii_map.gd opens the TRADE screen overlay,
+     reads npc.trade_stock to list items, and handles buy/sell key input.
+
+  6. On purchase: the item is removed from trade_stock (qty decremented),
+     added to player.inventory, and gold is deducted.
+
+  7. On save: save_manager serialises npc.trade_stock so the reduced quantities
+     persist across sessions.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  TIPS FOR MAKING CHANGES SAFELY
+────────────────────────────────────────────────────────────────────────────────
+
+  START IN content/
+    Items and NPCs are pure data — no logic, no side effects. Adding or editing
+    them carries almost zero risk of breaking something.
+
+  CHANGE CONSTANTS FIRST
+    Most "feel" tuning (how fast time passes, how far you can see, how common
+    encounters are) lives in named constants at the top of game_world.gd and
+    actor.gd. Constants in ALL_CAPS are the safe knobs to turn.
+
+  ONE CHANGE AT A TIME
+    Make one change, run the game, see what happened. Don't stack five changes
+    before testing. When something breaks (and it will), you'll know exactly why.
+
+  DELETE YOUR SAVE FILE WHEN CHANGING WORLD STRUCTURE
+    If you change chunk sizes, biome generation, or anything in procgen.gd,
+    delete the save at:
+      C:\Users\<you>\AppData\Roaming\Godot\app_userdata\BronzeAgeTraders\save.json
+    Old saves will crash or glitch on structural world changes.
+
+  READ THE LOG FILE WHEN SOMETHING GOES WRONG
+    Godot writes detailed error logs to:
+      C:\Users\<you>\AppData\Roaming\Godot\app_userdata\BronzeAgeTraders\logs\
+    The most recent timestamped file has the errors. The first error listed is
+    usually the root cause — later errors are often just knock-on effects.
+
+  THE "GREY/BLACK SCREEN" PATTERN
+    If the game shows a blank screen after character creation, it almost always
+    means a GDScript parse error in ascii_map.gd or game_world.gd. Check the
+    log file — it will tell you the exact line number and what's wrong.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  BABYLONIAN CALENDAR REFERENCE
+────────────────────────────────────────────────────────────────────────────────
+
+  The status bar shows the in-game date as "Day Month", e.g. "3 Nisanu".
+  The year is 360 days: 12 months of 30 days each.
+
+  Month order:
+    1  Nisanu      7  Tashritu
+    2  Ayaru       8  Arakhsamna
+    3  Simanu      9  Kislimu
+    4  Du'uzu     10  Tebetu
+    5  Abu        11  Shabatu
+    6  Ululu      12  Addaru
+
+  Time-of-day phases shown to the player:
+    Night  →  Dawn  →  Day  →  Dusk  →  Night
+    (player cannot see exact hours — only the phase is displayed)
+
+
+────────────────────────────────────────────────────────────────────────────────
+  D&D-STYLE ATTRIBUTE REFERENCE
+────────────────────────────────────────────────────────────────────────────────
+
+  Attributes follow classic D&D: scores from 3–18, default 10 (modifier = 0).
+  Modifier = (score - 10) / 2, rounded toward zero.
+  Score 8 → mod -1.  Score 12 → mod +1.  Score 14 → mod +2.  Score 16 → mod +3.
+
+  ACTIVE ATTRIBUTES (implemented):
+    STR (Strength)     — +str_mod damage on melee attacks; +2 inventory slots/mod
+    DEX (Dexterity)    — +dex_mod to Armour Class; future: ranged weapon damage
+    CON (Constitution) — +con_mod*3 max HP; slows thirst drain; speeds rest recovery
+
+  STUB ATTRIBUTES (reserved for future systems, currently no effect):
+    INT (Intelligence) — trade knowledge, crafting
+    WIS (Wisdom)       — FOV, awareness, rumours
+    CHA (Charisma)     — prices, followers, reputation
+
+  ARMOUR CLASS FORMULA:
+    AC = 10 + defense + dex_mod + sum of defense_bonus across all equipped items
+
+  ARCHETYPE SCORES:
+    Wanderer  STR 10  DEX 10  CON 10  INT 10  WIS 10  CHA 10
+    Soldier   STR 14  DEX 12  CON 14  INT  8  WIS  8  CHA 10
+    Merchant  STR  8  DEX 10  CON 10  INT 14  WIS 12  CHA 14
+    Scout     STR 10  DEX 14  CON 12  INT 10  WIS 12  CHA  8
+
+
+────────────────────────────────────────────────────────────────────────────────
+  GLOSSARY
+────────────────────────────────────────────────────────────────────────────────
+
+  Chunk       A single overworld map region (200×200 tiles, 20×20 miles).
+  FOV         Field of View — which tiles the player can currently see.
+  Explored    Tiles the player has seen before (shown dimly, not updated).
+  Visible     Tiles the player can see right now (bright, current state).
+  Entity      Anything on the map: player, NPC, monster, item, stairs.
+  Actor       An Entity that is alive: has HP, can fight. Base for player/NPC.
+  AI          The logic component that decides what a monster/NPC does each turn.
+  MST         Minimum Spanning Tree — the algorithm that builds the road network
+              by connecting all villages with the shortest possible total road.
+  Biome       The terrain type of a chunk: desert, oasis, steppes, mountains,
+              badlands. Affects tile types and colour palette.
+  signal      A Godot mechanism for decoupled communication. game_world emits
+              turn_ended, ascii_map listens and redraws. Like an event system.
+  preload     GDScript's way of importing another script file. Similar to
+              "import" or "require" in other languages.
+
+================================================================================

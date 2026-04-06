@@ -15,6 +15,7 @@ const NpcClass       = preload("res://scripts/entities/npc.gd")
 const NpcDataClass   = preload("res://content/npcs.gd")
 const HostileAIClass = preload("res://scripts/components/hostile_ai.gd")
 const WanderAIClass  = preload("res://scripts/components/wander_ai.gd")
+const DocileAIClass  = preload("res://scripts/components/docile_ai.gd")
 
 
 class RectRoom:
@@ -362,6 +363,10 @@ static func generate_overworld(map, world_x: int, world_y: int, world_seed: int,
 	if is_village:
 		_place_village(map, world_seed, world_x, world_y)
 
+	# Wildlife skip village chunks — animals keep away from settled areas.
+	if not is_village:
+		_spawn_wildlife(map, biome, world_seed, world_x, world_y, safe_center)
+
 
 # ---------------------------------------------------------------------------
 # Village generation
@@ -454,9 +459,17 @@ static func _road_bresenham(road_set: Dictionary, from: Vector2i, to: Vector2i) 
 		if x0 == x1 and y0 == y1:
 			break
 		var e2 := 2 * err
-		if e2 > -dy:
+		if e2 > -dy and e2 < dx:
+			# Diagonal step — mark the intermediate axis-aligned cell first so
+			# every road chunk always has a cardinally-adjacent road neighbour.
+			# Without this, get_road_dirs() finds no neighbours for diagonal
+			# chunks and _carve_roads() is never called → phantom world-map roads.
 			err -= dy;  x0 += sx
-		if e2 < dx:
+			road_set["%d,%d" % [x0, y0]] = true   # intermediate
+			err += dx;  y0 += sy
+		elif e2 > -dy:
+			err -= dy;  x0 += sx
+		else:
 			err += dx;  y0 += sy
 
 
@@ -676,9 +689,9 @@ static func _place_village(map, world_seed: int, world_x: int, world_y: int) -> 
 			var npc_type: String     = str(npc_pool[rng.randi_range(0, npc_pool.size() - 1)])
 			var npc_data: Dictionary = NpcDataClass.get_npc(npc_type)
 			var npc := NpcClass.new(npc_pos, npc_type, npc_data)
-			# Non-merchant NPCs wander; merchants stay at their stall.
+			# Non-merchant NPCs wander (diurnal — rest at night); merchants stay put.
 			if not npc.is_merchant:
-				npc.ai = WanderAIClass.new(npc, 0.35)
+				npc.ai = DocileAIClass.new(npc, 0.35, true)
 			npc.game_map = map
 			map.entities.append(npc)
 			spawned_npc += 1
@@ -777,3 +790,76 @@ static func _furnish_commercial(map, rng: RandomNumberGenerator, bx: int, by_: i
 	var side_count: int = rng.randi_range(1, 2)
 	for i in range(side_count):
 		_place_furniture(map, bx + bw - 2, by_ + 2 + i, "o", Color(0.65, 0.38, 0.20), "storage jar")
+
+
+# ---------------------------------------------------------------------------
+# Wildlife spawning
+# Spawned on overworld chunks only; skipped for village chunks.
+# Each species has a biome affinity and an allowed tile list.
+# ---------------------------------------------------------------------------
+
+static func _spawn_wildlife(map, biome: int, world_seed: int, world_x: int, world_y: int, safe_center: bool) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = world_seed ^ (world_x * 56789013) ^ (world_y * 23456791)
+
+	# Per-biome table: [npc_type, allowed_tiles, max_count]
+	var table: Array = []
+	match biome:
+		GameMapClass.BIOME_DESERT:
+			table = [
+				["gazelle", [GameMapClass.TILE_SAND, GameMapClass.TILE_DUNE], 4],
+				["hyena",   [GameMapClass.TILE_SAND, GameMapClass.TILE_DUNE], 2],
+			]
+		GameMapClass.BIOME_STEPPES:
+			table = [
+				["gazelle", [GameMapClass.TILE_GRASS, GameMapClass.TILE_SAND], 5],
+				["onager",  [GameMapClass.TILE_GRASS, GameMapClass.TILE_SAND], 4],
+			]
+		GameMapClass.BIOME_MOUNTAINS:
+			table = [
+				["ibex",  [GameMapClass.TILE_SAND, GameMapClass.TILE_DUNE], 4],
+				["hyena", [GameMapClass.TILE_SAND, GameMapClass.TILE_DUNE], 2],
+			]
+		GameMapClass.BIOME_BADLANDS:
+			table = [
+				["hyena", [GameMapClass.TILE_SAND, GameMapClass.TILE_DUNE], 3],
+				["ibex",  [GameMapClass.TILE_SAND, GameMapClass.TILE_DUNE], 2],
+			]
+		GameMapClass.BIOME_OASIS:
+			table = [
+				["gazelle", [GameMapClass.TILE_GRASS, GameMapClass.TILE_SAND], 5],
+				["onager",  [GameMapClass.TILE_GRASS, GameMapClass.TILE_SAND], 3],
+			]
+
+	# Safe-center exclusion zone (player spawn area).
+	var safe_x1: int = 0;  var safe_x2: int = 0
+	var safe_y1: int = 0;  var safe_y2: int = 0
+	if safe_center:
+		var cx: int = map.width  >> 1
+		var cy: int = map.height >> 1
+		safe_x1 = cx - 14;  safe_x2 = cx + 14
+		safe_y1 = cy - 14;  safe_y2 = cy + 14
+
+	for entry in table:
+		var npc_type: String  = entry[0]
+		var tiles: Array      = entry[1]
+		var count: int        = rng.randi_range(1, entry[2])
+		var npc_data: Dictionary = NpcDataClass.get_npc(npc_type)
+		var placed: int = 0
+		for _attempt in range(count * 20):
+			if placed >= count:
+				break
+			var tx: int = rng.randi_range(2, map.width  - 3)
+			var ty: int = rng.randi_range(2, map.height - 3)
+			if safe_center and tx >= safe_x1 and tx <= safe_x2 and ty >= safe_y1 and ty <= safe_y2:
+				continue
+			if not (map.tiles[ty][tx] in tiles):
+				continue
+			if map.get_blocking_entity_at(tx, ty) != null:
+				continue
+			var npc := NpcClass.new(Vector2i(tx, ty), npc_type, npc_data)
+			var mc: float = float(npc_data.get("move_chance", 0.35))
+			npc.ai       = DocileAIClass.new(npc, mc, false)  # diurnal=false: active day & night
+			npc.game_map = map
+			map.entities.append(npc)
+			placed += 1

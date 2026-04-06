@@ -94,7 +94,7 @@ var _day_tint: Color = Color.WHITE
 # ---------------------------------------------------------------------------
 # Game world + rendering
 # ---------------------------------------------------------------------------
-var _world: GameWorld
+var _world  # GameWorld — untyped to avoid class_name scope issues
 var _font: Font
 
 # Convenience aliases — read-only proxies into _world.
@@ -275,6 +275,11 @@ func _unhandled_input(event: InputEvent) -> void:
 				get_viewport().set_input_as_handled()
 				queue_redraw()
 				return
+			KEY_S:
+				get_viewport().set_input_as_handled()
+				_world.try_skin()
+				queue_redraw()
+				return
 			KEY_T:
 				get_viewport().set_input_as_handled()
 				var merchants: Array = _get_adjacent_merchants()
@@ -336,7 +341,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		_: return
 
 	get_viewport().set_input_as_handled()
-	_world.do_player_turn(dir)
+	_world.do_player_turn(dir, event.shift_pressed and dir != Vector2i.ZERO)
 
 
 func _handle_escape_input(event: InputEvent) -> void:
@@ -390,7 +395,7 @@ func _handle_inventory_input(event: InputEvent) -> void:
 		if unequip_slot != "":
 			var msg: String = _player.unequip(unequip_slot)
 			if msg != "":
-				_world.log(msg)
+				_world.add_msg(msg)
 				queue_redraw()
 			return
 
@@ -401,14 +406,14 @@ func _handle_inventory_input(event: InputEvent) -> void:
 			var item = _player.inventory[idx]
 			if item.category == ItemClass.CATEGORY_EQUIPMENT:
 				var msg: String = _player.equip(item)
-				_world.log(msg)
+				_world.add_msg(msg)
 				_screen = Screen.NONE
 				_world.do_enemy_turns()
 				_world.end_turn()
 			elif item.category == ItemClass.CATEGORY_USABLE:
 				var msg: String = item.use(_player)
 				if msg != "":
-					_world.log(msg)
+					_world.add_msg(msg)
 					_player.inventory.remove_at(idx)
 					_screen = Screen.NONE
 					_world.do_enemy_turns()
@@ -679,11 +684,15 @@ func _draw_ui() -> void:
 	var hp_color       := C_STATUS.lerp(Color(0.8, 0.15, 0.05), 1.0 - hp_frac)
 	var wpn     = _player.equipped.get(ItemClass.SLOT_WEAPON)
 	var wpn_str := ("  WPN: %s" % (wpn as ItemClass).name) if wpn != null else ""
-	var time_str: String = _world.get_time_string()
-	var day_str: String  = "Night" if _world.is_night else "Day"
-	var status := "HP: %d/%d   ATK: 1d6+%d  AC: %d   Gold: %d   Floor: %d   %s %s%s" % [
+	var cal_str: String   = _world.get_calendar_string()
+	var phase_str: String = _world.get_day_phase()
+	var thr_pct: int      = int(float(_player.thirst)  / float(ActorClass.THIRST_MAX)  * 100.0)
+	var fat_pct: int      = int(float(_player.fatigue) / float(ActorClass.FATIGUE_MAX) * 100.0)
+	var thr_str: String   = ("  THR: %d%%" % thr_pct) if _floor == 0 else ""
+	var fat_str: String   = "  FAT: %d%%" % fat_pct
+	var status := "HP: %d/%d   ATK: 1d6+%d  AC: %d   Gold: %d   Floor: %d   %s  %s%s%s%s" % [
 		_player.hp, _player.max_hp, _player.power + _player.total_attack_bonus,
-		_player.ac, _player.gold, _floor, time_str, day_str, wpn_str
+		_player.ac, _player.gold, _floor, cal_str, phase_str, thr_str, fat_str, wpn_str
 	]
 	_puts(0, STATUS_ROW, status, hp_color)
 
@@ -762,7 +771,7 @@ func _draw_inventory() -> void:
 	_puts(BOX_X + ((BOX_W - title.length()) >> 1), BOX_Y, title, C_STATUS)
 
 	# Left panel: pack
-	_puts(PACK_X, BOX_Y + 2, "PACK  (%d/%d)" % [_player.inventory.size(), ActorClass.MAX_INVENTORY], C_STATUS)
+	_puts(PACK_X, BOX_Y + 2, "PACK  (%d/%d)" % [_player.inventory.size(), _player.max_inventory], C_STATUS)
 	if _player.inventory.is_empty():
 		_puts(PACK_X, BOX_Y + 4, "Your pack is empty.", C_MSG_OLD)
 	else:
@@ -843,7 +852,7 @@ func _draw_character_sheet() -> void:
 	r += 1
 	_stat_line(BOX_X + 4, r, "Gold", str(_player.gold), C_GOLD); r += 1
 	_stat_line(BOX_X + 4, r, "Pack",
-		"%d / %d items" % [_player.inventory.size(), ActorClass.MAX_INVENTORY]); r += 1
+		"%d / %d items" % [_player.inventory.size(), _player.max_inventory]); r += 1
 
 	var hint := "[Esc] close"
 	_puts(BOX_X + ((BOX_W - hint.length()) >> 1), BOX_Y + BOX_H - 2, hint, C_DIVIDER)
@@ -929,10 +938,12 @@ func _draw_help_screen() -> void:
 	_help_row(COL1, r, "numpad 5 / .",    "wait one turn");   r += 1
 	r += 1
 	_puts(COL1, r, "ACTIONS", C_STATUS); r += 1
-	_help_row(COL1, r, "g",  "pick up items");         r += 1
-	_help_row(COL1, r, "t",  "trade (near merchant)"); r += 1
-	_help_row(COL1, r, ">",  "descend / enter");       r += 1
-	_help_row(COL1, r, "<",  "ascend / world map");    r += 1
+	_help_row(COL1, r, "g",           "pick up items");           r += 1
+	_help_row(COL1, r, "s",           "skin/butcher carcass");    r += 1
+	_help_row(COL1, r, "t",           "trade (near merchant)");   r += 1
+	_help_row(COL1, r, "Shift+dir",   "force attack (any NPC)");  r += 1
+	_help_row(COL1, r, ">",           "descend / enter");         r += 1
+	_help_row(COL1, r, "<",           "ascend / world map");      r += 1
 
 	# Column 2 — Menus
 	r = BOX_Y + 2
@@ -1068,16 +1079,16 @@ func _handle_trade_input(event: InputEvent) -> void:
 			var qty: int      = int(entry.get("qty",   0))
 			var itype: String = str(entry.get("item_type", ""))
 			if qty <= 0:
-				_world.log("The %s has no more %s." % [npc.name, itype.replace("_", " ")])
+				_world.add_msg("The %s has no more %s." % [npc.name, itype.replace("_", " ")])
 			elif _player.gold < price:
-				_world.log("You cannot afford that. (need %dg)" % price)
-			elif _player.inventory.size() >= ActorClass.MAX_INVENTORY:
-				_world.log("Your pack is full.")
+				_world.add_msg("You cannot afford that. (need %dg)" % price)
+			elif _player.inventory.size() >= _player.max_inventory:
+				_world.add_msg("Your pack is full.")
 			else:
 				_player.gold -= price
 				entry["qty"] = qty - 1
 				_player.inventory.append(ItemClass.new(Vector2i(0, 0), itype, 0))
-				_world.log("You buy %s for %dg." % [itype.replace("_", " "), price])
+				_world.add_msg("You buy %s for %dg." % [itype.replace("_", " "), price])
 				queue_redraw()
 		return
 
@@ -1090,7 +1101,7 @@ func _handle_trade_input(event: InputEvent) -> void:
 			var offer: int = npc.buy_price(item)
 			_player.gold += offer
 			_player.inventory.erase(item)
-			_world.log("You sell the %s for %dg." % [(item as ItemClass).name, offer])
+			_world.add_msg("You sell the %s for %dg." % [(item as ItemClass).name, offer])
 			queue_redraw()
 		return
 
@@ -1172,7 +1183,7 @@ func _draw_world_map() -> void:
 
 	var info_y: int = wm_top + GameState.WORLD_H + 2
 	var info_c: Vector2i = _world_look_cursor if _world_look_mode else _chunk
-	var info_biome := _world.get_chunk_biome(info_c)
+	var info_biome: int = _world.get_chunk_biome(info_c)
 	var info_vill: Variant = _world.get_village_at_chunk(info_c.x, info_c.y)
 
 	var info_str: String
@@ -1229,9 +1240,9 @@ func _handle_world_map_input(event: InputEvent) -> void:
 		if _chunk != _world_entry_chunk:
 			var wv: Variant = _world.get_village_at_chunk(_chunk.x, _chunk.y)
 			if wv != null:
-				_world.log("You arrive at %s." % wv.name)
+				_world.add_msg("You arrive at %s." % wv.name)
 			else:
-				_world.log("You arrive in the %s." % _biome_name(_world.get_chunk_biome(_chunk)))
+				_world.add_msg("You arrive in the %s." % _biome_name(_world.get_chunk_biome(_chunk)))
 		queue_redraw()
 		return
 

@@ -8,6 +8,7 @@ var npc_type: String   = ""
 var dialogue: Array    = []    # cycling lines shown on interact
 var trade_stock: Array = []    # Array of {item_type, qty, price} — mutable per instance
 var is_merchant: bool  = false
+var is_wildlife: bool  = false  # true for overworld animals — changes bump-message format
 var buy_mult: float    = 0.70  # fraction of item.base_value we pay when buying from player
 var sell_mult: float   = 1.35  # multiplier on item.base_value when selling to player
 var _dialogue_idx: int = 0
@@ -35,6 +36,7 @@ func _init(p_pos: Vector2i, p_type: String, p_data: Dictionary) -> void:
 	npc_type      = p_type
 	dialogue      = p_data.get("dialogue", ["..."])
 	is_merchant   = bool(p_data.get("is_merchant", false))
+	is_wildlife   = bool(p_data.get("is_wildlife", false))
 	trade_stock   = p_data.get("trade_stock", []).duplicate(true)
 	buy_mult      = float(p_data.get("buy_mult",  0.70))
 	sell_mult     = float(p_data.get("sell_mult", 1.35))

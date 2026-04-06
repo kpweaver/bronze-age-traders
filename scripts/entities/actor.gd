@@ -13,6 +13,41 @@ var ai          # HostileAI or null — untyped to break circular dependency
 var inventory: Array = []  # Array of Item (non-equipped)
 var gold: int = 0
 
+const THIRST_MAX: int  = 720   # turns until death from dehydration (1 day)
+const FATIGUE_MAX: int = 720   # turns until collapse from exhaustion (1 day)
+var thirst: int  = 0           # 0 = fully hydrated,  THIRST_MAX  = dead
+var fatigue: int = 0           # 0 = fully rested,    FATIGUE_MAX = collapse
+
+# Per-actor survival rate multipliers — kept at 1.0 for humans.
+# Future followers: camels thirst_rate=0.3, pack donkeys fatigue_rate=1.5, etc.
+var thirst_rate:  float = 1.0
+var fatigue_rate: float = 1.0
+
+# ---------------------------------------------------------------------------
+# Attribute scores — D&D-style 3-18 range, default 10 (modifier = 0).
+# Modifier formula: (score - 10) / 2  (integer division, floors toward zero).
+# Only STR/DEX/CON are active; INT/WIS/CHA are stubs for future systems.
+# ---------------------------------------------------------------------------
+var str_score: int = 10   # Strength     — damage, carry capacity
+var dex_score: int = 10   # Dexterity    — AC, future ranged weapons
+var con_score: int = 10   # Constitution — max HP, thirst endurance, fatigue recovery
+var int_score: int = 10   # Intelligence — stub (trade knowledge, crafting)
+var wis_score: int = 10   # Wisdom       — stub (FOV, awareness, rumours)
+var cha_score: int = 10   # Charisma     — stub (prices, followers, reputation)
+
+var str_mod: int:
+	get: return (str_score - 10) / 2
+var dex_mod: int:
+	get: return (dex_score - 10) / 2
+var con_mod: int:
+	get: return (con_score - 10) / 2
+var int_mod: int:
+	get: return (int_score - 10) / 2
+var wis_mod: int:
+	get: return (wis_score - 10) / 2
+var cha_mod: int:
+	get: return (cha_score - 10) / 2
+
 # Equipment slots — values are Item instances or null.
 var equipped: Dictionary = {
 	"weapon": null,
@@ -42,8 +77,13 @@ var total_attack_bonus: int:
 				b += int(equipped[s].attack_bonus)
 		return b
 
+# DEX modifier applies to AC automatically for all actors.
 var ac: int:
-	get: return 10 + defense + total_defense_bonus
+	get: return 10 + defense + dex_mod + total_defense_bonus
+
+# STR modifier expands carry capacity (2 slots per modifier point).
+var max_inventory: int:
+	get: return MAX_INVENTORY + str_mod * 2
 
 
 func _init(
@@ -122,7 +162,7 @@ func unequip(slot_key: String) -> String:
 	var item = equipped.get(slot_key)
 	if item == null:
 		return ""
-	if inventory.size() >= MAX_INVENTORY:
+	if inventory.size() >= max_inventory:
 		return "Your pack is full — can't unequip the %s." % item.name
 	equipped[slot_key] = null
 	inventory.append(item)

@@ -17,10 +17,13 @@ const C_NORMAL   := Color(0.55, 0.42, 0.28)
 const C_DISABLED := Color(0.22, 0.17, 0.10)
 const C_HINT     := Color(0.30, 0.20, 0.10)
 
-# Classes available at character creation — add entries here when new classes are ready.
-# Format: [id_string, display_name, description]
+# Classes available at character creation.
+# Format: [id_string, display_name, description, [STR, DEX, CON, INT, WIS, CHA]]
 const CLASSES := [
-	["wanderer", "Wanderer",  "A rootless traveller. Balanced stats, no allegiances."],
+	["wanderer", "Wanderer",  "A rootless traveller. Balanced stats, no allegiances.",     [10, 10, 10, 10, 10, 10]],
+	["soldier",  "Soldier",   "A hardened desert veteran. Strong, tough, few words.",       [14, 12, 14,  8,  8, 10]],
+	["merchant", "Merchant",  "A silver-tongued trader. Weak in body, rich in influence.",  [ 8, 10, 10, 14, 12, 14]],
+	["scout",    "Scout",     "A swift desert ranger. Agile, alert, and self-reliant.",     [10, 14, 12, 10, 12,  8]],
 ]
 
 const NAME_MAX := 24
@@ -190,15 +193,27 @@ func _draw_class_phase() -> void:
 		if is_sel:
 			_puts_centered(18 + i * 3, cls[2], C_LABEL)
 
-	_puts_centered(32, "enter: confirm class    esc: back to name", C_HINT)
+	# Stat scores for the highlighted class.
+	var stats: Array = CLASSES[_class_cursor][3]
+	var stat_line1 := "STR: %2d   DEX: %2d   CON: %2d" % [stats[0], stats[1], stats[2]]
+	var stat_line2 := "INT: %2d   WIS: %2d   CHA: %2d" % [stats[3], stats[4], stats[5]]
+	_puts_centered(30, stat_line1, C_NORMAL)
+	_puts_centered(31, stat_line2, C_NORMAL)
+
+	_puts_centered(33, "arrows: choose    enter: confirm    esc: back", C_HINT)
 
 
 func _draw_confirm_phase() -> void:
-	var cls_name: String = CLASSES[_class_cursor][1]
+	var cls: Array   = CLASSES[_class_cursor]
+	var stats: Array = cls[3]
 	_puts_centered(14, "Ready to begin?", C_LABEL)
 	_puts_centered(17, "Name:  " + _name.strip_edges(), C_INPUT)
-	_puts_centered(19, "Class: " + cls_name, C_INPUT)
-	_puts_centered(23, "[ Enter / Y ] to start      [ Esc / N ] to go back", C_HINT)
+	_puts_centered(19, "Class: " + cls[1], C_INPUT)
+	var stat_line1 := "STR: %2d   DEX: %2d   CON: %2d" % [stats[0], stats[1], stats[2]]
+	var stat_line2 := "INT: %2d   WIS: %2d   CHA: %2d" % [stats[3], stats[4], stats[5]]
+	_puts_centered(22, stat_line1, C_NORMAL)
+	_puts_centered(23, stat_line2, C_NORMAL)
+	_puts_centered(26, "[ Enter / Y ] to start      [ Esc / N ] to go back", C_HINT)
 
 
 func _draw_hint() -> void:

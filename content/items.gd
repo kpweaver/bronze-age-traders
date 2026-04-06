@@ -111,6 +111,46 @@ const DATA: Dictionary = {
 		"base_value": 15, "material": "clay",
 	},
 
+	# ── Hunting yields ───────────────────────────────────────────────────────
+	# Produced by skinning/butchering wildlife — not sold in shops by default.
+	"game_meat": {
+		"char": ":", "cr": 0.78, "cg": 0.28, "cb": 0.22,
+		"name": "game meat", "category": 1, "slot": "",
+		"base_value": 5, "dice_count": 1, "dice_sides": 6,
+		"material": "raw meat",
+	},
+	"tough_meat": {
+		"char": ":", "cr": 0.52, "cg": 0.22, "cb": 0.18,
+		"name": "tough meat", "category": 1, "slot": "",
+		"base_value": 2, "dice_count": 1, "dice_sides": 3,
+		"material": "raw meat",
+	},
+	"light_hide": {
+		"char": "~", "cr": 0.75, "cg": 0.62, "cb": 0.40,
+		"name": "light hide", "category": 2, "slot": "",
+		"base_value": 8, "material": "hide",
+	},
+	"heavy_hide": {
+		"char": "~", "cr": 0.55, "cg": 0.42, "cb": 0.28,
+		"name": "heavy hide", "category": 2, "slot": "",
+		"base_value": 13, "material": "hide",
+	},
+	"coarse_hide": {
+		"char": "~", "cr": 0.42, "cg": 0.38, "cb": 0.28,
+		"name": "coarse hide", "category": 2, "slot": "",
+		"base_value": 4, "material": "hide",
+	},
+	"gazelle_horn": {
+		"char": "\\", "cr": 0.90, "cg": 0.84, "cb": 0.65,
+		"name": "gazelle horn", "category": 2, "slot": "",
+		"base_value": 10, "material": "horn",
+	},
+	"ibex_horn": {
+		"char": "\\", "cr": 0.78, "cg": 0.70, "cb": 0.48,
+		"name": "ibex horn", "category": 2, "slot": "",
+		"base_value": 22, "material": "horn",
+	},
+
 	# ── Weapons  (slot: "weapon") ─────────────────────────────────────────────
 	"dagger": {
 		"char": ")", "cr": 0.78, "cg": 0.72, "cb": 0.55,
