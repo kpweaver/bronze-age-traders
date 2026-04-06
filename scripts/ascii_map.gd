@@ -402,7 +402,7 @@ func _handle_inventory_input(event: InputEvent) -> void:
 		queue_redraw()
 		return
 
-	# w/b/f/h — unequip slot (unshifted only).
+	# w/b/f/h/l — unequip slot (unshifted only).
 	if not event.shift_pressed:
 		var unequip_slot := ""
 		match key:
@@ -410,6 +410,7 @@ func _handle_inventory_input(event: InputEvent) -> void:
 			KEY_B: unequip_slot = ItemClass.SLOT_BODY
 			KEY_F: unequip_slot = ItemClass.SLOT_FEET
 			KEY_H: unequip_slot = ItemClass.SLOT_HEAD
+			KEY_U: unequip_slot = ItemClass.SLOT_LIGHT
 		if unequip_slot != "":
 			var msg: String = _player.unequip(unequip_slot)
 			if msg != "":
@@ -779,15 +780,20 @@ func _draw_ui() -> void:
 	var hp_color       := C_STATUS.lerp(Color(0.8, 0.15, 0.05), 1.0 - hp_frac)
 	var wpn     = _player.equipped.get(ItemClass.SLOT_WEAPON)
 	var wpn_str := ("  WPN: %s" % (wpn as ItemClass).name) if wpn != null else ""
+	var lit     = _player.equipped.get(ItemClass.SLOT_LIGHT)
+	var lit_str := ""
+	if lit != null:
+		var lt := lit as ItemClass
+		lit_str = "  LIT: %dt" % lt.value if lt.burn_turns > 0 else "  LIT"
 	var cal_str: String   = _world.get_calendar_string()
 	var phase_str: String = _world.get_day_phase()
 	var thr_pct: int      = int(float(_player.thirst)  / float(ActorClass.THIRST_MAX)  * 100.0)
 	var fat_pct: int      = int(float(_player.fatigue) / float(ActorClass.FATIGUE_MAX) * 100.0)
 	var thr_str: String   = ("  THR: %d%%" % thr_pct) if _floor == 0 else ""
 	var fat_str: String   = "  FAT: %d%%" % fat_pct
-	var status := "HP: %d/%d   ATK: 1d6+%d  AC: %d   Gold: %d   Floor: %d   %s  %s%s%s%s" % [
+	var status := "HP: %d/%d   ATK: 1d6+%d  AC: %d   Gold: %d   Floor: %d   %s  %s%s%s%s%s" % [
 		_player.hp, _player.max_hp, _player.power + _player.total_attack_bonus,
-		_player.ac, _player.gold, _floor, cal_str, phase_str, thr_str, fat_str, wpn_str
+		_player.ac, _player.gold, _floor, cal_str, phase_str, thr_str, fat_str, wpn_str, lit_str
 	]
 	_puts(0, STATUS_ROW, status, hp_color)
 
@@ -894,6 +900,7 @@ func _draw_inventory() -> void:
 		[ItemClass.SLOT_BODY,   "b) BODY  "],
 		[ItemClass.SLOT_FEET,   "f) FEET  "],
 		[ItemClass.SLOT_HEAD,   "h) HEAD  "],
+		[ItemClass.SLOT_LIGHT,  "u) LIGHT "],
 	]
 	for si in range(slot_rows.size()):
 		var sdata: Array  = slot_rows[si]
@@ -905,12 +912,14 @@ func _draw_inventory() -> void:
 			var bonus_str := ""
 			if eq_item.attack_bonus  > 0: bonus_str = "  (+%d atk)" % eq_item.attack_bonus
 			if eq_item.defense_bonus > 0: bonus_str = "  (+%d def)" % eq_item.defense_bonus
+			if s_key == ItemClass.SLOT_LIGHT and eq_item.burn_turns > 0:
+				bonus_str = "  (%dt left)" % eq_item.value
 			_puts(EQUIP_X, BOX_Y + 4 + si * 2,
 				"%s: %-20s%s" % [s_lbl, eq_item.name, bonus_str], C_MSG_RECENT)
 		else:
 			_puts(EQUIP_X, BOX_Y + 4 + si * 2, "%s: -" % s_lbl, C_MSG_OLD)
 
-	var hint := "[a-t] use / equip / read   [w/b/f/h] unequip   [Esc] close"
+	var hint := "[a-t] use / equip / read   [w/b/f/h/u] unequip   [Esc] close"
 	_puts(BOX_X + ((BOX_W - hint.length()) >> 1), BOX_Y + BOX_H - 2, hint, C_DIVIDER)
 
 
@@ -1089,7 +1098,7 @@ func _draw_help_screen() -> void:
 	r += 1
 	_puts(COL2, r, "INVENTORY", C_STATUS); r += 1
 	_help_row(COL2, r, "a-t",    "use / equip item"); r += 1
-	_help_row(COL2, r, "w/b/f/h","unequip slot");     r += 1
+	_help_row(COL2, r, "w/b/f/h/u","unequip slot");   r += 1
 	r += 1
 	_puts(COL2, r, "TRADE", C_STATUS); r += 1
 	_help_row(COL2, r, "a-z",       "buy item");  r += 1

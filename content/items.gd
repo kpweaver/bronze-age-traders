@@ -186,6 +186,14 @@ const DATA: Dictionary = {
 		"base_value": 22, "material": "horn",
 	},
 
+	# ── Light sources  (slot: "light") ──────────────────────────────────────
+	"torch": {
+		"char": "f", "cr": 1.0, "cg": 0.65, "cb": 0.15,
+		"name": "torch", "category": 3, "slot": "light",
+		"base_value": 4, "material": "reed",
+		"light_fov": 3, "burn_turns": 5000,
+	},
+
 	# ── Weapons  (slot: "weapon") ─────────────────────────────────────────────
 	"dagger": {
 		"char": ")", "cr": 0.78, "cg": 0.72, "cb": 0.55,

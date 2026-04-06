@@ -20,6 +20,7 @@ const SLOT_WEAPON := "weapon"
 const SLOT_BODY   := "body"
 const SLOT_FEET   := "feet"
 const SLOT_HEAD   := "head"
+const SLOT_LIGHT  := "light"
 
 # ---------------------------------------------------------------------------
 # Usable item types
@@ -80,6 +81,11 @@ const TYPE_LEATHER_CAP    := "leather_cap"
 const TYPE_BRONZE_HELMET  := "bronze_helmet"
 
 # ---------------------------------------------------------------------------
+# Light sources  (SLOT_LIGHT)
+# ---------------------------------------------------------------------------
+const TYPE_TORCH := "torch"
+
+# ---------------------------------------------------------------------------
 # Instance fields
 # ---------------------------------------------------------------------------
 var item_type: String  = ""
@@ -95,6 +101,9 @@ var dice_sides: int    = 0
 
 var attack_bonus: int  = 0   # equipment — added to attacker's damage roll
 var defense_bonus: int = 0   # equipment — added to wearer's AC
+
+var light_fov: int     = 0   # light sources — FOV radius when equipped and lit
+var burn_turns: int    = 0   # light sources — max lifetime in turns (0 = infinite)
 
 var text: String       = ""  # readable items — full text shown in the reader screen
 
@@ -113,10 +122,15 @@ func _init(p_pos: Vector2i, p_type: String, p_value: int) -> void:
 	dice_sides   = int(d.get("dice_sides", 0))
 	attack_bonus  = int(d.get("attack_bonus",  0))
 	defense_bonus = int(d.get("defense_bonus", 0))
+	light_fov     = int(d.get("light_fov",    0))
+	burn_turns    = int(d.get("burn_turns",   0))
 	text          = str(d.get("text", ""))
 	# Gold coins carry a runtime quantity — use p_value directly.
 	if category == CATEGORY_GOLD:
 		value = p_value
+	# Light sources use value as burn_remaining; restore saved value or seed from burn_turns.
+	elif slot == SLOT_LIGHT and burn_turns > 0:
+		value = p_value if p_value > 0 else burn_turns
 
 	super._init(p_pos, ch, col, nm, false)
 

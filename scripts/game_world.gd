@@ -161,6 +161,10 @@ func new_game() -> void:
 	map   = ow_map
 	party = [player]
 
+	# Player starts with one torch in their pack.
+	var starting_torch := ItemClass.new(player.pos, ItemClass.TYPE_TORCH, 0)
+	player.inventory.append(starting_torch)
+
 	map.compute_fov(player.pos.x, player.pos.y, overworld_fov())
 	add_msg("You stand beneath a merciless sun. The dungeon entrance lies nearby. Press < for the world map.")
 	map_changed.emit()
@@ -189,6 +193,7 @@ func load_from_save() -> void:
 	GameState.road_chunks  = ProcgenClass.generate_roads(
 			GameState.villages, GameState.WORLD_W, GameState.WORLD_H)
 	party = [player]
+	_recompute_fov()
 	add_msg("You return to where you left off...")
 	map_changed.emit()
 
@@ -272,14 +277,47 @@ func do_enemy_turns() -> void:
 				return
 
 
-func end_turn() -> void:
-	var fov: int
+func player_light_fov() -> int:
+	var torch = player.equipped.get(ItemClass.SLOT_LIGHT)
+	if torch == null:
+		return 0
+	var t := torch as ItemClass
+	if t.light_fov > 0 and t.value > 0:
+		return t.light_fov
+	return 0
+
+
+func _recompute_fov() -> void:
+	var base_fov: int
 	if map.map_type == GameMapClass.MAP_OVERWORLD:
-		fov = overworld_fov()
+		base_fov = overworld_fov()
 	else:
-		fov = FOV_RADIUS
+		base_fov = FOV_RADIUS
+	var fov: int = maxi(base_fov, player_light_fov())
 	map.compute_fov(player.pos.x, player.pos.y, fov)
+	# Expand FOV for any visible static light fixtures (braziers, road torches).
+	for e in map.entities:
+		if e.light_radius > 0 and map.is_in_bounds(e.pos.x, e.pos.y) \
+				and map.visible[e.pos.y][e.pos.x]:
+			map.compute_fov_additive(e.pos.x, e.pos.y, e.light_radius)
+
+
+func _tick_torch() -> void:
+	var torch = player.equipped.get(ItemClass.SLOT_LIGHT)
+	if torch == null:
+		return
+	var t := torch as ItemClass
+	if t.burn_turns > 0 and t.value > 0:
+		t.value -= 1
+		if t.value == 0:
+			add_msg("Your torch gutters and dies. Darkness closes in.")
+			player.equipped[ItemClass.SLOT_LIGHT] = null
+
+
+func end_turn() -> void:
+	_recompute_fov()
 	turn += 1
+	_tick_torch()
 	if depth == 0:
 		_drain_thirst()
 	_drain_fatigue()
@@ -411,7 +449,7 @@ func chunk_transition(dir: Vector2i) -> void:
 	player.game_map = map
 	map.entities.append(player)
 
-	map.compute_fov(player.pos.x, player.pos.y, overworld_fov())
+	_recompute_fov()
 	var arrival_v: Variant = get_village_at_chunk(chunk.x, chunk.y)
 	if arrival_v != null:
 		add_msg("You enter %s." % arrival_v.name)
@@ -530,7 +568,7 @@ func _descend() -> void:
 		up_stairs.game_map = map
 		map.entities.append(up_stairs)
 
-	map.compute_fov(player.pos.x, player.pos.y, FOV_RADIUS)
+	_recompute_fov()
 	add_msg("You descend to floor %d. The air grows heavier." % depth)
 	map_changed.emit()
 
@@ -573,8 +611,7 @@ func _ascend() -> void:
 			player.game_map = map
 			map.entities.append(player)
 
-	var fov := overworld_fov() if map.map_type == GameMapClass.MAP_OVERWORLD else FOV_RADIUS
-	map.compute_fov(player.pos.x, player.pos.y, fov)
+	_recompute_fov()
 	if depth == 0:
 		add_msg("You emerge into the blinding light of the open desert.")
 	else:

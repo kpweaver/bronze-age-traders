@@ -5,6 +5,8 @@
 # Local IDE / AI assistant settings
 .claude/
 .vscode/
+AGENT.md
+content/AGENT.md
 
 # Python utility environment
 utility.py

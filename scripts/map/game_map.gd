@@ -94,6 +94,24 @@ func compute_fov(ox: int, oy: int, radius: int) -> void:
 				explored[ty][tx] = true
 
 
+# Like compute_fov but does NOT clear the visible array first.
+# Used to add light from static sources (braziers, road torches) on top of the
+# player's own FOV without erasing what they can already see.
+func compute_fov_additive(ox: int, oy: int, radius: int) -> void:
+	var r2 := radius * radius
+	for dy in range(-radius, radius + 1):
+		for dx in range(-radius, radius + 1):
+			if dx * dx + dy * dy > r2:
+				continue
+			var tx := ox + dx
+			var ty := oy + dy
+			if not is_in_bounds(tx, ty):
+				continue
+			if _has_los(ox, oy, tx, ty):
+				visible[ty][tx] = true
+				explored[ty][tx] = true
+
+
 # Bresenham LOS — transparent intermediate tiles only.
 # Destination is always reachable (you can see the wall that blocks you).
 func _has_los(x0: int, y0: int, x1: int, y1: int) -> bool:

@@ -7,7 +7,8 @@ var char: String
 var color: Color
 var name: String
 var blocks_movement: bool
-var game_map  # GameMap — untyped to avoid circular dependency
+var game_map        # GameMap — untyped to avoid circular dependency
+var light_radius: int = 0  # > 0 for placed light fixtures (braziers, road torches)
 
 
 func _init(

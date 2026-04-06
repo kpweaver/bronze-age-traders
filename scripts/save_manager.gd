@@ -146,7 +146,8 @@ static func _serialize_entities(entities: Array, player) -> Array:
 			entry["dice_count"] = e.dice_count
 			entry["dice_sides"] = e.dice_sides
 		else:
-			entry["type"] = "entity"
+			entry["type"]         = "entity"
+			entry["light_radius"] = e.light_radius
 		result.append(entry)
 	return result
 
@@ -245,6 +246,7 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 				game_map.entities.append(item)
 			"entity":
 				var ent = load("res://scripts/entities/entity.gd").new(pos, ed["char"], color, ed["name"], bool(ed["blocks_movement"]))
+				ent.light_radius = int(ed.get("light_radius", 0))
 				ent.game_map = game_map
 				game_map.entities.append(ent)
 
@@ -282,6 +284,7 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 				"entity":
 					var ent = load("res://scripts/entities/entity.gd").new(
 							pos, ed["char"], color, ed["name"], bool(ed["blocks_movement"]))
+					ent.light_radius = int(ed.get("light_radius", 0))
 					ent.game_map = stored_map
 					stored_map.entities.append(ent)
 		floors[f_int] = stored_map
@@ -324,6 +327,7 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 				"entity":
 					var ent = load("res://scripts/entities/entity.gd").new(
 							pos, ed["char"], color, ed["name"], bool(ed["blocks_movement"]))
+					ent.light_radius = int(ed.get("light_radius", 0))
 					ent.game_map = cmap
 					cmap.entities.append(ent)
 				"item":

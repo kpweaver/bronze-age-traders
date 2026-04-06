@@ -355,13 +355,19 @@ static func generate_overworld(map, world_x: int, world_y: int, world_seed: int,
 				if t == GameMapClass.TILE_ROCK or t == GameMapClass.TILE_WATER:
 					map.tiles[y][x] = GameMapClass.TILE_SAND
 
+	# Deterministic per-chunk RNG for light placement.
+	var rng_lights := RandomNumberGenerator.new()
+	rng_lights.seed = world_seed ^ (world_x * 97531) ^ (world_y * 13579)
+
 	# Roads carved first so village buildings are placed around them, not over them.
 	if road_dirs.size() > 0:
 		_carve_roads(map, road_dirs, world_seed, world_x, world_y)
+		_place_road_lights(map, rng_lights)
 
 	# Village structures placed after roads; they preserve existing TILE_ROAD tiles.
 	if is_village:
 		_place_village(map, world_seed, world_x, world_y)
+		_place_village_lights(map, rng_lights)
 
 	# Wildlife skip village chunks — animals keep away from settled areas.
 	if not is_village:
@@ -822,6 +828,60 @@ static func _furnish_commercial(map, rng: RandomNumberGenerator, bx: int, by_: i
 	var side_count: int = rng.randi_range(1, 2)
 	for i in range(side_count):
 		_place_furniture(map, bx + bw - 2, by_ + 2 + i, "o", Color(0.65, 0.38, 0.20), "storage jar")
+
+
+# ---------------------------------------------------------------------------
+# Light fixture placement
+# ---------------------------------------------------------------------------
+
+# Helper: create a brazier/torch Entity with light_radius set.
+static func _place_light_fixture(map, x: int, y: int, nm: String) -> void:
+	if not map.is_in_bounds(x, y):
+		return
+	# Don't stack on top of actors or other fixtures.
+	for e in map.entities:
+		if e.pos == Vector2i(x, y):
+			return
+	var fixture = EntityClass.new(Vector2i(x, y), "*", Color(1.0, 0.65, 0.10), nm, false)
+	fixture.light_radius = 3
+	fixture.game_map = map
+	map.entities.append(fixture)
+
+
+# Place braziers in the village central plaza — permanent light sources.
+static func _place_village_lights(map, rng: RandomNumberGenerator) -> void:
+	var cx: int = map.width  >> 1
+	var cy: int = map.height >> 1
+	# Four braziers in a loose square around the plaza centre.
+	var offsets: Array = [Vector2i(-4, -4), Vector2i(4, -4), Vector2i(-4, 4), Vector2i(4, 4)]
+	for off: Vector2i in offsets:
+		var px: int = cx + off.x
+		var py: int = cy + off.y
+		if map.is_in_bounds(px, py) and map.tiles[py][px] == GameMapClass.TILE_SAND:
+			_place_light_fixture(map, px, py, "brazier")
+	# One central brazier in the plaza.
+	if map.is_in_bounds(cx, cy) and map.tiles[cy][cx] != GameMapClass.TILE_WALL:
+		_place_light_fixture(map, cx, cy, "brazier")
+
+
+# Place road torches roughly every 25 tiles along TILE_ROAD tiles.
+static func _place_road_lights(map, rng: RandomNumberGenerator) -> void:
+	var step: int = 25
+	var candidates: Array = []
+	for y in range(map.height):
+		for x in range(map.width):
+			if map.tiles[y][x] == GameMapClass.TILE_ROAD:
+				# Use a grid-aligned sub-sampling to avoid crowding.
+				if (x + y) % step < 3:
+					candidates.append(Vector2i(x, y))
+	for pos: Vector2i in candidates:
+		# Stagger with small deterministic offset so torches aren't grid-aligned.
+		var ox: int = rng.randi_range(-2, 2)
+		var oy: int = rng.randi_range(-2, 2)
+		var fx: int = clampi(pos.x + ox, 1, map.width  - 2)
+		var fy: int = clampi(pos.y + oy, 1, map.height - 2)
+		if map.tiles[fy][fx] == GameMapClass.TILE_ROAD or map.tiles[fy][fx] == GameMapClass.TILE_SAND:
+			_place_light_fixture(map, fx, fy, "road torch")
 
 
 # ---------------------------------------------------------------------------

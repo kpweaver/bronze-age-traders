@@ -63,11 +63,13 @@ One player action = one turn = 2 real minutes of in-game time.
     cr/cg/cb    — colour as red/green/blue values, each between 0.0 and 1.0
     name        — display name shown to the player
     category    — 0=gold  1=usable (food/herbs)  2=trade good  3=equipment
-    slot        — for equipment: "weapon" "body" "feet" "head" or "" for none
+    slot        — for equipment: "weapon" "body" "feet" "head" "light" or "" for none
     base_value  — price in gold coins (used by merchants as a baseline)
     attack_bonus / defense_bonus — combat stats for equipment
     dice_count / dice_sides — for usable items: how much HP they restore
                               (e.g. dice_count=2, dice_sides=4 → heals 2d4 HP)
+    light_fov   — for light sources: FOV radius granted when equipped and lit
+    burn_turns  — for light sources: total lifetime in turns (0 = permanent)
 
   SAFE TO CHANGE: Everything in here. Adding a new entry won't break anything
   as long as you follow the format of existing entries.
@@ -89,7 +91,7 @@ One player action = one turn = 2 real minutes of in-game time.
     buy_mult    — fraction of base_value the merchant pays for player's goods
     sell_mult   — multiplier on base_value for what the merchant charges
 
-  SAFE TO CHANGE: Everything in here. See content/CLAUDE.md for full field docs.
+  SAFE TO CHANGE: Everything in here. See content/AGENT.md for full field docs.
 
 
 ── scripts/game_state.gd ─────────────────────────────────────────────────────
@@ -162,6 +164,22 @@ One player action = one turn = 2 real minutes of in-game time.
     0.25 = 6am, 0.5 = noon, 0.75 = 6pm. The game starts at 0.25 (dawn).
     overworld_fov() interpolates sight range smoothly across dawn and dusk.
 
+  LIGHT SOURCES:
+    Players start with one torch in their inventory. Equipping it (slot: light)
+    grants FOV_RADIUS=3 and overrides the base sight to max(base_fov, 3).
+    Torches burn for 5000 turns; when exhausted the slot empties with a message.
+    The inventory screen shows remaining turns: u) LIGHT: torch  (4823t left).
+    Press u in the inventory screen to unequip the light slot.
+    (u is used instead of l because l falls within the a-t item range.)
+    The status bar shows "LIT: Xt" while a torch is equipped.
+
+    Static light fixtures (braziers in village plazas, road torches every ~25
+    tiles along trade roads) are Entity objects with light_radius = 3. Any
+    static fixture within the player's base FOV expands the visible area
+    additively — standing near a brazier lights the plaza even at night.
+    These are placed by _place_village_lights() and _place_road_lights() in
+    procgen.gd. They use character "*" with a bright orange colour.
+
   CHUNK ENCOUNTERS:
     When the player crosses into a never-visited overworld chunk,
     _place_chunk_encounter() rolls once and may silently pre-place entities
@@ -191,7 +209,8 @@ One player action = one turn = 2 real minutes of in-game time.
   STATUS BAR (bottom of screen):
     Shows HP, attack, AC, gold, floor number, current date (Babylonian
     calendar), time of day phase, thirst % (overworld only), fatigue %,
-    and equipped weapon.
+    equipped weapon, and torch status (LIT: Xt remaining turns when a
+    burnable torch is equipped in the light slot).
 
   SCREENS/OVERLAYS:
     The Screen enum lists all overlay modes: INVENTORY, CHARACTER, TRADE,
@@ -261,7 +280,8 @@ One player action = one turn = 2 real minutes of in-game time.
 
   entity.gd   — The base class. Everything on the map is an Entity.
                 Has: pos (tile position), char (display glyph), color, name,
-                blocks_movement.
+                blocks_movement, light_radius (>0 for placed light fixtures
+                like braziers or road torches).
 
   actor.gd    — Extends Entity. Living beings that can move, fight, and die.
                 Adds: hp, max_hp, defense, power, inventory, equipped gear,

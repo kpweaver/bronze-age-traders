@@ -61,6 +61,7 @@ var equipped: Dictionary = {
 	"body":   null,
 	"feet":   null,
 	"head":   null,
+	"light":  null,
 }
 
 var is_alive: bool:
