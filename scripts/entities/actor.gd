@@ -26,14 +26,21 @@ var fatigue_rate: float = 1.0
 # ---------------------------------------------------------------------------
 # Attribute scores — D&D-style 3-18 range, default 10 (modifier = 0).
 # Modifier formula: (score - 10) / 2  (integer division, floors toward zero).
-# Only STR/DEX/CON are active; INT/WIS/CHA are stubs for future systems.
+# Active: STR (to-hit, damage, carry), DEX (AC), CON (max HP).
+# Stubs:  INT (trade knowledge, crafting), WIS (FOV, awareness, rumours),
+#         CHA (prices, followers, reputation).
 # ---------------------------------------------------------------------------
-var str_score: int = 10   # Strength     — damage, carry capacity
-var dex_score: int = 10   # Dexterity    — AC, future ranged weapons
-var con_score: int = 10   # Constitution — max HP, thirst endurance, fatigue recovery
-var int_score: int = 10   # Intelligence — stub (trade knowledge, crafting)
-var wis_score: int = 10   # Wisdom       — stub (FOV, awareness, rumours)
-var cha_score: int = 10   # Charisma     — stub (prices, followers, reputation)
+var str_score: int = 10   # Strength     — attack/damage bonus, carry capacity
+var dex_score: int = 10   # Dexterity    — AC bonus
+var con_score: int = 10   # Constitution — max HP, thirst/fatigue endurance
+var int_score: int = 10   # Intelligence — stub
+var wis_score: int = 10   # Wisdom       — stub
+var cha_score: int = 10   # Charisma     — stub
+
+# Combat stats — level and attack_speed are stubs used by NPCs;
+# attack_speed will gate multi-attack or initiative when implemented.
+var level: int         = 1
+var attack_speed: float = 1.0
 
 var str_mod: int:
 	get: return (str_score - 10) / 2
@@ -112,18 +119,19 @@ func _obj() -> String:
 
 
 func attack(target: Actor) -> String:
-	var roll: int = randi_range(1, 20)
-	var is_player := name == "you"
-	var v_attack  := "attack"  if is_player else "attacks"
-	var v_hit     := "hit"     if is_player else "hits"
-	var v_miss    := "miss"    if is_player else "misses"
+	var roll: int  = randi_range(1, 20) + str_mod   # STR mod applies to hit
+	var is_player  := name == "you"
+	var v_attack   := "attack"  if is_player else "attacks"
+	var v_hit      := "hit"     if is_player else "hits"
+	var v_miss     := "miss"    if is_player else "misses"
 	if roll < target.ac:
 		return "%s %s %s but %s. [to hit: %d vs AC %d]" % \
 			[_subj(), v_attack, target._obj(), v_miss, roll, target.ac]
-	var dmg: int = randi_range(1, 6) + power + total_attack_bonus
+	var bonus: int = power + total_attack_bonus + str_mod  # STR mod applies to damage
+	var dmg: int   = randi_range(1, 6) + bonus
 	target.take_damage(dmg)
 	return "%s %s %s for %d damage. [to hit: %d vs AC %d, 1d6+%d = %d]" % \
-		[_subj(), v_hit, target._obj(), dmg, roll, target.ac, power + total_attack_bonus, dmg]
+		[_subj(), v_hit, target._obj(), dmg, roll, target.ac, bonus, dmg]
 
 
 func take_damage(amount: int) -> void:

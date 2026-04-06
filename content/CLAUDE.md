@@ -24,9 +24,13 @@ keys or change field types without also updating `scripts/entities/npc.gd`**.
 | `name`         | String  | yes      | Lowercase display name (e.g. `"merchant"`) |
 | `char`         | String  | yes      | Single CP437 glyph — use `@` for humanoids |
 | `cr/cg/cb`     | float   | yes      | RGB colour, each 0.0–1.0 |
-| `max_hp`       | int     | yes      | Hit points |
-| `defense`      | int     | yes      | Added to AC (10 + defense) |
-| `power`        | int     | yes      | Base melee damage bonus (keep ≤ 2 for peaceful NPCs) |
+| `str/dex/con`  | int     | yes      | Ability scores (3–18). STR mod → attack+damage. DEX mod → AC. |
+| `int/wis/cha`  | int     | yes      | Ability scores (int = Intelligence). Stubs for future systems. |
+| `base_hp`      | int     | yes      | Hit points before CON modifier. max_hp = base_hp + con_mod × level |
+| `level`        | int     | yes      | Creature level (1 for all current NPCs). Scales HP and future XP. |
+| `attack_speed` | float   | yes      | Attacks per turn (1.0 = normal). Stub for future multi-attack. |
+| `defense`      | int     | yes      | Added to AC (10 + defense + DEX mod) |
+| `power`        | int     | yes      | Base melee damage bonus, before STR mod (keep ≤ 2 for peaceful NPCs) |
 | `is_merchant`  | bool    | yes      | `true` → player can open trade screen |
 | `buy_mult`     | float   | no       | Fraction of `base_value` paid when buying from player (default 0.70) |
 | `sell_mult`    | float   | no       | Multiplier on `base_value` when selling to player (default 1.35) |

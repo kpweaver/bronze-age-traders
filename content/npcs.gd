@@ -5,9 +5,13 @@
 #   name          String   — display name shown in-game
 #   char          String   — single CP437 glyph
 #   cr/cg/cb      float    — RGB colour (0.0–1.0)
-#   max_hp        int      — hit points
-#   defense       int      — base defence (adds to AC)
-#   power         int      — base melee attack (usually low for peaceful NPCs)
+#   str/dex/con   int      — ability scores (3–18 range; modifier = (score-10)/2)
+#   int/wis/cha   int      — ability scores (int = Intelligence, not GDScript type)
+#   base_hp       int      — hit points before CON modifier; max_hp = base_hp + con_mod * level
+#   defense       int      — base defence (adds to AC; DEX mod also applies automatically)
+#   power         int      — base melee damage bonus (STR mod also applies automatically)
+#   level         int      — creature level (1 for all current NPCs; future scaling hook)
+#   attack_speed  float    — attacks per turn (1.0 = normal; stub for future multi-attack)
 #   is_merchant   bool     — true = player can open the trade screen with this NPC
 #   buy_mult      float    — fraction of item.base_value we pay when buying from player
 #   sell_mult     float    — multiplier on item.base_value when we sell to player
@@ -15,13 +19,13 @@
 #   trade_stock   Array    — [{item_type, qty, price}] items the merchant sells
 #                            price overrides base_value; qty decreases on purchase
 #   spawn_weight  int      — relative spawn probability in village chunks (default 1)
-#                            merchant has weight 3 so it spawns ~3x as often as others
 
 const DATA: Dictionary = {
 	"merchant": {
 		"name": "merchant", "char": "@",
 		"cr": 0.90, "cg": 0.72, "cb": 0.28,
-		"max_hp": 12, "defense": 0, "power": 1,
+		"str": 10, "dex": 11, "con": 10, "int": 12, "wis": 11, "cha": 13,
+		"base_hp": 12, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
 		"is_merchant": true, "buy_mult": 0.65, "sell_mult": 1.40,
 		"dialogue": [
 			"Well met, traveller. What brings you to these roads?",
@@ -42,7 +46,8 @@ const DATA: Dictionary = {
 	"village_elder": {
 		"name": "village elder", "char": "@",
 		"cr": 0.82, "cg": 0.68, "cb": 0.55,
-		"max_hp": 10, "defense": 0, "power": 1,
+		"str": 8, "dex": 8, "con": 9, "int": 12, "wis": 14, "cha": 12,
+		"base_hp": 11, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
 		"is_merchant": false,
 		"dialogue": [
 			"This village has stood for seven generations. I hope for seven more.",
@@ -55,7 +60,8 @@ const DATA: Dictionary = {
 	"smith": {
 		"name": "smith", "char": "@",
 		"cr": 0.70, "cg": 0.45, "cb": 0.25,
-		"max_hp": 18, "defense": 1, "power": 3,
+		"str": 15, "dex": 10, "con": 14, "int": 9, "wis": 10, "cha": 8,
+		"base_hp": 16, "defense": 1, "power": 3, "level": 1, "attack_speed": 1.0,
 		"is_merchant": true, "buy_mult": 0.50, "sell_mult": 1.60,
 		"dialogue": [
 			"Copper I have. Tin is what I need — bring me tin, I'll make you bronze.",
@@ -75,7 +81,8 @@ const DATA: Dictionary = {
 	"scribe": {
 		"name": "scribe", "char": "@",
 		"cr": 0.72, "cg": 0.82, "cb": 0.72,
-		"max_hp": 8, "defense": 0, "power": 1,
+		"str": 8, "dex": 12, "con": 9, "int": 15, "wis": 12, "cha": 10,
+		"base_hp": 9, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
 		"is_merchant": false,
 		"dialogue": [
 			"I keep the records of this village. Every debt, every birth, every death.",
@@ -88,7 +95,8 @@ const DATA: Dictionary = {
 	"weaver": {
 		"name": "weaver", "char": "@",
 		"cr": 0.75, "cg": 0.78, "cb": 0.62,
-		"max_hp": 8, "defense": 0, "power": 1,
+		"str": 9, "dex": 13, "con": 10, "int": 10, "wis": 12, "cha": 11,
+		"base_hp": 8, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
 		"is_merchant": true, "buy_mult": 0.55, "sell_mult": 1.45,
 		"dialogue": [
 			"Linen, wool, and a patient hand — that is all one needs.",
@@ -107,7 +115,8 @@ const DATA: Dictionary = {
 	"priest": {
 		"name": "priest", "char": "@",
 		"cr": 0.88, "cg": 0.78, "cb": 0.45,
-		"max_hp": 9, "defense": 0, "power": 1,
+		"str": 9, "dex": 9, "con": 10, "int": 12, "wis": 14, "cha": 13,
+		"base_hp": 9, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
 		"is_merchant": false,
 		"dialogue": [
 			"The grain goddess demands the first harvest. Always the first.",
@@ -121,7 +130,8 @@ const DATA: Dictionary = {
 	"dyer": {
 		"name": "dyer", "char": "@",
 		"cr": 0.65, "cg": 0.45, "cb": 0.70,
-		"max_hp": 8, "defense": 0, "power": 1,
+		"str": 11, "dex": 10, "con": 10, "int": 10, "wis": 10, "cha": 11,
+		"base_hp": 8, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
 		"is_merchant": true, "buy_mult": 0.50, "sell_mult": 1.55,
 		"dialogue": [
 			"Purple from the murex — there is nothing like it in all the world.",
@@ -139,7 +149,8 @@ const DATA: Dictionary = {
 	"foreign_trader": {
 		"name": "foreign trader", "char": "@",
 		"cr": 0.80, "cg": 0.62, "cb": 0.38,
-		"max_hp": 11, "defense": 0, "power": 1,
+		"str": 9, "dex": 12, "con": 10, "int": 13, "wis": 11, "cha": 14,
+		"base_hp": 11, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
 		"is_merchant": true, "buy_mult": 0.60, "sell_mult": 1.50,
 		"dialogue": [
 			"I have come from the Aegean coast — far longer a road than it sounds.",
@@ -160,7 +171,8 @@ const DATA: Dictionary = {
 	"caravan_guard": {
 		"name": "caravan guard", "char": "@",
 		"cr": 0.65, "cg": 0.50, "cb": 0.30,
-		"max_hp": 20, "defense": 2, "power": 3,
+		"str": 14, "dex": 12, "con": 13, "int": 9, "wis": 10, "cha": 9,
+		"base_hp": 19, "defense": 2, "power": 3, "level": 1, "attack_speed": 1.0,
 		"is_merchant": true, "buy_mult": 0.45, "sell_mult": 1.55,
 		"dialogue": [
 			"I walk the road so merchants do not have to worry about it.",
@@ -180,7 +192,8 @@ const DATA: Dictionary = {
 	"herbalist": {
 		"name": "herbalist", "char": "@",
 		"cr": 0.58, "cg": 0.72, "cb": 0.45,
-		"max_hp": 8, "defense": 0, "power": 1,
+		"str": 9, "dex": 13, "con": 10, "int": 13, "wis": 14, "cha": 11,
+		"base_hp": 8, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
 		"is_merchant": true, "buy_mult": 0.55, "sell_mult": 1.45,
 		"dialogue": [
 			"Cedar bark for fever. Olive oil for wounds. The rest is patience.",
@@ -204,7 +217,8 @@ const DATA: Dictionary = {
 	"gazelle": {
 		"name": "gazelle", "char": "g",
 		"cr": 0.85, "cg": 0.73, "cb": 0.38,
-		"max_hp": 6, "defense": 0, "power": 1,
+		"str": 8, "dex": 16, "con": 10, "int": 2, "wis": 12, "cha": 6,
+		"base_hp": 6, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
 		"is_merchant": false, "is_wildlife": true,
 		"wander_radius": 30, "move_chance": 0.55,
 		"dialogue": [
@@ -223,7 +237,8 @@ const DATA: Dictionary = {
 	"onager": {
 		"name": "onager", "char": "q",
 		"cr": 0.72, "cg": 0.60, "cb": 0.42,
-		"max_hp": 14, "defense": 0, "power": 2,
+		"str": 13, "dex": 12, "con": 13, "int": 2, "wis": 10, "cha": 5,
+		"base_hp": 13, "defense": 0, "power": 2, "level": 1, "attack_speed": 1.0,
 		"is_merchant": false, "is_wildlife": true,
 		"wander_radius": 25, "move_chance": 0.40,
 		"dialogue": [
@@ -242,7 +257,8 @@ const DATA: Dictionary = {
 	"ibex": {
 		"name": "ibex", "char": "i",
 		"cr": 0.50, "cg": 0.40, "cb": 0.28,
-		"max_hp": 10, "defense": 1, "power": 2,
+		"str": 11, "dex": 14, "con": 11, "int": 2, "wis": 12, "cha": 5,
+		"base_hp": 10, "defense": 1, "power": 2, "level": 1, "attack_speed": 1.0,
 		"is_merchant": false, "is_wildlife": true,
 		"wander_radius": 20, "move_chance": 0.25,
 		"dialogue": [
@@ -261,7 +277,8 @@ const DATA: Dictionary = {
 	"hyena": {
 		"name": "hyena", "char": "h",
 		"cr": 0.62, "cg": 0.54, "cb": 0.38,
-		"max_hp": 16, "defense": 1, "power": 3,
+		"str": 13, "dex": 13, "con": 13, "int": 3, "wis": 12, "cha": 4,
+		"base_hp": 15, "defense": 1, "power": 3, "level": 1, "attack_speed": 1.0,
 		"is_merchant": false, "is_wildlife": true,
 		"wander_radius": 35, "move_chance": 0.35,
 		"dialogue": [
@@ -280,7 +297,8 @@ const DATA: Dictionary = {
 	"water_carrier": {
 		"name": "water carrier", "char": "@",
 		"cr": 0.60, "cg": 0.68, "cb": 0.78,
-		"max_hp": 10, "defense": 0, "power": 1,
+		"str": 13, "dex": 11, "con": 12, "int": 8, "wis": 10, "cha": 9,
+		"base_hp": 9, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
 		"is_merchant": false,
 		"dialogue": [
 			"Water from the cistern. Fresh as of this morning.",

@@ -19,6 +19,20 @@ var wander_radius: int  = 8              # max tiles from home_pos willing to wa
 
 
 func _init(p_pos: Vector2i, p_type: String, p_data: Dictionary) -> void:
+	# Read ability scores before super._init so we can factor CON into max_hp.
+	var p_str: int   = int(p_data.get("str", 10))
+	var p_dex: int   = int(p_data.get("dex", 10))
+	var p_con: int   = int(p_data.get("con", 10))
+	var p_int: int   = int(p_data.get("int", 10))
+	var p_wis: int   = int(p_data.get("wis", 10))
+	var p_cha: int   = int(p_data.get("cha", 10))
+	var p_level: int           = int(p_data.get("level", 1))
+	var p_attack_speed: float  = float(p_data.get("attack_speed", 1.0))
+	var p_con_mod: int         = (p_con - 10) / 2
+	# base_hp is the naked value before CON; fall back to max_hp for old data.
+	var p_base_hp: int         = int(p_data.get("base_hp", p_data.get("max_hp", 12)))
+	var p_max_hp: int          = p_base_hp + p_con_mod * p_level
+
 	var col := Color(
 		float(p_data.get("cr", 0.85)),
 		float(p_data.get("cg", 0.72)),
@@ -29,10 +43,20 @@ func _init(p_pos: Vector2i, p_type: String, p_data: Dictionary) -> void:
 		str(p_data.get("char", "@")),
 		col,
 		str(p_data.get("name", p_type)),
-		int(p_data.get("max_hp", 12)),
+		p_max_hp,
 		int(p_data.get("defense", 0)),
 		int(p_data.get("power", 1))
 	)
+	# Apply ability scores computed above.
+	str_score    = p_str
+	dex_score    = p_dex
+	con_score    = p_con
+	int_score    = p_int
+	wis_score    = p_wis
+	cha_score    = p_cha
+	level        = p_level
+	attack_speed = p_attack_speed
+
 	npc_type      = p_type
 	dialogue      = p_data.get("dialogue", ["..."])
 	is_merchant   = bool(p_data.get("is_merchant", false))
