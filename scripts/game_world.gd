@@ -35,6 +35,10 @@ const FOV_OVERWORLD: int = 24   # daytime overworld sight range
 const FOV_NIGHT: int     = 1    # night-time overworld sight range — near-zero, pre-industrial darkness
 const MSG_MAX: int       = 3
 
+# Turns of thirst/fatigue drain applied per chunk moved on the world map.
+# One chunk = 20 miles; at 3 mph that is ~6.7 hours = ~200 turns.
+const TURNS_PER_CHUNK_TRAVEL: int = 200
+
 # Day/night — one in-game day = TURNS_PER_DAY player actions.
 # Tile: 0.1 miles (528 ft).  Walking pace: 3 mph → 2 min/tile → 720 turns/day.
 # Chunk: 200×100 tiles = 20×10 miles (≈ one Bronze Age city-state territory).
@@ -295,10 +299,15 @@ func _recompute_fov() -> void:
 		base_fov = FOV_RADIUS
 	var fov: int = maxi(base_fov, player_light_fov())
 	map.compute_fov(player.pos.x, player.pos.y, fov)
-	# Expand FOV for any visible static light fixtures (braziers, road torches).
+	# Expand FOV for static light fixtures (braziers, road torches) whose light
+	# pool reaches the player — checked by distance, not prior visibility, so
+	# their glow is perceptible before the player can see the fixture directly.
 	for e in map.entities:
-		if e.light_radius > 0 and map.is_in_bounds(e.pos.x, e.pos.y) \
-				and map.visible[e.pos.y][e.pos.x]:
+		if e.light_radius <= 0 or not map.is_in_bounds(e.pos.x, e.pos.y):
+			continue
+		var dx: int = absi(e.pos.x - player.pos.x)
+		var dy: int = absi(e.pos.y - player.pos.y)
+		if maxi(dx, dy) <= fov + e.light_radius:
 			map.compute_fov_additive(e.pos.x, e.pos.y, e.light_radius)
 
 
@@ -430,9 +439,15 @@ func chunk_transition(dir: Vector2i) -> void:
 	elif next.y >= OVERWORLD_H:
 		dc.y  =  1;  new_y = 1
 
+	var dest_chunk := chunk + dc
+	if dest_chunk.x < 0 or dest_chunk.x >= GameState.WORLD_W \
+	or dest_chunk.y < 0 or dest_chunk.y >= GameState.WORLD_H:
+		add_msg("Beyond this lies only empty horizon. You cannot travel farther.")
+		return
+
 	map.entities.erase(player)
 	chunks[chunk] = map
-	chunk += dc
+	chunk = dest_chunk
 
 	if chunks.has(chunk):
 		map = chunks[chunk]
@@ -458,7 +473,8 @@ func chunk_transition(dir: Vector2i) -> void:
 	map_changed.emit()
 
 
-# World-map screen fast-travel: moves chunk without consuming a turn or logging.
+# World-map screen fast-travel: moves one chunk and drains thirst/fatigue
+# proportional to the travel time (TURNS_PER_CHUNK_TRAVEL).
 func world_map_navigate(dir: Vector2i) -> void:
 	var dest := Vector2i(
 		clampi(chunk.x + dir.x, 0, GameState.WORLD_W - 1),
@@ -483,7 +499,10 @@ func world_map_navigate(dir: Vector2i) -> void:
 	player.pos      = Vector2i(OVERWORLD_W >> 1, OVERWORLD_H >> 1)
 	player.game_map = map
 	map.entities.append(player)
-	# No FOV / log / turn increment here — world map navigation is instantaneous.
+
+	turn += TURNS_PER_CHUNK_TRAVEL
+	_drain_travel(TURNS_PER_CHUNK_TRAVEL)
+	turn_ended.emit(turn)
 
 
 func try_descend() -> void:
@@ -693,6 +712,38 @@ func _apply_archetype(actor, class_id: String) -> void:
 	actor.max_hp      += actor.con_mod * 3       # CON  → bonus hit points
 	actor.hp           = actor.max_hp
 	actor.thirst_rate  = maxf(0.1, 1.0 - actor.con_mod * 0.1)  # CON → slower dehydration
+
+
+# Apply n turns of thirst + fatigue in one batch — used by world-map travel.
+# Skips the per-turn warning cadence; emits a single status message instead.
+func _drain_travel(n: int) -> void:
+	if game_over or GameState.god_mode:
+		return
+	# Thirst (overworld only; respects thirst_rate and fractional accumulator).
+	var thirst_add: float = player.thirst_rate * n + _thirst_acc
+	var thirst_int: int   = int(thirst_add)
+	_thirst_acc           = thirst_add - thirst_int
+	player.thirst         = mini(player.thirst + thirst_int, ActorClass.THIRST_MAX)
+	# Fatigue — night travel costs more.
+	var fat_per_turn: float = 1.5 if is_night else 1.0
+	player.fatigue = mini(player.fatigue + int(fat_per_turn * n), ActorClass.FATIGUE_MAX)
+	# Single threshold message after the journey.
+	var t: int    = player.thirst
+	var f: int    = player.fatigue
+	var tmax: int = ActorClass.THIRST_MAX
+	var fmax: int = ActorClass.FATIGUE_MAX
+	if t >= tmax * 9 / 10:
+		add_msg("The journey has left you dangerously parched.")
+	elif t >= tmax * 7 / 10:
+		add_msg("The journey has left you very thirsty.")
+	elif t >= tmax / 2:
+		add_msg("The journey has left you thirsty.")
+	if f >= fmax * 9 / 10:
+		add_msg("The journey has left you near collapse from exhaustion.")
+	elif f >= fmax * 7 / 10:
+		add_msg("The journey has left you very weary.")
+	elif f >= fmax / 2:
+		add_msg("The journey has left you tired.")
 
 
 func _drain_thirst() -> void:

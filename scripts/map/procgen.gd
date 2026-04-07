@@ -843,7 +843,7 @@ static func _place_light_fixture(map, x: int, y: int, nm: String) -> void:
 		if e.pos == Vector2i(x, y):
 			return
 	var fixture = EntityClass.new(Vector2i(x, y), "*", Color(1.0, 0.65, 0.10), nm, false)
-	fixture.light_radius = 3
+	fixture.light_radius = 6
 	fixture.game_map = map
 	map.entities.append(fixture)
 
@@ -864,24 +864,34 @@ static func _place_village_lights(map, rng: RandomNumberGenerator) -> void:
 		_place_light_fixture(map, cx, cy, "brazier")
 
 
-# Place road torches roughly every 25 tiles along TILE_ROAD tiles.
+# Place 1–2 road torches per chunk, on non-road tiles immediately beside the road.
 static func _place_road_lights(map, rng: RandomNumberGenerator) -> void:
-	var step: int = 25
-	var candidates: Array = []
+	# Collect all road tiles, then pick a small number of anchor points.
+	var road_tiles: Array = []
 	for y in range(map.height):
 		for x in range(map.width):
 			if map.tiles[y][x] == GameMapClass.TILE_ROAD:
-				# Use a grid-aligned sub-sampling to avoid crowding.
-				if (x + y) % step < 3:
-					candidates.append(Vector2i(x, y))
-	for pos: Vector2i in candidates:
-		# Stagger with small deterministic offset so torches aren't grid-aligned.
-		var ox: int = rng.randi_range(-2, 2)
-		var oy: int = rng.randi_range(-2, 2)
-		var fx: int = clampi(pos.x + ox, 1, map.width  - 2)
-		var fy: int = clampi(pos.y + oy, 1, map.height - 2)
-		if map.tiles[fy][fx] == GameMapClass.TILE_ROAD or map.tiles[fy][fx] == GameMapClass.TILE_SAND:
+				road_tiles.append(Vector2i(x, y))
+	if road_tiles.is_empty():
+		return
+
+	var count: int = rng.randi_range(1, 2)
+	for _i in range(count):
+		# Pick a random road tile as the anchor.
+		var anchor: Vector2i = road_tiles[rng.randi_range(0, road_tiles.size() - 1)]
+		# Find an adjacent non-road walkable tile to place the torch beside the road.
+		var dirs: Array = [Vector2i(0,-1), Vector2i(0,1), Vector2i(-1,0), Vector2i(1,0)]
+		for _attempt in range(8):
+			var d: Vector2i = dirs[rng.randi_range(0, dirs.size() - 1)]
+			var fx: int = anchor.x + d.x
+			var fy: int = anchor.y + d.y
+			if not map.is_in_bounds(fx, fy):
+				continue
+			var t: int = map.tiles[fy][fx]
+			if t == GameMapClass.TILE_ROAD or t == GameMapClass.TILE_WALL:
+				continue
 			_place_light_fixture(map, fx, fy, "road torch")
+			break
 
 
 # ---------------------------------------------------------------------------

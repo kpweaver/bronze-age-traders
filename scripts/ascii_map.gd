@@ -10,18 +10,19 @@ const NpcClass     = preload("res://scripts/entities/npc.gd")
 const GameWorldClass = preload("res://scripts/game_world.gd")
 
 # ---------------------------------------------------------------------------
-# Display constants  (viewport: 1080×720, cell: 9×18 → 120×40 tiles)
+# Display constants  (viewport: 1080×720, cell: 9×14 → 120×51 tiles)
 # ---------------------------------------------------------------------------
 const COLS: int = 120
-const ROWS: int = 40
-const FONT_SIZE: int = 16
+const ROWS: int = 51
+const FONT_SIZE: int    = 14   # map tile glyphs
+const UI_FONT_SIZE: int = 16   # overlay / status bar text
 const CELL_W: float = 9.0
-const CELL_H: float = 18.0
+const CELL_H: float = 14.0
 
-const MAP_ROWS: int      = 35
-const DIVIDER_ROW: int   = 35
-const STATUS_ROW: int    = 36
-const MSG_START_ROW: int = 37
+const MAP_ROWS: int      = 46
+const DIVIDER_ROW: int   = 46
+const STATUS_ROW: int    = 47
+const MSG_START_ROW: int = 48
 const MSG_LINES: int     = 3
 
 # ---------------------------------------------------------------------------
@@ -145,7 +146,7 @@ func _ready() -> void:
 
 
 func _make_font() -> Font:
-	var path := "res://assets/fonts/Px437_IBM_VGA_9x16.ttf"
+	var path := "res://assets/fonts/Px437_IBM_VGA_9x14.ttf"
 	if FileAccess.file_exists(path):
 		var ff := FontFile.new()
 		ff.data = FileAccess.get_file_as_bytes(path)
@@ -1475,8 +1476,8 @@ func _put(x: int, y: int, ch: String, color: Color) -> void:
 
 
 func _puts(x: int, y: int, text: String, color: Color) -> void:
-	draw_string(_font, Vector2(x * CELL_W, y * CELL_H + FONT_SIZE),
-			text, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE, color)
+	draw_string(_font, Vector2(x * CELL_W, y * CELL_H + UI_FONT_SIZE),
+			text, HORIZONTAL_ALIGNMENT_LEFT, -1, UI_FONT_SIZE, color)
 
 
 func _puts_centered(row: int, text: String, color: Color) -> void:

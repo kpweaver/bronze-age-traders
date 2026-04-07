@@ -152,6 +152,18 @@ static func _serialize_entities(entities: Array, player) -> Array:
 	return result
 
 
+static func _restore_npc_ai(npc: NpcClass, ed: Dictionary) -> void:
+	# Keep restoration rules identical across the active map and stored chunks.
+	# Wildlife and traveling merchants use DocileAI; village merchants stay put.
+	var mc: float = float(NpcDataClass.get_npc(npc.npc_type).get("move_chance", 0.35))
+	if npc.is_wildlife or npc.npc_type == "merchant":
+		var dai := DocileAIClass.new(npc, mc, not npc.is_wildlife)
+		dai._fleeing = bool(ed.get("fleeing", false))
+		npc.ai = dai
+	else:
+		npc.ai = null
+
+
 static func load_game() -> Dictionary:
 	if not save_exists():
 		return {}
@@ -224,11 +236,7 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 				var saved_stock = ed.get("trade_stock", [])
 				if not (saved_stock as Array).is_empty():
 					npc.trade_stock = (saved_stock as Array).duplicate(true)
-				if not npc.is_merchant:
-					var mc: float = float(NpcDataClass.get_npc(npc.npc_type).get("move_chance", 0.35))
-					var dai := DocileAIClass.new(npc, mc, not npc.is_wildlife)
-					dai._fleeing = bool(ed.get("fleeing", false))
-					npc.ai = dai
+				_restore_npc_ai(npc, ed)
 				npc.game_map = game_map
 				game_map.entities.append(npc)
 			"actor":
@@ -268,6 +276,18 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 			var color := Color(float(ed["cr"]), float(ed["cg"]), float(ed["cb"]))
 			var pos   := Vector2i(int(ed["x"]), int(ed["y"]))
 			match ed["type"]:
+				"npc":
+					var npc_type: String     = str(ed.get("npc_type", "merchant"))
+					var npc_data: Dictionary = NpcDataClass.get_npc(npc_type)
+					var npc = NpcClass.new(pos, npc_type, npc_data)
+					npc.hp            = int(ed.get("hp", npc.max_hp))
+					npc._dialogue_idx = int(ed.get("dialogue_idx", 0))
+					var saved_stock = ed.get("trade_stock", [])
+					if not (saved_stock as Array).is_empty():
+						npc.trade_stock = (saved_stock as Array).duplicate(true)
+					_restore_npc_ai(npc, ed)
+					npc.game_map = stored_map
+					stored_map.entities.append(npc)
 				"actor":
 					var actor = ActorClass.new(pos, ed["char"], color, ed["name"],
 							int(ed["max_hp"]), int(ed["defense"]), int(ed["power"]))
@@ -318,12 +338,18 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 					var saved_stock = ed.get("trade_stock", [])
 					if not (saved_stock as Array).is_empty():
 						npc.trade_stock = (saved_stock as Array).duplicate(true)
-					var mc2: float = float(NpcDataClass.get_npc(npc_type).get("move_chance", 0.35))
-					var dai2 := DocileAIClass.new(npc, mc2, not npc.is_wildlife)
-					dai2._fleeing = bool(ed.get("fleeing", false))
-					npc.ai = dai2
+					_restore_npc_ai(npc, ed)
 					npc.game_map = cmap
 					cmap.entities.append(npc)
+				"actor":
+					var actor = ActorClass.new(pos, ed["char"], color, ed["name"],
+							int(ed["max_hp"]), int(ed["defense"]), int(ed["power"]))
+					actor.hp              = int(ed["hp"])
+					actor.blocks_movement = bool(ed["blocks_movement"])
+					if bool(ed["has_ai"]) and actor.is_alive:
+						actor.ai = HostileAIClass.new(actor)
+					actor.game_map = cmap
+					cmap.entities.append(actor)
 				"entity":
 					var ent = load("res://scripts/entities/entity.gd").new(
 							pos, ed["char"], color, ed["name"], bool(ed["blocks_movement"]))
