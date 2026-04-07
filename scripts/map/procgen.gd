@@ -385,7 +385,7 @@ static func generate_villages(world_w: int, world_h: int, biomes: Array, world_s
 	var cx_center: int = world_w >> 1
 	var cy_center: int = world_h >> 1
 	var result: Array  = []
-	var target: int    = 10
+	var target: int    = maxi(10, int(round(float(world_w * world_h) / 120.0)))
 	var min_dist: int  = 7   # minimum Chebyshev distance between villages
 
 	for _attempt in range(300):

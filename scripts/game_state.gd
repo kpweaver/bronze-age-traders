@@ -16,8 +16,8 @@ var player_name:  String = "Wanderer"
 var player_class: String = "Wanderer"  # stub for future class system
 
 # World map dimensions (number of overworld chunks in each direction).
-const WORLD_W := 40
-const WORLD_H := 24
+const WORLD_W := 60
+const WORLD_H := 36
 
 # Biome grid — [WORLD_H][WORLD_W] of int (BIOME_* constants from GameMap).
 # Not saved: regenerated deterministically from world_seed on every load.

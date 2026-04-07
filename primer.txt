@@ -105,7 +105,7 @@ One player action = one turn = 2 real minutes of in-game time.
     god_mode     — when true: no thirst drain, player kills in one hit, takes
                    no damage. Toggle in-game with G (check the settings screen).
     auto_pickup  — whether the player auto-grabs items they step on.
-    WORLD_W/H    — size of the world in chunks (40×24 = 960 chunks total).
+    WORLD_W/H    — size of the world in chunks (60×36 = 2160 chunks total).
     world_biomes — the biome grid for the entire world.
     villages     — list of village locations (regenerated from world_seed).
     road_chunks  — which chunks have roads running through them.
@@ -294,7 +294,7 @@ One player action = one turn = 2 real minutes of in-game time.
   WORLD SCALE:
     Each overworld chunk is 200×200 tiles. Each tile = 0.1 miles (528 feet).
     So one chunk = 20×20 miles — roughly the territory of one city-state.
-    The world is 40×24 chunks = 800×480 miles total.
+    The world is 60×36 chunks = 1200×720 miles total.
 
 
 ── scripts/entities/ ─────────────────────────────────────────────────────────

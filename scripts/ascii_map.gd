@@ -19,9 +19,9 @@ const UI_FONT_SIZE: int = 16   # overlay / status bar text
 const CELL_W: float = 9.0
 const CELL_H: float = 14.0
 
-const MAP_ROWS: int      = 46
-const DIVIDER_ROW: int   = 46
-const STATUS_ROW: int    = 47
+const MAP_ROWS: int      = 44
+const DIVIDER_ROW: int   = 44
+const STATUS_ROW: int    = 46
 const MSG_START_ROW: int = 48
 const MSG_LINES: int     = 3
 
@@ -725,7 +725,7 @@ func _handle_travel_event_input(event: InputEvent) -> void:
 # ===========================================================================
 
 func _draw() -> void:
-	draw_rect(Rect2(Vector2.ZERO, Vector2(COLS * CELL_W, ROWS * CELL_H)), C_BG)
+	draw_rect(Rect2(Vector2.ZERO, get_viewport_rect().size), C_BG)
 	if _screen == Screen.WORLD_MAP or _screen == Screen.TRAVEL_EVENT:
 		_draw_world_map()
 		_draw_ui()
@@ -804,8 +804,10 @@ func _draw_entities() -> void:
 
 
 func _draw_ui() -> void:
-	for x in range(COLS):
-		_put(x, DIVIDER_ROW, "-", C_DIVIDER)
+	draw_rect(
+		Rect2(0, DIVIDER_ROW * CELL_H, COLS * CELL_W, (ROWS - DIVIDER_ROW) * CELL_H),
+		C_BG
+	)
 
 	var hp_frac: float = float(_player.hp) / float(_player.max_hp)
 	var hp_color       := C_STATUS.lerp(Color(0.8, 0.15, 0.05), 1.0 - hp_frac)
@@ -828,9 +830,34 @@ func _draw_ui() -> void:
 	]
 	_puts(0, STATUS_ROW, status, hp_color)
 
+	if _screen == Screen.LOOK:
+		draw_rect(
+			Rect2(0, MSG_START_ROW * CELL_H, COLS * CELL_W, MSG_LINES * CELL_H),
+			C_BG
+		)
+		_puts(0, MSG_START_ROW, _look_description(), C_MSG_RECENT)
+		_puts(0, MSG_START_ROW + 1, "l / Esc / Enter to exit look mode", C_DIVIDER)
+		return
+
+	if _screen == Screen.WORLD_MAP and _world_look_mode:
+		draw_rect(
+			Rect2(0, MSG_START_ROW * CELL_H, COLS * CELL_W, MSG_LINES * CELL_H),
+			C_BG
+		)
+		_puts(0, MSG_START_ROW, _world_map_look_label(), C_MSG_RECENT)
+		_puts(0, MSG_START_ROW + 1, "arrows: move look cursor    l/esc: exit look", C_DIVIDER)
+		return
+
 	for i in range(_messages.size()):
 		var is_last: bool = i == _messages.size() - 1
 		_puts(0, MSG_START_ROW + i, _messages[i], C_MSG_RECENT if is_last else C_MSG_OLD)
+
+
+func _world_map_look_label() -> String:
+	var village: Variant = _world.get_village_at_chunk(_world_look_cursor.x, _world_look_cursor.y)
+	if village != null:
+		return str(village.name)
+	return _biome_name(_world.get_chunk_biome(_world_look_cursor))
 
 
 # ---------------------------------------------------------------------------
@@ -1004,12 +1031,6 @@ func _draw_look_cursor() -> void:
 		Rect2(sp.x * CELL_W, sp.y * CELL_H, CELL_W, CELL_H),
 		Color(0.20, 0.75, 0.90, 0.40)
 	)
-	draw_rect(
-		Rect2(0, MSG_START_ROW * CELL_H, COLS * CELL_W, MSG_LINES * CELL_H),
-		C_BG
-	)
-	_puts(0, MSG_START_ROW,     _look_description(),                  C_MSG_RECENT)
-	_puts(0, MSG_START_ROW + 1, "l / Esc / Enter to exit look mode",  C_DIVIDER)
 
 
 # ---------------------------------------------------------------------------
@@ -1375,19 +1396,20 @@ func _biome_color(biome: int) -> Color:
 
 
 func _draw_world_map() -> void:
-	var wm_cell: int = 2
-	var wm_left: int = (COLS - GameState.WORLD_W * wm_cell) >> 1
-	var wm_top:  int = 3
-
 	var title_str := "-=[ WORLD MAP - LOOK ]=-" if _world_look_mode else "-=[ WORLD MAP ]=-"
 	_puts_centered(0, title_str, C_STATUS)
-	_draw_box(wm_left - 1, wm_top - 1, GameState.WORLD_W * wm_cell + 2, GameState.WORLD_H + 2)
+
+	var map_px_w: float = COLS * CELL_W
+	var map_px_y: float = CELL_H * 2.0
+	var map_px_h: float = MAP_ROWS * CELL_H - map_px_y
+	var cell_w: float = map_px_w / float(GameState.WORLD_W)
+	var cell_h: float = map_px_h / float(GameState.WORLD_H)
 
 	for cy in range(GameState.WORLD_H):
 		for cx in range(GameState.WORLD_W):
 			var this_chunk := Vector2i(cx, cy)
-			var sx: int = wm_left + cx * wm_cell
-			var sy: int = wm_top  + cy
+			var px: float = cx * cell_w
+			var py: float = map_px_y + cy * cell_h
 			var is_current: bool = this_chunk == _chunk
 			var is_lk_curs: bool = _world_look_mode and this_chunk == _world_look_cursor
 
@@ -1410,37 +1432,22 @@ func _draw_world_map() -> void:
 				ch    = "@"
 				color = Color(0.95, 0.80, 0.40) if is_lk_curs else Color(0.80, 0.72, 0.55)
 
-			_put(sx, sy, ch, color)
-
+			var cell_bg: Color = color.lerp(C_BG, 0.70)
 			if is_lk_curs:
-				_put(sx - 1, sy, "[", C_STATUS)
-				_put(sx + 1, sy, "]", C_STATUS)
+				cell_bg = Color(0.20, 0.16, 0.10, 0.96)
+			elif is_current:
+				cell_bg = Color(0.17, 0.13, 0.08, 0.92)
 
-	var info_y: int = wm_top + GameState.WORLD_H + 2
-	var info_c: Vector2i = _world_look_cursor if _world_look_mode else _chunk
-	var info_biome: int = _world.get_chunk_biome(info_c)
-	var info_vill: Variant = _world.get_village_at_chunk(info_c.x, info_c.y)
+			var cell_rect := Rect2(px, py, cell_w, cell_h)
+			draw_rect(cell_rect, cell_bg)
+			if is_lk_curs:
+				draw_rect(cell_rect, Color(0.85, 0.70, 0.32, 0.18), false, 2.0)
+			elif is_current:
+				draw_rect(cell_rect, Color(0.78, 0.62, 0.22, 0.12), false, 1.0)
+			var baseline_y: float = py + cell_h * 0.60
+			draw_string(_font, Vector2(px, baseline_y), ch,
+					HORIZONTAL_ALIGNMENT_CENTER, cell_w, UI_FONT_SIZE, color)
 
-	var info_str: String
-	if info_vill != null:
-		info_str = "VILLAGE: %s  [%s]" % [str(info_vill.name), _biome_name(info_biome).to_upper()]
-	else:
-		info_str = _biome_name(info_biome).to_upper()
-	if _world.is_road_chunk(info_c.x, info_c.y) and info_vill == null:
-		info_str += "  [road]"
-	var loc: String = "  (here)" if info_c == _chunk \
-					else ("  (visited)" if _chunks.has(info_c) else "")
-	_puts_centered(info_y, info_str + loc, C_MSG_RECENT)
-
-	_puts_centered(info_y + 2,
-		". desert  ~ oasis  \" steppes  ^ mountains  %% badlands  = road  * village", C_DIVIDER)
-
-	var hint_str: String
-	if _world_look_mode:
-		hint_str = "arrows: move look cursor     l/esc: exit look"
-	else:
-		hint_str = "arrows: travel     l: look mode     >: enter view     esc: close"
-	_puts_centered(info_y + 4, hint_str, C_DIVIDER)
 
 
 func _handle_world_map_input(event: InputEvent) -> void:
