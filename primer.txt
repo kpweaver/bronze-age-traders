@@ -189,6 +189,25 @@ One player action = one turn = 2 real minutes of in-game time.
     traveling merchant 25% on road chunks during daytime.
     Village chunks are skipped entirely.
 
+  WORLD-MAP TRAVEL EVENTS:
+    World-map movement now checks freshly generated destination chunks for a
+    travel event after applying the 200-turn chunk-travel cost. The popup does
+    not replace the real map — it is only a decision point.
+
+    Current event types:
+      traveling_merchant — Enter or Ignore
+      bandit_ambush      — Enter or Attempt to flee
+
+    If the player enters (or fails a flee roll), the world map closes and the
+    game drops them into the actual destination chunk with the event spawned
+    there. Merchants and bandits therefore become part of normal chunk state.
+
+    FLEE ROLL:
+      1d20 + DEX modifier vs DC 12.
+      Roads lower the DC by 2.
+      Night raises the DC by 2.
+      Fatigue at 70% or higher raises the DC by 2.
+
   WILDLIFE:
     Four species roam overworld chunks: gazelle (desert/steppe), onager
     (steppe), ibex (mountains/badlands), and hyena (desert/badlands).
@@ -214,8 +233,12 @@ One player action = one turn = 2 real minutes of in-game time.
 
   SCREENS/OVERLAYS:
     The Screen enum lists all overlay modes: INVENTORY, CHARACTER, TRADE,
-    WORLD_MAP, LOOK, SETTINGS, HELP, ESCAPE, READER, DIALOGUE. Each has its
-    own _draw_*() and _handle_*_input() function pair.
+    WORLD_MAP, TRAVEL_EVENT, LOOK, SETTINGS, HELP, ESCAPE, READER, DIALOGUE.
+    Each has its own _draw_*() and _handle_*_input() function pair.
+
+    TRAVEL_EVENT: Popup shown over the world map when chunk-scale travel
+    reveals something important. The first version handles merchants
+    (Enter/Ignore) and bandit ambushes (Enter/Flee).
 
     READER: Full-screen overlay for readable items (clay tablets). Opened by
     pressing the item's letter key in the inventory. Supports up/down scrolling.

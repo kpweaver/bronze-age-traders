@@ -38,6 +38,9 @@ const MSG_MAX: int       = 3
 # Turns of thirst/fatigue drain applied per chunk moved on the world map.
 # One chunk = 20 miles; at 3 mph that is ~6.7 hours = ~200 turns.
 const TURNS_PER_CHUNK_TRAVEL: int = 200
+const TRAVEL_EVENT_NONE: String = ""
+const TRAVEL_EVENT_MERCHANT: String = "traveling_merchant"
+const TRAVEL_EVENT_BANDITS: String = "bandit_ambush"
 
 # Day/night — one in-game day = TURNS_PER_DAY player actions.
 # Tile: 0.1 miles (528 ft).  Walking pace: 3 mph → 2 min/tile → 720 turns/day.
@@ -74,6 +77,7 @@ var nearby_npc                       # last bumped NPC, cleared when player move
 var turn: int           = 0          # global turn counter — increments every resolved action
 var _resting: bool      = false      # true when the player waited this turn (affects fatigue)
 var _thirst_acc: float  = 0.0        # fractional thirst accumulator for rate < 1.0
+var pending_travel_event: Dictionary = {}
 
 
 # Time of day: 0.0 = midnight, 0.25 = 06:00, 0.5 = noon, 0.75 = 18:00.
@@ -133,6 +137,7 @@ func new_game() -> void:
 	game_over  = false
 	nearby_npc = null
 	turn       = 0
+	pending_travel_event.clear()
 	messages.clear()
 
 	GameState.world_seed   = randi()
@@ -181,6 +186,7 @@ func load_from_save() -> void:
 		return
 	game_over  = false
 	nearby_npc = null
+	pending_travel_event.clear()
 	messages.clear()
 	var result := SaveManagerClass.restore(data, FOV_RADIUS)
 	map    = result[0]
@@ -204,6 +210,64 @@ func load_from_save() -> void:
 
 func save() -> void:
 	SaveManagerClass.save_game(map, player, depth, floors, chunk, chunks, turn)
+
+
+func has_pending_travel_event() -> bool:
+	return not pending_travel_event.is_empty()
+
+
+func ignore_pending_travel_event() -> void:
+	if pending_travel_event.is_empty():
+		return
+	var event_type: String = str(pending_travel_event.get("type", TRAVEL_EVENT_NONE))
+	pending_travel_event.clear()
+	if event_type == TRAVEL_EVENT_MERCHANT:
+		add_msg("You keep your distance and continue on your way.")
+	else:
+		add_msg("You press on.")
+
+
+func attempt_pending_travel_flee() -> Dictionary:
+	if pending_travel_event.is_empty() or not bool(pending_travel_event.get("can_flee", false)):
+		return {"resolved": false}
+
+	var dc: int = 12
+	if bool(pending_travel_event.get("is_road", false)):
+		dc -= 2
+	if is_night:
+		dc += 2
+	if player.fatigue >= ActorClass.FATIGUE_MAX * 7 / 10:
+		dc += 2
+
+	var roll: int = randi_range(1, 20) + player.dex_mod
+	var dex_str: String = ("%+d" % player.dex_mod)
+	if roll >= dc:
+		pending_travel_event.clear()
+		add_msg("You slip away before the trap can close. [1d20%s = %d vs DC %d]" %
+				[dex_str, roll, dc])
+		return {"resolved": true, "entered": false}
+
+	add_msg("You fail to break away. The threat closes in. [1d20%s = %d vs DC %d]" %
+			[dex_str, roll, dc])
+	enter_pending_travel_event()
+	return {"resolved": true, "entered": true}
+
+
+func enter_pending_travel_event() -> void:
+	if pending_travel_event.is_empty():
+		return
+	var event_data: Dictionary = pending_travel_event.duplicate(true)
+	pending_travel_event.clear()
+
+	var entry_dir: Vector2i = event_data.get("entry_dir", Vector2i.ZERO)
+	player.pos = _world_map_entry_pos(entry_dir)
+	_place_travel_event_in_map(map, event_data, player.pos)
+	_recompute_fov()
+	if event_data.get("type", TRAVEL_EVENT_NONE) == TRAVEL_EVENT_MERCHANT:
+		add_msg("You turn off the road to meet the travelers.")
+	else:
+		add_msg("You are forced into the encounter.")
+	map_changed.emit()
 
 
 # ===========================================================================
@@ -486,6 +550,7 @@ func world_map_navigate(dir: Vector2i) -> void:
 	chunks[chunk] = map
 	chunk = dest
 
+	var is_fresh_chunk: bool = not chunks.has(chunk)
 	if chunks.has(chunk):
 		map = chunks[chunk]
 	else:
@@ -502,6 +567,7 @@ func world_map_navigate(dir: Vector2i) -> void:
 
 	turn += TURNS_PER_CHUNK_TRAVEL
 	_drain_travel(TURNS_PER_CHUNK_TRAVEL)
+	pending_travel_event = _roll_world_map_travel_event(chunk, dir, is_fresh_chunk)
 	turn_ended.emit(turn)
 
 
@@ -686,6 +752,20 @@ func _walk_toward_center(m, from: Vector2i, steps: int) -> Vector2i:
 	return pos
 
 
+func _world_map_entry_pos(entry_dir: Vector2i) -> Vector2i:
+	var px: int = OVERWORLD_W >> 1
+	var py: int = OVERWORLD_H >> 1
+	if entry_dir.x > 0:
+		px = 1
+	elif entry_dir.x < 0:
+		px = OVERWORLD_W - 2
+	if entry_dir.y > 0:
+		py = 1
+	elif entry_dir.y < 0:
+		py = OVERWORLD_H - 2
+	return Vector2i(px, py)
+
+
 # ===========================================================================
 # Thirst / hydration (overworld only) and Fatigue (everywhere)
 # Both iterate `party` so future followers are automatically covered.
@@ -823,6 +903,53 @@ func _drain_fatigue() -> void:
 # ===========================================================================
 # Chunk encounters (overworld only)
 # ===========================================================================
+
+func _roll_world_map_travel_event(target_chunk: Vector2i, dir: Vector2i, is_fresh_chunk: bool) -> Dictionary:
+	if not is_fresh_chunk or is_village_chunk(target_chunk.x, target_chunk.y):
+		return {}
+
+	var biome: int    = get_chunk_biome(target_chunk)
+	var on_road: bool = is_road_chunk(target_chunk.x, target_chunk.y)
+
+	var bandit_chance: float = 0.15 if is_night else 0.07
+	if biome == GameMapClass.BIOME_BADLANDS:
+		bandit_chance *= 1.6
+	elif biome == GameMapClass.BIOME_MOUNTAINS:
+		bandit_chance *= 1.3
+
+	var merchant_chance: float = 0.25 if (on_road and not is_night) else 0.0
+	var roll: float = randf()
+	if roll < bandit_chance:
+		return {
+			"type": TRAVEL_EVENT_BANDITS,
+			"title": "AMBUSH",
+			"desc": "Bandits surge from the dunes and move to cut off your path.",
+			"entry_dir": dir,
+			"dest_chunk": target_chunk,
+			"is_road": on_road,
+			"can_ignore": false,
+			"can_flee": true,
+		}
+	if roll < bandit_chance + merchant_chance:
+		return {
+			"type": TRAVEL_EVENT_MERCHANT,
+			"title": "ROADSIDE ENCOUNTER",
+			"desc": "A merchant caravan is making camp beside the road ahead.",
+			"entry_dir": dir,
+			"dest_chunk": target_chunk,
+			"is_road": on_road,
+			"can_ignore": true,
+			"can_flee": false,
+		}
+	return {}
+
+
+func _place_travel_event_in_map(target_map, event_data: Dictionary, player_entry: Vector2i) -> void:
+	match str(event_data.get("type", TRAVEL_EVENT_NONE)):
+		TRAVEL_EVENT_BANDITS:
+			_place_bandits_in(target_map, player_entry)
+		TRAVEL_EVENT_MERCHANT:
+			_place_merchant_in(target_map, player_entry)
 
 # Called once when a fresh (never-visited) overworld chunk is generated.
 # Rolls for and pre-places encounter entities so the player discovers them

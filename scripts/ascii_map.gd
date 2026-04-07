@@ -63,7 +63,7 @@ var _escape_cursor: int = 0
 # ---------------------------------------------------------------------------
 # Overlay screens
 # ---------------------------------------------------------------------------
-enum Screen { NONE, ESCAPE, INVENTORY, CHARACTER, SETTINGS, LOOK, WORLD_MAP, TRADE, DISAMBIGUATE, HELP, READER, DIALOGUE }
+enum Screen { NONE, ESCAPE, INVENTORY, CHARACTER, SETTINGS, LOOK, WORLD_MAP, TRAVEL_EVENT, TRADE, DISAMBIGUATE, HELP, READER, DIALOGUE }
 var _screen: Screen              = Screen.NONE
 var _world_look_mode: bool       = false
 var _world_look_cursor: Vector2i = Vector2i.ZERO
@@ -238,6 +238,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 		Screen.WORLD_MAP:
 			_handle_world_map_input(event)
+			return
+		Screen.TRAVEL_EVENT:
+			_handle_travel_event_input(event)
 			return
 		Screen.TRADE:
 			_handle_trade_input(event)
@@ -692,15 +695,42 @@ func _handle_disambig_input(event: InputEvent) -> void:
 			return
 
 
+func _handle_travel_event_input(event: InputEvent) -> void:
+	get_viewport().set_input_as_handled()
+	if not _world.has_pending_travel_event():
+		_screen = Screen.WORLD_MAP
+		queue_redraw()
+		return
+
+	var event_data: Dictionary = _world.pending_travel_event
+	match event.physical_keycode:
+		KEY_E, KEY_ENTER, KEY_KP_ENTER:
+			_world.enter_pending_travel_event()
+			_screen = Screen.NONE
+			queue_redraw()
+		KEY_I:
+			if bool(event_data.get("can_ignore", false)):
+				_world.ignore_pending_travel_event()
+				_screen = Screen.WORLD_MAP
+				queue_redraw()
+		KEY_F:
+			if bool(event_data.get("can_flee", false)):
+				var result: Dictionary = _world.attempt_pending_travel_flee()
+				_screen = Screen.NONE if bool(result.get("entered", false)) else Screen.WORLD_MAP
+				queue_redraw()
+
+
 # ===========================================================================
 # Rendering
 # ===========================================================================
 
 func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, Vector2(COLS * CELL_W, ROWS * CELL_H)), C_BG)
-	if _screen == Screen.WORLD_MAP:
+	if _screen == Screen.WORLD_MAP or _screen == Screen.TRAVEL_EVENT:
 		_draw_world_map()
 		_draw_ui()
+		if _screen == Screen.TRAVEL_EVENT:
+			_draw_travel_event_overlay()
 		return
 	_draw_map()
 	_draw_entities()
@@ -1051,6 +1081,35 @@ func _draw_disambig_overlay() -> void:
 			"[%s]  %s" % [arrow, str(opt.label)], C_MSG_RECENT)
 
 	_puts(box_x + ((box_w - 11) >> 1), box_y + box_h - 2, "[Esc] cancel", C_DIVIDER)
+
+
+func _draw_travel_event_overlay() -> void:
+	if not _world.has_pending_travel_event():
+		return
+	var event_data: Dictionary = _world.pending_travel_event
+	var desc_lines: Array[String] = _word_wrap(str(event_data.get("desc", "")), 48)
+	var options: Array[String] = ["[E] Enter the chunk"]
+	if bool(event_data.get("can_ignore", false)):
+		options.append("[I] Ignore and continue")
+	if bool(event_data.get("can_flee", false)):
+		options.append("[F] Attempt to flee")
+
+	const BOX_W := 58
+	var box_h: int = 8 + desc_lines.size() + options.size()
+	var box_x: int = (COLS - BOX_W) >> 1
+	var box_y: int = (MAP_ROWS - box_h) >> 1
+
+	draw_rect(Rect2(Vector2.ZERO, Vector2(COLS * CELL_W, ROWS * CELL_H)), Color(0, 0, 0, 0.72))
+	draw_rect(Rect2(box_x * CELL_W, box_y * CELL_H, BOX_W * CELL_W, box_h * CELL_H), C_BG)
+	_draw_box(box_x, box_y, BOX_W, box_h)
+
+	var title := "-=[ %s ]=-" % str(event_data.get("title", "TRAVEL EVENT"))
+	_puts(box_x + ((BOX_W - title.length()) >> 1), box_y + 1, title, C_STATUS)
+
+	for i in range(desc_lines.size()):
+		_puts(box_x + 4, box_y + 3 + i, desc_lines[i], C_MSG_RECENT)
+	for i in range(options.size()):
+		_puts(box_x + 4, box_y + 5 + desc_lines.size() + i, options[i], C_STATUS)
 
 
 # ---------------------------------------------------------------------------
@@ -1446,6 +1505,8 @@ func _handle_world_map_input(event: InputEvent) -> void:
 
 	if dc != Vector2i.ZERO:
 		_world.world_map_navigate(dc)
+		if _world.has_pending_travel_event():
+			_screen = Screen.TRAVEL_EVENT
 		queue_redraw()
 
 
