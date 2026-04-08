@@ -6,6 +6,7 @@ var load_save: bool = false
 # Player preferences — persist for the session.
 var auto_pickup: bool = false
 var god_mode: bool    = false
+var debug_tools_enabled: bool = false
 
 # Fixed seed for the entire world — set once on new game, saved to disk.
 # All overworld chunk noise uses this seed so terrain is seamless across borders.

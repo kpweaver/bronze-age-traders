@@ -12,6 +12,9 @@ var power: int
 var ai          # HostileAI or null — untyped to break circular dependency
 var inventory: Array = []  # Array of Item (non-equipped)
 var gold: int = 0
+var xp: int = 0
+var xp_to_next: int = 100
+var unspent_attribute_points: int = 0
 
 const THIRST_MAX: int  = 720   # turns until death from dehydration (1 day)
 const FATIGUE_MAX: int = 720   # turns until collapse from exhaustion (1 day)

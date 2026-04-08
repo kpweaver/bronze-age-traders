@@ -63,7 +63,7 @@ var _escape_cursor: int = 0
 # ---------------------------------------------------------------------------
 # Overlay screens
 # ---------------------------------------------------------------------------
-enum Screen { NONE, ESCAPE, INVENTORY, CHARACTER, SETTINGS, LOOK, WORLD_MAP, TRAVEL_EVENT, TRADE, DISAMBIGUATE, HELP, READER, DIALOGUE }
+enum Screen { NONE, ESCAPE, INVENTORY, CHARACTER, SETTINGS, LOOK, WORLD_MAP, TRAVEL_EVENT, ATTRIBUTE_PICK, TRADE, DISAMBIGUATE, HELP, READER, DIALOGUE }
 var _screen: Screen              = Screen.NONE
 var _world_look_mode: bool       = false
 var _world_look_cursor: Vector2i = Vector2i.ZERO
@@ -77,6 +77,15 @@ var _reader_scroll: int           = 0
 # Dialogue state
 var _dialogue_npc                 = null
 var _dialogue_line: String        = ""
+
+const ATTRIBUTE_OPTIONS := [
+	{"key": KEY_S, "code": "str", "label": "Strength"},
+	{"key": KEY_D, "code": "dex", "label": "Dexterity"},
+	{"key": KEY_C, "code": "con", "label": "Constitution"},
+	{"key": KEY_I, "code": "int", "label": "Intelligence"},
+	{"key": KEY_W, "code": "wis", "label": "Wisdom"},
+	{"key": KEY_H, "code": "cha", "label": "Charisma"},
+]
 
 # NPC trade state
 var _trade_npc        = null
@@ -135,6 +144,7 @@ func _ready() -> void:
 	add_child(_world)
 	_world.turn_ended.connect(_on_turn_ended)
 	_world.map_changed.connect(_on_map_changed)
+	_world.attribute_points_changed.connect(_on_attribute_points_changed)
 	if GameState.load_save:
 		_world.load_from_save()
 		GameState.load_save = false
@@ -143,6 +153,7 @@ func _ready() -> void:
 	# map_changed fires during new_game/load, but compute tint explicitly here
 	# in case _ready runs before the signal handler is wired (belt-and-suspenders).
 	_day_tint = _compute_day_tint()
+	_open_attribute_overlay_if_needed()
 
 
 func _make_font() -> Font:
@@ -165,7 +176,20 @@ func _on_turn_ended(_n: int) -> void:
 func _on_map_changed() -> void:
 	_day_tint = _compute_day_tint()
 	_update_camera()
+	_open_attribute_overlay_if_needed()
 	queue_redraw()
+
+
+func _on_attribute_points_changed(_n: int) -> void:
+	_open_attribute_overlay_if_needed()
+	queue_redraw()
+
+
+func _open_attribute_overlay_if_needed() -> void:
+	if _world != null and _world.has_unspent_attribute_points():
+		_screen = Screen.ATTRIBUTE_PICK
+	elif _screen == Screen.ATTRIBUTE_PICK:
+		_screen = Screen.NONE
 
 
 # ---------------------------------------------------------------------------
@@ -183,7 +207,7 @@ func _on_map_changed() -> void:
 # ---------------------------------------------------------------------------
 func _compute_day_tint() -> Color:
 	# Only the overworld is lit by the sun.  Underground is always the same dim.
-	if _world.depth > 0:
+	if _world.debug_hub_active or _world.depth > 0:
 		return Color(0.55, 0.50, 0.45)  # dungeon — torchlight amber-dim
 
 	var t: float = _world.time_of_day   # 0.0 = midnight, 0.5 = noon
@@ -242,6 +266,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		Screen.TRAVEL_EVENT:
 			_handle_travel_event_input(event)
 			return
+		Screen.ATTRIBUTE_PICK:
+			_handle_attribute_pick_input(event)
+			return
 		Screen.TRADE:
 			_handle_trade_input(event)
 			return
@@ -272,6 +299,12 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event.shift_pressed and event.physical_keycode == KEY_SLASH:
 		_screen = Screen.HELP
 		get_viewport().set_input_as_handled()
+		queue_redraw()
+		return
+
+	if event.shift_pressed and event.physical_keycode == KEY_D:
+		get_viewport().set_input_as_handled()
+		_world.toggle_debug_hub()
 		queue_redraw()
 		return
 
@@ -361,8 +394,9 @@ func _unhandled_input(event: InputEvent) -> void:
 
 	get_viewport().set_input_as_handled()
 	_world.do_player_turn(dir, event.shift_pressed and dir != Vector2i.ZERO)
+	_open_attribute_overlay_if_needed()
 	# Open dialogue panel when the player bumps a non-wildlife NPC.
-	if _world.nearby_npc != null and not (_world.nearby_npc as NpcClass).is_wildlife:
+	if _screen == Screen.NONE and _world.nearby_npc != null and not (_world.nearby_npc as NpcClass).is_wildlife:
 		_open_dialogue(_world.nearby_npc)
 
 
@@ -537,6 +571,9 @@ func _handle_settings_input(event: InputEvent) -> void:
 		match event.physical_keycode:
 			KEY_A:
 				GameState.auto_pickup = not GameState.auto_pickup
+				queue_redraw()
+			KEY_D:
+				GameState.debug_tools_enabled = not GameState.debug_tools_enabled
 				queue_redraw()
 			KEY_G:
 				GameState.god_mode = not GameState.god_mode
@@ -720,6 +757,16 @@ func _handle_travel_event_input(event: InputEvent) -> void:
 				queue_redraw()
 
 
+func _handle_attribute_pick_input(event: InputEvent) -> void:
+	get_viewport().set_input_as_handled()
+	for opt: Dictionary in ATTRIBUTE_OPTIONS:
+		if event.physical_keycode == int(opt.key):
+			if _world.apply_attribute_increase(str(opt.code)):
+				_open_attribute_overlay_if_needed()
+				queue_redraw()
+			return
+
+
 # ===========================================================================
 # Rendering
 # ===========================================================================
@@ -741,6 +788,7 @@ func _draw() -> void:
 		Screen.CHARACTER:    _draw_character_sheet()
 		Screen.SETTINGS:     _draw_settings()
 		Screen.LOOK:         _draw_look_cursor()
+		Screen.ATTRIBUTE_PICK: _draw_attribute_pick_overlay()
 		Screen.TRADE:        _draw_trade_screen()
 		Screen.DISAMBIGUATE: _draw_disambig_overlay()
 		Screen.HELP:         _draw_help_screen()
@@ -824,9 +872,10 @@ func _draw_ui() -> void:
 	var fat_pct: int      = int(float(_player.fatigue) / float(ActorClass.FATIGUE_MAX) * 100.0)
 	var thr_str: String   = ("  THR: %d%%" % thr_pct) if _floor == 0 else ""
 	var fat_str: String   = "  FAT: %d%%" % fat_pct
-	var status := "HP: %d/%d   ATK: 1d6+%d  AC: %d   Gold: %d   Floor: %d   %s  %s%s%s%s%s" % [
-		_player.hp, _player.max_hp, _player.power + _player.total_attack_bonus,
-		_player.ac, _player.gold, _floor, cal_str, phase_str, thr_str, fat_str, wpn_str, lit_str
+	var floor_label: String = "HUB" if _world.debug_hub_active else str(_floor)
+	var status := "Lvl: %d   HP: %d/%d   ATK: 1d6+%d  AC: %d   Gold: %d   Floor: %s   %s  %s%s%s%s%s" % [
+		_player.level, _player.hp, _player.max_hp, _player.power + _player.total_attack_bonus,
+		_player.ac, _player.gold, floor_label, cal_str, phase_str, thr_str, fat_str, wpn_str, lit_str
 	]
 	_puts(0, STATUS_ROW, status, hp_color)
 
@@ -890,7 +939,7 @@ func _draw_escape_menu() -> void:
 # ---------------------------------------------------------------------------
 func _draw_settings() -> void:
 	const BOX_W := 54
-	const BOX_H := 12
+	const BOX_H := 13
 	const BOX_X := (COLS - BOX_W) >> 1
 	const BOX_Y := (MAP_ROWS - BOX_H) >> 1
 
@@ -902,9 +951,12 @@ func _draw_settings() -> void:
 	_puts(BOX_X + ((BOX_W - title.length()) >> 1), BOX_Y + 1, title, C_STATUS)
 
 	var ap_val  := "ON " if GameState.auto_pickup else "OFF"
+	var dbg_val := "ON " if GameState.debug_tools_enabled else "OFF"
 	var god_val := "ON " if GameState.god_mode    else "OFF"
 	_puts(BOX_X + 2, BOX_Y + 3, "a) Auto-pickup items:  %s" % ap_val,  C_MSG_RECENT)
-	_puts(BOX_X + 2, BOX_Y + 4, "g) God mode:           %s" % god_val,
+	_puts(BOX_X + 2, BOX_Y + 4, "d) Debug tools:        %s" % dbg_val,
+		Color(0.72, 0.88, 1.0) if GameState.debug_tools_enabled else C_MSG_RECENT)
+	_puts(BOX_X + 2, BOX_Y + 5, "g) God mode:           %s" % god_val,
 		Color(1.0, 0.85, 0.2) if GameState.god_mode else C_MSG_RECENT)
 
 	var hint := "esc: back"
@@ -988,7 +1040,7 @@ func _draw_character_sheet() -> void:
 	const BOX_X := 35
 	const BOX_Y := 4
 	const BOX_W := 50
-	const BOX_H := 18
+	const BOX_H := 24
 
 	draw_rect(Rect2(Vector2.ZERO, Vector2(COLS * CELL_W, ROWS * CELL_H)), Color(0, 0, 0, 0.80))
 	draw_rect(Rect2(BOX_X * CELL_W, BOX_Y * CELL_H, BOX_W * CELL_W, BOX_H * CELL_H), C_BG)
@@ -1000,8 +1052,10 @@ func _draw_character_sheet() -> void:
 	var r := BOX_Y + 2
 	_stat_line(BOX_X + 4, r, "Name",  GameState.player_name);                       r += 1
 	_stat_line(BOX_X + 4, r, "Class", GameState.player_class.capitalize());          r += 1
+	_stat_line(BOX_X + 4, r, "Level", str(_player.level));                           r += 1
+	_stat_line(BOX_X + 4, r, "XP",    "%d / %d" % [_player.xp, _player.xp_to_next]); r += 1
 	r += 1
-	_stat_line(BOX_X + 4, r, "Floor", str(_floor));                                  r += 1
+	_stat_line(BOX_X + 4, r, "Floor", "HUB" if _world.debug_hub_active else str(_floor)); r += 1
 	r += 1
 	_stat_line(BOX_X + 4, r, "HP",    "%d / %d" % [_player.hp, _player.max_hp]);    r += 1
 	var atk_total: int = _player.power + _player.total_attack_bonus
@@ -1017,9 +1071,39 @@ func _draw_character_sheet() -> void:
 	_stat_line(BOX_X + 4, r, "Gold", str(_player.gold), C_GOLD); r += 1
 	_stat_line(BOX_X + 4, r, "Pack",
 		"%d / %d items" % [_player.inventory.size(), _player.max_inventory]); r += 1
+	r += 1
+	_stat_line(BOX_X + 4, r, "STR", "%d (%+d)" % [_player.str_score, _player.str_mod]); r += 1
+	_stat_line(BOX_X + 4, r, "DEX", "%d (%+d)" % [_player.dex_score, _player.dex_mod]); r += 1
+	_stat_line(BOX_X + 4, r, "CON", "%d (%+d)" % [_player.con_score, _player.con_mod]); r += 1
+	_stat_line(BOX_X + 4, r, "INT", "%d (%+d)" % [_player.int_score, _player.int_mod]); r += 1
+	_stat_line(BOX_X + 4, r, "WIS", "%d (%+d)" % [_player.wis_score, _player.wis_mod]); r += 1
+	_stat_line(BOX_X + 4, r, "CHA", "%d (%+d)" % [_player.cha_score, _player.cha_mod]); r += 1
 
 	var hint := "[Esc] close"
 	_puts(BOX_X + ((BOX_W - hint.length()) >> 1), BOX_Y + BOX_H - 2, hint, C_DIVIDER)
+
+
+func _draw_attribute_pick_overlay() -> void:
+	const BOX_X := 34
+	const BOX_Y := 13
+	const BOX_W := 52
+	const BOX_H := 14
+
+	draw_rect(Rect2(Vector2.ZERO, Vector2(COLS * CELL_W, ROWS * CELL_H)), Color(0, 0, 0, 0.84))
+	draw_rect(Rect2(BOX_X * CELL_W, BOX_Y * CELL_H, BOX_W * CELL_W, BOX_H * CELL_H), C_BG)
+	_draw_box(BOX_X, BOX_Y, BOX_W, BOX_H)
+
+	var title := "-=[ ATTRIBUTE INCREASE ]=-"
+	_puts(BOX_X + ((BOX_W - title.length()) >> 1), BOX_Y, title, C_STATUS)
+	_puts(BOX_X + 4, BOX_Y + 2, "Choose an attribute to raise by 1.", C_MSG_RECENT)
+	_puts(BOX_X + 4, BOX_Y + 3, "Unspent points: %d" % _player.unspent_attribute_points, C_STATUS)
+
+	for i in range(ATTRIBUTE_OPTIONS.size()):
+		var opt: Dictionary = ATTRIBUTE_OPTIONS[i]
+		var score: int = int(_player.get("%s_score" % str(opt.code)))
+		_puts(BOX_X + 4, BOX_Y + 5 + i,
+			"[%s] %-12s %2d -> %2d" % [char(int(opt.key)), str(opt.label), score, score + 1],
+			C_MSG_RECENT)
 
 
 # ---------------------------------------------------------------------------
@@ -1174,6 +1258,7 @@ func _draw_help_screen() -> void:
 	_help_row(COL2, r, "i",    "inventory");        r += 1
 	_help_row(COL2, r, "c",    "character sheet");  r += 1
 	_help_row(COL2, r, "l",    "look mode");        r += 1
+	_help_row(COL2, r, "Shift+D", "debug hub");     r += 1
 	_help_row(COL2, r, "?",    "this help screen"); r += 1
 	_help_row(COL2, r, "Esc",  "pause menu");       r += 1
 	r += 1

@@ -6,6 +6,7 @@ extends Node
 # ---------------------------------------------------------------------------
 signal turn_ended(turn_number: int)  # emitted every turn — hook day/night, events, etc.
 signal map_changed()                  # emitted on any floor/chunk transition or new game
+signal attribute_points_changed(unspent_points: int)
 
 # ---------------------------------------------------------------------------
 # Dependencies
@@ -30,6 +31,8 @@ const DUNGEON_W: int     = 160
 const DUNGEON_H: int     = 70
 const OVERWORLD_W: int   = 200
 const OVERWORLD_H: int   = 200
+const DEBUG_HUB_W: int   = 120
+const DEBUG_HUB_H: int   = 44
 const FOV_RADIUS: int    = 8
 const FOV_OVERWORLD: int = 24   # daytime overworld sight range
 const FOV_NIGHT: int     = 1    # night-time overworld sight range — near-zero, pre-industrial darkness
@@ -38,6 +41,9 @@ const MSG_MAX: int       = 3
 # Turns of thirst/fatigue drain applied per chunk moved on the world map.
 # One chunk = 20 miles; at 3 mph that is ~6.7 hours = ~200 turns.
 const TURNS_PER_CHUNK_TRAVEL: int = 200
+const XP_FLOOR_DISCOVERY: int = 25
+const XP_KILL_WEAK: int = 10
+const XP_KILL_DANGEROUS: int = 20
 const TRAVEL_EVENT_NONE: String = ""
 const TRAVEL_EVENT_MERCHANT: String = "traveling_merchant"
 const TRAVEL_EVENT_BANDITS: String = "bandit_ambush"
@@ -78,6 +84,10 @@ var turn: int           = 0          # global turn counter — increments every 
 var _resting: bool      = false      # true when the player waited this turn (affects fatigue)
 var _thirst_acc: float  = 0.0        # fractional thirst accumulator for rate < 1.0
 var pending_travel_event: Dictionary = {}
+var debug_hub_active: bool = false
+var debug_return_depth: int = 0
+var debug_return_chunk: Vector2i = Vector2i.ZERO
+var debug_return_pos: Vector2i = Vector2i.ZERO
 
 
 # Time of day: 0.0 = midnight, 0.25 = 06:00, 0.5 = noon, 0.75 = 18:00.
@@ -138,6 +148,10 @@ func new_game() -> void:
 	nearby_npc = null
 	turn       = 0
 	pending_travel_event.clear()
+	debug_hub_active = false
+	debug_return_depth = 0
+	debug_return_chunk = Vector2i.ZERO
+	debug_return_pos = Vector2i.ZERO
 	messages.clear()
 
 	GameState.world_seed   = randi()
@@ -165,6 +179,9 @@ func new_game() -> void:
 	var spawn_pos: Vector2i = _walk_toward_center(ow_map, entrance_pos, 6)
 	player = ActorClass.new(spawn_pos, "@", Color(0.80, 0.72, 0.55), "you", 30, 2, 5)
 	_apply_archetype(player, GameState.player_class)
+	player.xp = 0
+	player.xp_to_next = _xp_threshold_for_level(player.level)
+	player.unspent_attribute_points = 0
 	player.game_map = ow_map
 	ow_map.entities.append(player)
 	map   = ow_map
@@ -187,6 +204,7 @@ func load_from_save() -> void:
 	game_over  = false
 	nearby_npc = null
 	pending_travel_event.clear()
+	debug_hub_active = false
 	messages.clear()
 	var result := SaveManagerClass.restore(data, FOV_RADIUS)
 	map    = result[0]
@@ -196,6 +214,11 @@ func load_from_save() -> void:
 	chunk  = result[4]
 	chunks = result[5]
 	turn   = result[6]
+	var debug_data: Dictionary = result[7]
+	debug_hub_active = bool(debug_data.get("active", false))
+	debug_return_depth = int(debug_data.get("return_depth", 0))
+	debug_return_chunk = Vector2i(int(debug_data.get("return_chunk_x", 0)), int(debug_data.get("return_chunk_y", 0)))
+	debug_return_pos = Vector2i(int(debug_data.get("return_pos_x", 0)), int(debug_data.get("return_pos_y", 0)))
 	GameState.world_biomes = ProcgenClass.generate_world_biomes(
 			GameState.WORLD_W, GameState.WORLD_H, GameState.world_seed)
 	GameState.villages     = ProcgenClass.generate_villages(
@@ -209,11 +232,33 @@ func load_from_save() -> void:
 
 
 func save() -> void:
-	SaveManagerClass.save_game(map, player, depth, floors, chunk, chunks, turn)
+	var debug_data := {
+		"active": debug_hub_active,
+		"return_depth": debug_return_depth,
+		"return_chunk_x": debug_return_chunk.x,
+		"return_chunk_y": debug_return_chunk.y,
+		"return_pos_x": debug_return_pos.x,
+		"return_pos_y": debug_return_pos.y,
+	}
+	SaveManagerClass.save_game(map, player, depth, floors, chunk, chunks, turn, debug_data)
 
 
 func has_pending_travel_event() -> bool:
 	return not pending_travel_event.is_empty()
+
+
+func can_use_debug_tools() -> bool:
+	return GameState.debug_tools_enabled
+
+
+func toggle_debug_hub() -> void:
+	if not can_use_debug_tools():
+		add_msg("Debug tools are disabled.")
+		return
+	if debug_hub_active:
+		exit_debug_hub()
+	else:
+		enter_debug_hub()
 
 
 func ignore_pending_travel_event() -> void:
@@ -293,6 +338,7 @@ func do_player_turn(dir: Vector2i, force_attack: bool = false) -> void:
 					if GameState.god_mode and (target as ActorClass).is_alive:
 						(target as ActorClass).take_damage((target as ActorClass).hp)
 					if not (target as ActorClass).is_alive:
+						_award_kill_xp(target as ActorClass)
 						add_msg((target as ActorClass).die())
 				else:
 					nearby_npc = target
@@ -306,6 +352,7 @@ func do_player_turn(dir: Vector2i, force_attack: bool = false) -> void:
 				if GameState.god_mode and (target as ActorClass).is_alive:
 					(target as ActorClass).take_damage((target as ActorClass).hp)
 				if not (target as ActorClass).is_alive:
+					_award_kill_xp(target as ActorClass)
 					add_msg((target as ActorClass).die())
 		elif map.is_walkable(next.x, next.y):
 			player.pos = next
@@ -313,6 +360,7 @@ func do_player_turn(dir: Vector2i, force_attack: bool = false) -> void:
 			if GameState.auto_pickup:
 				auto_pickup()
 			_check_stairs()
+			_check_debug_fixture()
 		else:
 			return  # wall — no turn consumed
 
@@ -357,7 +405,9 @@ func player_light_fov() -> int:
 
 func _recompute_fov() -> void:
 	var base_fov: int
-	if map.map_type == GameMapClass.MAP_OVERWORLD:
+	if debug_hub_active:
+		base_fov = maxi(map.width, map.height)
+	elif map.map_type == GameMapClass.MAP_OVERWORLD:
 		base_fov = overworld_fov()
 	else:
 		base_fov = FOV_RADIUS
@@ -572,6 +622,9 @@ func world_map_navigate(dir: Vector2i) -> void:
 
 
 func try_descend() -> void:
+	if debug_hub_active:
+		add_msg("There are no stairs leading down from the developer's oasis.")
+		return
 	for e in map.entities:
 		if not (e is ActorClass) and e.char == ">" and e.pos == player.pos:
 			_descend()
@@ -579,6 +632,9 @@ func try_descend() -> void:
 
 
 func try_ascend() -> void:
+	if debug_hub_active:
+		exit_debug_hub()
+		return
 	for e in map.entities:
 		if not (e is ActorClass) and e.char == "<" and e.pos == player.pos:
 			_ascend()
@@ -652,6 +708,7 @@ func _descend() -> void:
 		var up_stairs := EntityClass.new(player.pos, "<", Color(0.55, 0.80, 0.95), "stairs up", false)
 		up_stairs.game_map = map
 		map.entities.append(up_stairs)
+		award_xp(XP_FLOOR_DISCOVERY, "for discovering dungeon floor %d" % depth)
 
 	_recompute_fov()
 	add_msg("You descend to floor %d. The air grows heavier." % depth)
@@ -712,6 +769,8 @@ func _stairs_pos(m, ch: String) -> Vector2i:
 
 
 func _check_stairs() -> void:
+	if debug_hub_active:
+		return
 	for e in map.entities:
 		if (e is ActorClass) or e.pos != player.pos:
 			continue
@@ -725,6 +784,128 @@ func _check_stairs() -> void:
 			var hint := "< to ascend." if depth > 1 else "< to surface."
 			add_msg("Stairs lead up. %s" % hint)
 			return
+
+
+func enter_debug_hub() -> void:
+	if debug_hub_active:
+		return
+	if depth == 0:
+		chunks[chunk] = map
+	else:
+		floors[depth] = map
+	map.entities.erase(player)
+	debug_return_depth = depth
+	debug_return_chunk = chunk
+	debug_return_pos = player.pos
+
+	var hub_map = GameMapClass.new(DEBUG_HUB_W, DEBUG_HUB_H)
+	ProcgenClass.generate_debug_hub(hub_map)
+	map = hub_map
+	depth = -1
+	debug_hub_active = true
+	player.pos = Vector2i(8, DEBUG_HUB_H >> 1)
+	player.game_map = map
+	map.entities.append(player)
+	_recompute_fov()
+	add_msg("You step into the developer's oasis.")
+	add_msg("Quartermaster west. Training center ahead. Arena east. Waystone to return.")
+	map_changed.emit()
+
+
+func exit_debug_hub() -> void:
+	if not debug_hub_active:
+		return
+	map.entities.erase(player)
+	depth = debug_return_depth
+	chunk = debug_return_chunk
+
+	if depth == 0:
+		if chunks.has(chunk):
+			map = chunks[chunk]
+		else:
+			var new_map := GameMapClass.new(OVERWORLD_W, OVERWORLD_H)
+			var is_center: bool = (chunk == Vector2i(GameState.WORLD_W >> 1, GameState.WORLD_H >> 1))
+			ProcgenClass.generate_overworld(new_map,
+					chunk.x * OVERWORLD_W, chunk.y * OVERWORLD_H,
+					GameState.world_seed, get_chunk_biome(chunk), is_center,
+					get_road_dirs(chunk), is_village_chunk(chunk.x, chunk.y))
+			map = new_map
+			chunks[chunk] = map
+	else:
+		map = floors.get(depth, map)
+
+	player.pos = debug_return_pos
+	player.game_map = map
+	map.entities.append(player)
+	debug_hub_active = false
+	_recompute_fov()
+	add_msg("You leave the developer's oasis.")
+	map_changed.emit()
+
+
+func _check_debug_fixture() -> void:
+	if not debug_hub_active:
+		return
+	for e in map.entities:
+		if e is ActorClass or e.pos != player.pos:
+			continue
+		match e.name:
+			"training obelisk":
+				award_xp(100, "from the training obelisk")
+				return
+			"healing spring":
+				player.hp = player.max_hp
+				player.thirst = 0
+				player.fatigue = maxi(0, player.fatigue - 120)
+				_thirst_acc = 0.0
+				add_msg("You refresh yourself at the healing spring.")
+				return
+			"trial brazier":
+				player.hp = maxi(1, player.hp - 10)
+				player.thirst = mini(ActorClass.THIRST_MAX - 1, ActorClass.THIRST_MAX * 7 / 10)
+				player.fatigue = mini(ActorClass.FATIGUE_MAX - 1, ActorClass.FATIGUE_MAX * 7 / 10)
+				add_msg("Heat and strain wash over you.")
+				return
+			"return waystone":
+				exit_debug_hub()
+				return
+			"bandit marker":
+				_spawn_debug_enemy("bandit")
+				return
+			"raider marker":
+				_spawn_debug_enemy("raider")
+				return
+			"beast marker":
+				_spawn_debug_enemy("beast")
+				return
+
+
+func _spawn_debug_enemy(kind: String) -> void:
+	var spawn_points: Array[Vector2i] = [
+		Vector2i(104, 14), Vector2i(108, 18), Vector2i(104, 22),
+		Vector2i(108, 26), Vector2i(104, 30),
+	]
+	var spawn_pos := Vector2i(-1, -1)
+	for pos: Vector2i in spawn_points:
+		if map.is_walkable(pos.x, pos.y) and map.get_blocking_entity_at(pos.x, pos.y) == null:
+			spawn_pos = pos
+			break
+	if spawn_pos.x == -1:
+		add_msg("The arena is crowded already.")
+		return
+
+	var actor: ActorClass
+	match kind:
+		"bandit":
+			actor = ActorClass.new(spawn_pos, "B", Color(0.72, 0.32, 0.20), "desert bandit", 12, 1, 3)
+		"raider":
+			actor = ActorClass.new(spawn_pos, "r", Color(0.72, 0.22, 0.10), "raider", 16, 1, 4)
+		_:
+			actor = ActorClass.new(spawn_pos, "B", Color(0.48, 0.32, 0.12), "desert beast", 22, 2, 5)
+	actor.ai = HostileAIClass.new(actor)
+	actor.game_map = map
+	map.entities.append(actor)
+	add_msg("A %s enters the arena." % actor.name)
 
 
 func _walk_toward_center(m, from: Vector2i, steps: int) -> Vector2i:
@@ -792,6 +973,101 @@ func _apply_archetype(actor, class_id: String) -> void:
 	actor.max_hp      += actor.con_mod * 3       # CON  → bonus hit points
 	actor.hp           = actor.max_hp
 	actor.thirst_rate  = maxf(0.1, 1.0 - actor.con_mod * 0.1)  # CON → slower dehydration
+
+
+func _xp_threshold_for_level(level_value: int) -> int:
+	return 100 + maxi(0, level_value - 1) * 50
+
+
+func award_xp(amount: int, reason: String = "") -> void:
+	if amount <= 0 or player == null:
+		return
+	player.xp += amount
+	if reason.is_empty():
+		add_msg("You gain %d XP." % amount)
+	else:
+		add_msg("You gain %d XP %s." % [amount, reason])
+	_check_level_up()
+
+
+func _check_level_up() -> void:
+	while player.xp >= player.xp_to_next:
+		player.xp -= player.xp_to_next
+		_apply_level_up()
+
+
+func _apply_level_up() -> void:
+	player.level += 1
+	var hp_gain: int = maxi(1, randi_range(1, 6) + player.con_mod)
+	player.max_hp += hp_gain
+	player.hp = mini(player.max_hp, player.hp + hp_gain)
+	player.xp_to_next = _xp_threshold_for_level(player.level)
+	add_msg("You advance to level %d." % player.level)
+	add_msg("You gain %d max HP." % hp_gain)
+	if player.level >= 3 and player.level % 2 == 1:
+		player.unspent_attribute_points += 1
+		add_msg("Choose an attribute to increase.")
+		attribute_points_changed.emit(player.unspent_attribute_points)
+
+
+func has_unspent_attribute_points() -> bool:
+	return player != null and player.unspent_attribute_points > 0
+
+
+func apply_attribute_increase(stat_name: String) -> bool:
+	if not has_unspent_attribute_points():
+		return false
+
+	var attr_value: int
+	match stat_name:
+		"str":
+			player.str_score += 1
+			attr_value = player.str_score
+		"dex":
+			player.dex_score += 1
+			attr_value = player.dex_score
+		"con":
+			player.con_score += 1
+			attr_value = player.con_score
+			player.thirst_rate = maxf(0.1, 1.0 - player.con_mod * 0.1)
+		"int":
+			player.int_score += 1
+			attr_value = player.int_score
+		"wis":
+			player.wis_score += 1
+			attr_value = player.wis_score
+		"cha":
+			player.cha_score += 1
+			attr_value = player.cha_score
+		_:
+			return false
+
+	player.unspent_attribute_points -= 1
+	add_msg("Your %s increases to %d." % [_attribute_label(stat_name), attr_value])
+	attribute_points_changed.emit(player.unspent_attribute_points)
+	return true
+
+
+func _attribute_label(stat_name: String) -> String:
+	match stat_name:
+		"str": return "Strength"
+		"dex": return "Dexterity"
+		"con": return "Constitution"
+		"int": return "Intelligence"
+		"wis": return "Wisdom"
+		"cha": return "Charisma"
+		_:     return "Attribute"
+
+
+func _award_kill_xp(target: ActorClass) -> void:
+	if target == null or target == player:
+		return
+	var amount: int = XP_KILL_DANGEROUS if target.max_hp >= 12 or target.power >= 3 else XP_KILL_WEAK
+	award_xp(amount, "for defeating %s" % _xp_target_name(target))
+
+
+func _xp_target_name(target: ActorClass) -> String:
+	return "the %s" % target.name if target.name != "you" else "your foe"
 
 
 # Apply n turns of thirst + fatigue in one batch — used by world-map travel.

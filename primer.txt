@@ -104,6 +104,7 @@ One player action = one turn = 2 real minutes of in-game time.
                    this for a different map layout.
     god_mode     — when true: no thirst drain, player kills in one hit, takes
                    no damage. Toggle in-game with G (check the settings screen).
+    debug_tools_enabled — enables the hidden debug hub and developer test tools.
     auto_pickup  — whether the player auto-grabs items they step on.
     WORLD_W/H    — size of the world in chunks (60×36 = 2160 chunks total).
     world_biomes — the biome grid for the entire world.
@@ -208,6 +209,46 @@ One player action = one turn = 2 real minutes of in-game time.
       Night raises the DC by 2.
       Fatigue at 70% or higher raises the DC by 2.
 
+  EXPERIENCE AND LEVELING:
+    The player now tracks level, XP, XP-to-next, and unspent attribute points.
+    XP is currently awarded for defeating enemies and for discovering a brand-
+    new dungeon floor during descent.
+
+    LEVEL BENEFITS:
+      Every level grants +1d6 + CON modifier max HP (minimum 1), and heals the
+      player by that gained amount immediately.
+      Every odd level starting at 3 (3, 5, 7, ...) grants one attribute point.
+
+    ATTRIBUTE POINTS:
+      Attribute points are not auto-assigned. A full-screen picker opens and
+      forces the player to choose one of STR / DEX / CON / INT / WIS / CHA.
+      CON increases only affect future HP gains; they do not retroactively
+      recalculate prior levels.
+
+    XP CURVE:
+      Level 1 -> 2 requires 100 XP.
+      Each later level requires 50 more than the last:
+        2 -> 3 = 150 XP
+        3 -> 4 = 200 XP
+        4 -> 5 = 250 XP
+
+  DEBUG HUB:
+    A hidden developer test map can now be toggled with Shift+D, but only if
+    debug_tools_enabled is ON in the Settings screen. It is a real isolated map
+    with a stored return point, not a fake menu.
+
+    The hub currently contains:
+      quartermaster merchant — broad stock for trading/inventory tests
+      sample items on the floor — equipment, consumables, readable tablet, goods
+      training obelisk — grants XP
+      healing spring — restores HP, thirst, and some fatigue
+      trial brazier — injures the player and raises thirst/fatigue
+      arena markers — spawn bandits, raiders, and beasts
+      return waystone — returns to the exact prior map/position
+
+    The player can save while inside the debug hub. Save data stores whether the
+    hub is active and the return location needed to leave it cleanly after load.
+
   WILDLIFE:
     Four species roam overworld chunks: gazelle (desert/steppe), onager
     (steppe), ibex (mountains/badlands), and hyena (desert/badlands).
@@ -226,10 +267,11 @@ One player action = one turn = 2 real minutes of in-game time.
   etc.). This is the biggest file in the project.
 
   STATUS BAR (bottom of screen):
-    Shows HP, attack, AC, gold, floor number, current date (Babylonian
+    Shows level, HP, attack, AC, gold, floor number, current date (Babylonian
     calendar), time of day phase, thirst % (overworld only), fatigue %,
     equipped weapon, and torch status (LIT: Xt remaining turns when a
-    burnable torch is equipped in the light slot).
+    burnable torch is equipped in the light slot). While in the debug hub,
+    Floor shows HUB instead of a numeric depth.
 
   SCREENS/OVERLAYS:
     The Screen enum lists all overlay modes: INVENTORY, CHARACTER, TRADE,
@@ -350,11 +392,14 @@ One player action = one turn = 2 real minutes of in-game time.
 
   WHAT IT IS: Saves and loads the game to a JSON file at user://save.json.
   Serialises the current map, player stats, inventory, equipped items, all
-  entities, and all visited chunks/floors.
+  entities, and all visited chunks/floors. It also persists debug-hub state
+  (whether the player is currently inside it, plus the stored return point).
 
   If you add a new variable to Actor (like a new survival stat), you need to
   add it here in two places: save_game() to write it, and restore() to read it.
   Look at how "thirst" is handled as a template for this.
+  Current player progression fields saved here: level, xp, xp_to_next, and
+  unspent_attribute_points.
 
 
 ── ui/char_create.gd ─────────────────────────────────────────────────────────

@@ -11,6 +11,7 @@ const GameMapClass   = preload("res://scripts/map/game_map.gd")
 const EntityClass    = preload("res://scripts/entities/entity.gd")
 const ActorClass     = preload("res://scripts/entities/actor.gd")
 const ItemClass      = preload("res://scripts/entities/item.gd")
+const ItemDataClass  = preload("res://content/items.gd")
 const NpcClass       = preload("res://scripts/entities/npc.gd")
 const NpcDataClass   = preload("res://content/npcs.gd")
 const HostileAIClass = preload("res://scripts/components/hostile_ai.gd")
@@ -372,6 +373,113 @@ static func generate_overworld(map, world_x: int, world_y: int, world_seed: int,
 	# Wildlife skip village chunks — animals keep away from settled areas.
 	if not is_village:
 		_spawn_wildlife(map, biome, world_seed, world_x, world_y, safe_center)
+
+
+static func generate_debug_hub(map) -> void:
+	map.map_type = GameMapClass.MAP_DUNGEON
+	for y in range(map.height):
+		for x in range(map.width):
+			map.tiles[y][x] = GameMapClass.TILE_WALL
+
+	for y in range(2, map.height - 2):
+		for x in range(2, map.width - 2):
+			map.tiles[y][x] = GameMapClass.TILE_FLOOR
+
+	for x in range(40, 42):
+		for y in range(2, 20):
+			map.tiles[y][x] = GameMapClass.TILE_WALL
+	for x in range(40, 42):
+		for y in range(24, map.height - 2):
+			map.tiles[y][x] = GameMapClass.TILE_WALL
+
+	for x in range(78, 80):
+		for y in range(2, map.height - 2):
+			map.tiles[y][x] = GameMapClass.TILE_WALL
+
+	# Open doorways between the test bays.
+	for pos in [Vector2i(40, 22), Vector2i(41, 22), Vector2i(78, 22), Vector2i(79, 22)]:
+		map.tiles[pos.y][pos.x] = GameMapClass.TILE_FLOOR
+
+	# Quartermaster room fixtures and supplies.
+	_place_light_fixture(map, 16, 12, "brazier")
+	_place_light_fixture(map, 16, 31, "brazier")
+	_place_furniture(map, 14, 13, "=", Color(0.50, 0.33, 0.16), "counter")
+	_place_furniture(map, 15, 13, "=", Color(0.50, 0.33, 0.16), "counter")
+	_place_furniture(map, 16, 13, "=", Color(0.50, 0.33, 0.16), "counter")
+
+	var merchant_data: Dictionary = NpcDataClass.get_npc("merchant")
+	var quartermaster := NpcClass.new(Vector2i(16, 11), "merchant", merchant_data)
+	quartermaster.trade_stock = _debug_quartermaster_stock()
+	quartermaster.gold = 9999
+	quartermaster.game_map = map
+	map.entities.append(quartermaster)
+
+	# Armory / sample items.
+	var sample_items: Array[String] = [
+		ItemClass.TYPE_SHORT_SWORD, ItemClass.TYPE_SPEAR, ItemClass.TYPE_LEATHER_VEST,
+		ItemClass.TYPE_BRONZE_HELMET, ItemClass.TYPE_TORCH, ItemClass.TYPE_HEALTH_POTION,
+		ItemClass.TYPE_HEALING_DRAUGHT, "tablet_traders_ledger", ItemClass.TYPE_TIN_INGOT,
+		ItemClass.TYPE_BRONZE_INGOT,
+	]
+	var sx: int = 10
+	for item_type: String in sample_items:
+		var item = ItemClass.new(Vector2i(sx, 31), item_type, 0)
+		item.game_map = map
+		map.entities.append(item)
+		sx += 2
+
+	# Central fixtures.
+	_place_light_fixture(map, 58, 22, "brazier")
+	_add_debug_fixture(map, Vector2i(55, 18), "T", Color(0.86, 0.74, 0.30), "training obelisk")
+	_add_debug_fixture(map, Vector2i(55, 22), "~", Color(0.28, 0.58, 0.92), "healing spring")
+	_add_debug_fixture(map, Vector2i(55, 26), "!", Color(0.78, 0.32, 0.16), "trial brazier")
+	_add_debug_fixture(map, Vector2i(63, 22), "<", Color(0.90, 0.85, 0.60), "return waystone")
+
+	# Combat arena fixtures.
+	_place_light_fixture(map, 98, 12, "brazier")
+	_place_light_fixture(map, 98, 31, "brazier")
+	_add_debug_fixture(map, Vector2i(90, 14), "b", Color(0.72, 0.32, 0.20), "bandit marker")
+	_add_debug_fixture(map, Vector2i(90, 22), "r", Color(0.78, 0.22, 0.10), "raider marker")
+	_add_debug_fixture(map, Vector2i(90, 30), "B", Color(0.48, 0.32, 0.12), "beast marker")
+
+
+static func _add_debug_fixture(map, pos: Vector2i, ch: String, col: Color, nm: String) -> void:
+	var fixture = EntityClass.new(pos, ch, col, nm, false)
+	fixture.game_map = map
+	map.entities.append(fixture)
+
+
+static func _debug_quartermaster_stock() -> Array:
+	var item_types: Array[String] = [
+		ItemClass.TYPE_HEALTH_POTION,
+		ItemClass.TYPE_HEALING_DRAUGHT,
+		ItemClass.TYPE_DAGGER,
+		ItemClass.TYPE_SHORT_SWORD,
+		ItemClass.TYPE_SPEAR,
+		ItemClass.TYPE_LINEN_TUNIC,
+		ItemClass.TYPE_LEATHER_VEST,
+		ItemClass.TYPE_SANDALS,
+		ItemClass.TYPE_LEATHER_BOOTS,
+		ItemClass.TYPE_LEATHER_CAP,
+		ItemClass.TYPE_BRONZE_HELMET,
+		ItemClass.TYPE_TORCH,
+		ItemClass.TYPE_TIN_INGOT,
+		ItemClass.TYPE_COPPER_INGOT,
+		ItemClass.TYPE_BRONZE_INGOT,
+		ItemClass.TYPE_LAPIS_LAZULI,
+		ItemClass.TYPE_PURPLE_DYE,
+		"tablet_traders_ledger",
+		"tablet_caravan_letter",
+	]
+	var stock: Array = []
+	for item_type: String in item_types:
+		var item_data: Dictionary = ItemDataClass.get_item(item_type)
+		stock.append({
+			"item_type": item_type,
+			"qty": 99,
+			"price": int(item_data.get("base_value", 1)),
+		})
+	return stock
 
 
 # ---------------------------------------------------------------------------

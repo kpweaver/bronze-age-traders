@@ -21,7 +21,7 @@ static func delete_save() -> void:
 		DirAccess.open("user://").remove("save.json")
 
 
-static func save_game(game_map, player, floor: int, floors: Dictionary, chunk: Vector2i, chunks: Dictionary, turn: int = 0) -> void:
+static func save_game(game_map, player, floor: int, floors: Dictionary, chunk: Vector2i, chunks: Dictionary, turn: int = 0, debug_data: Dictionary = {}) -> void:
 	var data := {
 		"floor": floor,
 		"chunk_x": chunk.x,
@@ -30,11 +30,16 @@ static func save_game(game_map, player, floor: int, floors: Dictionary, chunk: V
 		"world_seed": GameState.world_seed,
 		"player_name":  GameState.player_name,
 		"player_class": GameState.player_class,
+		"debug": debug_data,
 		"player": {
 			"x": player.pos.x, "y": player.pos.y,
 			"hp": player.hp, "max_hp": player.max_hp,
 			"defense": player.defense, "power": player.power,
 			"gold": player.gold,
+			"level": player.level,
+			"xp": player.xp,
+			"xp_to_next": player.xp_to_next,
+			"unspent_attribute_points": player.unspent_attribute_points,
 			"thirst": player.thirst,
 			"fatigue": player.fatigue,
 			"str_score": player.str_score,
@@ -68,6 +73,8 @@ static func _serialize_stored_floors(floors: Dictionary) -> Dictionary:
 	for f in floors:
 		var m = floors[f]
 		result[str(f)] = {
+			"width":    m.width,
+			"height":   m.height,
 			"map_type": m.map_type,
 			"tiles":    m.tiles,
 			"explored": m.explored,
@@ -174,7 +181,7 @@ static func load_game() -> Dictionary:
 	return parsed if parsed is Dictionary else {}
 
 
-# Returns [game_map, player, floor, floors, chunk, chunks, turn].
+# Returns [game_map, player, floor, floors, chunk, chunks, turn, debug].
 static func restore(data: Dictionary, fov_radius: int) -> Array:
 	GameState.world_seed   = int(data.get("world_seed", 0))
 	GameState.player_name  = str(data.get("player_name",  "Wanderer"))
@@ -201,6 +208,10 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 	)
 	player.hp          = int(pd["hp"])
 	player.gold        = int(pd.get("gold", 0))
+	player.level       = int(pd.get("level", 1))
+	player.xp          = int(pd.get("xp", 0))
+	player.xp_to_next  = int(pd.get("xp_to_next", 100))
+	player.unspent_attribute_points = int(pd.get("unspent_attribute_points", 0))
 	player.thirst      = int(pd.get("thirst",  0))
 	player.fatigue     = int(pd.get("fatigue", 0))
 	player.str_score   = int(pd.get("str_score", 10))
@@ -264,7 +275,7 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 	for f_str in data.get("stored_floors", {}).keys():
 		var f_int := int(f_str)
 		var fd: Dictionary = data["stored_floors"][f_str]
-		var stored_map = GameMapClass.new(int(md["width"]), int(md["height"]))
+		var stored_map = GameMapClass.new(int(fd["width"]), int(fd["height"]))
 		stored_map.map_type = int(fd.get("map_type", GameMapClass.MAP_DUNGEON))
 		var st_raw: Array = fd["tiles"]
 		var se_raw: Array = fd["explored"]
@@ -363,4 +374,5 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 		chunks[c] = cmap
 
 	var turn: int = int(data.get("turn", 0))
-	return [game_map, player, floor, floors, chunk, chunks, turn]
+	var debug_data: Dictionary = data.get("debug", {})
+	return [game_map, player, floor, floors, chunk, chunks, turn, debug_data]
