@@ -422,7 +422,9 @@ static func generate_debug_hub(map) -> void:
 	# Armory / sample items.
 	var sample_items: Array[String] = [
 		ItemClass.TYPE_SHORT_SWORD, ItemClass.TYPE_SPEAR, ItemClass.TYPE_LEATHER_VEST,
-		ItemClass.TYPE_BRONZE_HELMET, ItemClass.TYPE_TORCH, ItemClass.TYPE_HEALTH_POTION,
+		ItemClass.TYPE_BRONZE_HELMET, ItemClass.TYPE_TORCH, ItemClass.TYPE_SLING,
+		ItemClass.TYPE_SHORT_BOW, ItemClass.TYPE_SLING_STONE, ItemClass.TYPE_REED_ARROW,
+		ItemClass.TYPE_HEALTH_POTION,
 		ItemClass.TYPE_HEALING_DRAUGHT, "tablet_traders_ledger", ItemClass.TYPE_TIN_INGOT,
 		ItemClass.TYPE_BRONZE_INGOT,
 	]
@@ -464,6 +466,10 @@ static func _debug_quartermaster_stock() -> Array:
 		ItemClass.TYPE_DAGGER,
 		ItemClass.TYPE_SHORT_SWORD,
 		ItemClass.TYPE_SPEAR,
+		ItemClass.TYPE_SLING,
+		ItemClass.TYPE_SHORT_BOW,
+		ItemClass.TYPE_SLING_STONE,
+		ItemClass.TYPE_REED_ARROW,
 		ItemClass.TYPE_LINEN_TUNIC,
 		ItemClass.TYPE_LEATHER_VEST,
 		ItemClass.TYPE_SANDALS,

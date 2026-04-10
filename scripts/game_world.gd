@@ -225,6 +225,7 @@ func new_game() -> void:
 	# Player starts with one torch in their pack.
 	var starting_torch := ItemClass.new(player.pos, ItemClass.TYPE_TORCH, 0)
 	player.inventory.append(starting_torch)
+	_grant_starting_gear(player, GameState.player_class)
 	_place_starting_mount(ow_map, player.pos)
 
 	map.compute_fov(player.pos.x, player.pos.y, overworld_fov())
@@ -423,6 +424,129 @@ func _on_npc_attacked(npc: NpcClass) -> void:
 				add_msg("The %s turns hostile!" % npc.name)
 	elif npc.on_attacked == "retaliate" and not (npc.ai is HostileAIClass):
 		npc.ai = HostileAIClass.new(npc)
+
+
+func get_equipped_ranged_weapon():
+	return player.equipped.get(ItemClass.SLOT_RANGED)
+
+
+func get_matching_ammo(weapon = null):
+	var ranged_weapon = weapon if weapon != null else get_equipped_ranged_weapon()
+	if ranged_weapon == null:
+		return null
+	for item in player.inventory:
+		if item.category == ItemClass.CATEGORY_AMMO and item.item_type == (ranged_weapon as ItemClass).ammo_type and item.stack_count() > 0:
+			return item
+	return null
+
+
+func can_fire_ranged() -> bool:
+	return get_equipped_ranged_weapon() != null and get_matching_ammo() != null
+
+
+func get_ranged_targets() -> Array:
+	var weapon = get_equipped_ranged_weapon()
+	if weapon == null:
+		return []
+	var result: Array = []
+	for e in map.entities:
+		if not (e is ActorClass) or e == player or not e.is_alive:
+			continue
+		if not map.visible[e.pos.y][e.pos.x]:
+			continue
+		if _cheb(player.pos, e.pos) > int((weapon as ItemClass).ranged_range):
+			continue
+		if _first_actor_on_line(player.pos, e.pos) == e:
+			result.append(e)
+	result.sort_custom(func(a, b): return _cheb(player.pos, a.pos) < _cheb(player.pos, b.pos))
+	return result
+
+
+func fire_ranged_at(target_pos: Vector2i) -> void:
+	var weapon = get_equipped_ranged_weapon()
+	if weapon == null:
+		add_msg("You have no ranged weapon ready.")
+		return
+	var ammo = get_matching_ammo(weapon)
+	if ammo == null:
+		add_msg("You have no ammunition for the %s." % (weapon as ItemClass).name)
+		return
+	if not map.is_in_bounds(target_pos.x, target_pos.y):
+		add_msg("You cannot fire there.")
+		return
+	if _cheb(player.pos, target_pos) > int((weapon as ItemClass).ranged_range):
+		add_msg("That is beyond the reach of your %s." % (weapon as ItemClass).name)
+		return
+
+	_consume_ammo(ammo)
+	var hit_actor = _first_actor_on_line(player.pos, target_pos)
+	if hit_actor == null:
+		add_msg("You loose a shot into empty ground.")
+		resolve_action(ACTION_COST_STANDARD)
+		return
+
+	add_msg(player.ranged_attack(hit_actor, weapon as ItemClass, ammo as ItemClass))
+	player.fatigue = mini(player.fatigue + 1, ActorClass.FATIGUE_MAX)
+	if GameState.god_mode and hit_actor.is_alive:
+		hit_actor.take_damage(hit_actor.hp)
+	if hit_actor is NpcClass and hit_actor.is_alive:
+		_on_npc_attacked(hit_actor as NpcClass)
+	if not hit_actor.is_alive:
+		_award_kill_xp(hit_actor)
+		add_msg(hit_actor.die())
+		map.refresh_entity(hit_actor)
+	resolve_action(ACTION_COST_STANDARD)
+
+
+func _consume_ammo(ammo: ItemClass) -> void:
+	if ammo == null:
+		return
+	ammo.value = maxi(0, ammo.value - 1)
+	if ammo.stack_count() <= 0:
+		player.inventory.erase(ammo)
+
+
+func _first_actor_on_line(from_pos: Vector2i, to_pos: Vector2i):
+	var line: Array = _bresenham_line(from_pos, to_pos)
+	for i in range(1, line.size()):
+		var pos: Vector2i = line[i]
+		if not map.is_in_bounds(pos.x, pos.y):
+			return null
+		if not map.is_transparent(pos.x, pos.y):
+			return null
+		var actor_on_tile = map.get_blocking_entity_at(pos.x, pos.y)
+		if actor_on_tile is ActorClass and actor_on_tile != player and (actor_on_tile as ActorClass).is_alive:
+			return actor_on_tile
+	return null
+
+
+func _bresenham_line(from_pos: Vector2i, to_pos: Vector2i) -> Array:
+	var points: Array = []
+	var x0: int = from_pos.x
+	var y0: int = from_pos.y
+	var x1: int = to_pos.x
+	var y1: int = to_pos.y
+	var dx: int = absi(x1 - x0)
+	var sx: int = 1 if x0 < x1 else -1
+	var dy: int = -absi(y1 - y0)
+	var sy: int = 1 if y0 < y1 else -1
+	var err: int = dx + dy
+	while true:
+		points.append(Vector2i(x0, y0))
+		if x0 == x1 and y0 == y1:
+			break
+		var e2: int = err * 2
+		if e2 >= dy:
+			err += dy
+			x0 += sx
+		if e2 <= dx:
+			err += dx
+			y0 += sy
+	return points
+
+
+func _cheb(a: Vector2i, b: Vector2i) -> int:
+	return maxi(absi(a.x - b.x), absi(a.y - b.y))
 
 
 func do_enemy_turns() -> void:
@@ -1466,6 +1590,15 @@ func _apply_archetype(actor, class_id: String) -> void:
 
 func _xp_threshold_for_level(level_value: int) -> int:
 	return 100 + maxi(0, level_value - 1) * 50
+
+
+func _grant_starting_gear(actor: ActorClass, class_id: String) -> void:
+	match class_id:
+		"scout":
+			actor.inventory.append(ItemClass.new(actor.pos, ItemClass.TYPE_SLING, 0))
+			actor.inventory.append(ItemClass.new(actor.pos, ItemClass.TYPE_SLING_STONE, 0))
+		"soldier":
+			actor.inventory.append(ItemClass.new(actor.pos, ItemClass.TYPE_SPEAR, 0))
 
 
 func award_xp(amount: int, reason: String = "") -> void:

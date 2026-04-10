@@ -6,14 +6,17 @@
 #   char          String  — single CP437 glyph displayed on the map
 #   cr/cg/cb      float   — RGB colour (0.0–1.0)
 #   name          String  — display name (lowercase)
-#   category      int     — 0=gold  1=usable  2=trade  3=equipment
-#   slot          String  — equipment slot: "weapon"|"body"|"feet"|"head"|""
+#   category      int     — 0=gold  1=usable  2=trade  3=equipment  4=readable  5=ammo
+#   slot          String  — equipment slot: "weapon"|"ranged"|"body"|"feet"|"head"|"light"|""
 #   base_value    int     — canonical price in gold coins
 #   material      String  — period-accurate material descriptor
 #   dice_count    int     — usable items: number of HP-recovery dice
 #   dice_sides    int     — usable items: sides per die
 #   attack_bonus  int     — equipment: added to attacker damage roll
 #   defense_bonus int     — equipment: added to wearer's AC
+#   ammo_type     String  — ranged weapons: ammo item_type consumed when fired
+#   ranged_range  int     — ranged weapons: maximum firing distance in tiles
+#   stack_size    int     — ammo: default quantity when created
 #
 # Only include fields relevant to the item — missing numeric fields default to 0,
 # missing string fields default to "".  category and slot are always required.
@@ -218,8 +221,29 @@ const DATA: Dictionary = {
 	},
 	"sling": {
 		"char": ")", "cr": 0.65, "cg": 0.55, "cb": 0.38,
-		"name": "sling", "category": 3, "slot": "weapon",
+		"name": "sling", "category": 3, "slot": "ranged",
 		"attack_bonus": 0, "base_value": 5, "weight": 1, "material": "leather",
+		"ammo_type": "sling_stone", "ranged_range": 8,
+	},
+	"short_bow": {
+		"char": ")", "cr": 0.74, "cg": 0.62, "cb": 0.35,
+		"name": "short bow", "category": 3, "slot": "ranged",
+		"attack_bonus": 1, "base_value": 18, "weight": 2, "material": "wood",
+		"ammo_type": "reed_arrow", "ranged_range": 10,
+	},
+
+	# —— Ammunition —— 
+	"sling_stone": {
+		"char": "*", "cr": 0.70, "cg": 0.70, "cb": 0.70,
+		"name": "sling stones", "category": 5, "slot": "",
+		"base_value": 2, "weight": 1, "material": "stone",
+		"attack_bonus": 0, "stack_size": 10,
+	},
+	"reed_arrow": {
+		"char": "/", "cr": 0.78, "cg": 0.70, "cb": 0.48,
+		"name": "reed arrows", "category": 5, "slot": "",
+		"base_value": 4, "weight": 1, "material": "reed",
+		"attack_bonus": 1, "stack_size": 8,
 	},
 
 	# ── Body armour  (slot: "body") ───────────────────────────────────────────

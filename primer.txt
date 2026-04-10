@@ -255,6 +255,26 @@ time more slowly than a normal action.
     These are placed by _place_village_lights() and _place_road_lights() in
     procgen.gd. They use character "*" with a bright orange colour.
 
+  RANGED WEAPONS:
+    The player now has a dedicated ranged equipment slot alongside the melee
+    weapon slot. Ranged weapons consume matching ammunition stacks:
+      sling      â†’ sling stones
+      short bow  â†’ reed arrows
+
+    Press f to enter targeting mode. By default it snaps to the nearest visible
+    in-range target with clear line of fire. While targeting:
+      Tab cycles viable targets
+      arrows / numpad move the cursor manually
+      Enter confirms the shot
+      left click fires at the clicked explored tile
+      Esc or f cancels
+
+    Ranged attacks are DEX-based:
+      to-hit  = 1d20 + dex_mod
+      damage = 1d6 + dex_mod + ranged weapon attack_bonus + ammo attack_bonus
+
+    Ammunition is stored as weighted stacks in inventory, trade, and save data.
+
   DUNGEON LIGHTING:
     Dungeon floors now use Angband-style permanent room lighting. Corridors are
     dark by default. During generation, rooms can be tagged as permanently lit;
@@ -386,15 +406,22 @@ time more slowly than a normal action.
 
   STATUS BAR (bottom of screen):
     Shows level, HP, attack, AC, gold, floor number, current date (Babylonian
-    calendar), time of day phase, thirst % (overworld only), fatigue %,
+    calendar), an ASCII sky track for the sun/moon position, thirst %
+    (overworld only), fatigue %,
     equipped weapon, and torch status (LIT: Xt remaining turns when a
     burnable torch is equipped in the light slot). While in the debug hub,
     Floor shows HUB instead of a numeric depth.
 
   SCREENS/OVERLAYS:
     The Screen enum lists all overlay modes: INVENTORY, CHARACTER, TRADE,
-    WORLD_MAP, TRAVEL_EVENT, LOOK, SETTINGS, HELP, ESCAPE, READER, DIALOGUE.
+    WORLD_MAP, TRAVEL_EVENT, LOOK, TARGET, SETTINGS, HELP, ESCAPE, READER,
+    DIALOGUE.
     Each has its own _draw_*() and _handle_*_input() function pair.
+    The UI is now hybrid. The map, world map, look cursor, and targeting cursor
+    still use custom ASCII rendering, while menu-style overlays (inventory,
+    trade, character, help, dialogue, reader, pause/settings, travel-event
+    prompts, and attribute selection) are built with Godot Control nodes on the
+    CanvasLayer for more reliable layout, clipping, scrolling, and styling.
 
   MOUSE INPUT (first pass):
     ascii_map.gd now also handles InputEventMouseMotion / InputEventMouseButton.
@@ -408,8 +435,9 @@ time more slowly than a normal action.
       inventory — click an item row to use/equip/read it; click an equipment
                   slot in the right panel to unequip it
       trade — click merchant rows to buy and player rows to sell
-    Not yet done: world-map mouse travel, drag selection, true ranged targeting,
-    or mouse interaction for every overlay.
+      ranged targeting — mouse hover updates the aim point; left click fires
+    Not yet done: world-map mouse travel, drag selection, or mouse interaction
+    for every overlay.
 
   DISTANT CLICK-TO-MOVE:
     game_world.gd now owns distant travel via travel_to(target). It uses a BFS
@@ -686,9 +714,10 @@ Say you want to understand how a merchant ends up in the world with items to sel
     5  Abu        11  Shabatu
     6  Ululu      12  Addaru
 
-  Time-of-day phases shown to the player:
-    Night  →  Dawn  →  Day  →  Dusk  →  Night
-    (player cannot see exact hours — only the phase is displayed)
+  Time-of-day display shown to the player:
+    The HUD now uses a moving ASCII sky track rather than a text phase label.
+    `*` marks the sun during the day arc and `o` marks the moon during the
+    night arc.
 
 
 ────────────────────────────────────────────────────────────────────────────────
@@ -701,7 +730,7 @@ Say you want to understand how a merchant ends up in the world with items to sel
 
   ACTIVE ATTRIBUTES (implemented):
     STR (Strength)     — +str_mod damage on melee attacks; +10 lbs. carry/mod
-    DEX (Dexterity)    — +dex_mod to Armour Class; future: ranged weapon damage
+    DEX (Dexterity)    — +dex_mod to Armour Class; powers ranged to-hit and damage
     CON (Constitution) — +con_mod*3 max HP; slows thirst drain; speeds rest recovery
 
   STUB ATTRIBUTES (reserved for future systems, currently no effect):

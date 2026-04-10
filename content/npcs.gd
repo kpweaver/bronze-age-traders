@@ -186,6 +186,9 @@ const DATA: Dictionary = {
 		"trade_stock": [
 			{"item_type": "spear",        "qty": 1, "price": 20},
 			{"item_type": "sling",        "qty": 2, "price": 8},
+			{"item_type": "sling_stone",  "qty": 8, "price": 2},
+			{"item_type": "short_bow",    "qty": 1, "price": 20},
+			{"item_type": "reed_arrow",   "qty": 6, "price": 4},
 			{"item_type": "leather_vest", "qty": 1, "price": 18},
 			{"item_type": "leather_boots","qty": 2, "price": 9},
 			{"item_type": "leather_cap",  "qty": 1, "price": 7},

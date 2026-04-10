@@ -52,6 +52,7 @@ var cha_mod: int:
 
 var equipped: Dictionary = {
 	"weapon": null,
+	"ranged": null,
 	"body": null,
 	"feet": null,
 	"head": null,
@@ -74,8 +75,16 @@ var total_attack_bonus: int:
 		var bonus: int = 0
 		for slot_key: String in equipped:
 			if equipped[slot_key] != null:
-				bonus += int(equipped[slot_key].attack_bonus)
+				if slot_key != ItemClass.SLOT_RANGED:
+					bonus += int(equipped[slot_key].attack_bonus)
 		return bonus
+
+var total_ranged_bonus: int:
+	get:
+		var ranged_item = equipped.get(ItemClass.SLOT_RANGED)
+		if ranged_item == null:
+			return 0
+		return int((ranged_item as ItemClass).attack_bonus)
 
 var ac: int:
 	get: return 10 + defense + dex_mod + total_defense_bonus
@@ -87,11 +96,11 @@ var total_carry_weight: int:
 	get:
 		var total: int = 0
 		for item in inventory:
-			total += int(item.weight)
+			total += int(item.total_weight())
 		for slot_key: String in equipped:
 			var equipped_item = equipped[slot_key]
 			if equipped_item != null:
-				total += int(equipped_item.weight)
+				total += int(equipped_item.total_weight())
 		return total
 
 
@@ -135,6 +144,22 @@ func attack(target: Actor) -> String:
 		[_subj(), v_hit, target._obj(), dmg, roll, target.ac, bonus, dmg]
 
 
+func ranged_attack(target: Actor, weapon: ItemClass, ammo: ItemClass) -> String:
+	var roll: int = randi_range(1, 20) + dex_mod
+	var is_player := name == "you"
+	var v_attack := "fire at" if is_player else "fires at"
+	var v_hit := "hit"
+	var v_miss := "miss"
+	if roll < target.ac:
+		return "%s %s %s but %s. [ranged: %d vs AC %d]" % \
+			[_subj(), v_attack, target._obj(), v_miss, roll, target.ac]
+	var bonus: int = dex_mod + int(weapon.attack_bonus) + int(ammo.attack_bonus)
+	var dmg: int = randi_range(1, 6) + bonus
+	target.take_damage(dmg)
+	return "%s %s %s for %d damage. [ranged: %d vs AC %d, 1d6+%d = %d]" % \
+		[_subj(), v_hit, target._obj(), dmg, roll, target.ac, bonus, dmg]
+
+
 func take_damage(amount: int) -> void:
 	hp = maxi(0, hp - amount)
 
@@ -148,7 +173,7 @@ func die() -> String:
 
 
 func can_carry(item) -> bool:
-	return item != null and total_carry_weight + int(item.weight) <= max_carry_weight
+	return item != null and total_carry_weight + int(item.total_weight()) <= max_carry_weight
 
 
 func equip(item) -> String:

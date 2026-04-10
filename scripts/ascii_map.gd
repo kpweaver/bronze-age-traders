@@ -64,7 +64,7 @@ var _escape_cursor: int = 0
 # ---------------------------------------------------------------------------
 # Overlay screens
 # ---------------------------------------------------------------------------
-enum Screen { NONE, ESCAPE, INVENTORY, CHARACTER, SETTINGS, LOOK, WORLD_MAP, TRAVEL_EVENT, ATTRIBUTE_PICK, TRADE, DISAMBIGUATE, HELP, READER, DIALOGUE }
+enum Screen { NONE, ESCAPE, INVENTORY, CHARACTER, SETTINGS, LOOK, TARGET, WORLD_MAP, TRAVEL_EVENT, ATTRIBUTE_PICK, TRADE, DISAMBIGUATE, HELP, READER, DIALOGUE }
 enum AutoMoveMode { NONE, EXPLORE, TRAVEL }
 var _screen: Screen              = Screen.NONE
 var _world_look_mode: bool       = false
@@ -106,6 +106,9 @@ var _disambig_cursor: int     = 0
 var _cam_x: int = 0
 var _cam_y: int = 0
 var _look_pos: Vector2i = Vector2i.ZERO
+var _target_pos: Vector2i = Vector2i.ZERO
+var _target_candidates: Array = []
+var _target_candidate_index: int = 0
 var _hover_pos: Vector2i = Vector2i.ZERO
 var _hover_active: bool = false
 var _auto_move_mode: AutoMoveMode = AutoMoveMode.NONE
@@ -127,6 +130,32 @@ var _day_tint: Color = Color.WHITE
 # ---------------------------------------------------------------------------
 var _world  # GameWorld — untyped to avoid class_name scope issues
 var _font: Font
+var _ui_theme: Theme
+var _ui_layer
+var _inventory_ui_root: Control
+var _inventory_shell: PanelContainer
+var _inventory_pack_list
+var _inventory_summary_box
+var _inventory_loadout_box
+var _inventory_title_label
+var _inventory_left_hint_label
+var _inventory_right_hint_label
+var _menu_ui_root: Control
+var _menu_shell: PanelContainer
+var _menu_title_label
+var _menu_body_text
+var _menu_footer_label
+var _trade_ui_root: Control
+var _trade_shell: PanelContainer
+var _trade_title_label
+var _trade_buy_text
+var _trade_sell_text
+var _trade_footer_label
+var _hud_ui_root: Control
+var _hud_bg: ColorRect
+var _hud_status_top: Label
+var _hud_status_bottom: Label
+var _hud_message_labels: Array = []
 
 # Convenience aliases — read-only proxies into _world.
 # These let the rendering/input code below read _map, _player etc. unchanged.
@@ -152,8 +181,14 @@ var _game_over:
 
 func _ready() -> void:
 	_font  = _make_font()
+	_ui_theme = _make_ui_theme()
 	_world = GameWorldClass.new()
 	add_child(_world)
+	_attach_ui_layer()
+	_build_hud_ui()
+	_build_inventory_ui()
+	_build_menu_ui()
+	_build_trade_ui()
 	set_process(true)
 	_world.turn_ended.connect(_on_turn_ended)
 	_world.map_changed.connect(_on_map_changed)
@@ -175,6 +210,10 @@ func _exit_tree() -> void:
 
 
 func _process(delta: float) -> void:
+	_refresh_hud_ui()
+	_sync_inventory_ui_visibility()
+	_sync_menu_ui_visibility()
+	_sync_trade_ui_visibility()
 	if _world != null and _world.get_player_mount() != null:
 		var bucket: int = int(Time.get_ticks_msec() / MOUNT_GLYPH_CYCLE_MS)
 		if bucket != _mount_cycle_bucket:
@@ -202,9 +241,132 @@ func _make_font() -> Font:
 	return sf
 
 
+func _make_ui_theme() -> Theme:
+	var theme := Theme.new()
+	theme.set_font("font", "Label", _font)
+	theme.set_font("font", "Button", _font)
+	theme.set_font("font", "PanelContainer", _font)
+	theme.set_font("font", "ScrollContainer", _font)
+	theme.set_font("normal_font", "RichTextLabel", _font)
+	theme.set_font("bold_font", "RichTextLabel", _font)
+	theme.set_font("italics_font", "RichTextLabel", _font)
+	theme.set_font("mono_font", "RichTextLabel", _font)
+	theme.set_font_size("font_size", "Label", UI_FONT_SIZE)
+	theme.set_font_size("font_size", "Button", UI_FONT_SIZE)
+	theme.set_font_size("normal_font_size", "RichTextLabel", UI_FONT_SIZE)
+	theme.set_font_size("bold_font_size", "RichTextLabel", UI_FONT_SIZE)
+	theme.set_font_size("italics_font_size", "RichTextLabel", UI_FONT_SIZE)
+	theme.set_font_size("mono_font_size", "RichTextLabel", UI_FONT_SIZE)
+	theme.set_color("font_color", "Label", C_MSG_RECENT)
+	theme.set_color("font_focus_color", "Button", C_STATUS)
+	theme.set_color("font_hover_color", "Button", C_STATUS)
+	theme.set_color("font_pressed_color", "Button", C_GOLD)
+	theme.set_color("font_color", "Button", C_MSG_RECENT)
+	theme.set_color("default_color", "RichTextLabel", C_MSG_RECENT)
+
+	theme.set_stylebox("panel", "PanelContainer", _make_panel_style(C_DIVIDER, 10, 2))
+
+	var button_normal := StyleBoxFlat.new()
+	button_normal.bg_color = Color(0, 0, 0, 0)
+	button_normal.content_margin_left = 2
+	button_normal.content_margin_right = 2
+	button_normal.content_margin_top = 1
+	button_normal.content_margin_bottom = 1
+	theme.set_stylebox("normal", "Button", button_normal)
+	theme.set_stylebox("pressed", "Button", button_normal)
+	theme.set_stylebox("focus", "Button", button_normal)
+	theme.set_stylebox("disabled", "Button", button_normal)
+
+	var button_hover := StyleBoxFlat.new()
+	button_hover.bg_color = Color(0.30, 0.20, 0.10, 0.45)
+	button_hover.content_margin_left = 2
+	button_hover.content_margin_right = 2
+	button_hover.content_margin_top = 1
+	button_hover.content_margin_bottom = 1
+	theme.set_stylebox("hover", "Button", button_hover)
+
+	return theme
+
+
+func _make_panel_style(border_color: Color, content_margin: int, border_width: int = 2) -> StyleBoxFlat:
+	var panel_style := StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.05, 0.04, 0.03, 0.97)
+	panel_style.border_color = border_color
+	panel_style.border_width_left = border_width
+	panel_style.border_width_top = border_width
+	panel_style.border_width_right = border_width
+	panel_style.border_width_bottom = border_width
+	panel_style.content_margin_left = content_margin
+	panel_style.content_margin_top = content_margin
+	panel_style.content_margin_right = content_margin
+	panel_style.content_margin_bottom = content_margin
+	panel_style.shadow_color = Color(0, 0, 0, 0.30)
+	panel_style.shadow_size = 6
+	return panel_style
+
+
+func _apply_shell_style(shell: PanelContainer, border_color: Color, content_margin: int, border_width: int = 2) -> void:
+	if shell == null:
+		return
+	shell.add_theme_stylebox_override("panel", _make_panel_style(border_color, content_margin, border_width))
+
+
+func _attach_ui_layer() -> void:
+	_ui_layer = get_parent().get_node_or_null("UI")
+	if _ui_layer == null:
+		_ui_layer = CanvasLayer.new()
+		_ui_layer.name = "UI"
+		get_parent().add_child(_ui_layer)
+
+
+func _build_hud_ui() -> void:
+	_hud_ui_root = Control.new()
+	_hud_ui_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hud_ui_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_hud_ui_root.theme = _ui_theme
+	_ui_layer.add_child(_hud_ui_root)
+
+	_hud_bg = ColorRect.new()
+	_hud_bg.color = C_BG
+	_hud_bg.position = Vector2(0, DIVIDER_ROW * CELL_H)
+	_hud_bg.size = Vector2(COLS * CELL_W, (ROWS - DIVIDER_ROW) * CELL_H)
+	_hud_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hud_ui_root.add_child(_hud_bg)
+
+	var divider := ColorRect.new()
+	divider.color = C_DIVIDER
+	divider.position = Vector2(0, DIVIDER_ROW * CELL_H)
+	divider.size = Vector2(COLS * CELL_W, 1)
+	divider.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hud_ui_root.add_child(divider)
+
+	_hud_status_top = Label.new()
+	_hud_status_top.position = Vector2(0, STATUS_ROW * CELL_H - 2)
+	_hud_status_top.custom_minimum_size = Vector2(COLS * CELL_W, CELL_H)
+	_hud_status_top.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hud_ui_root.add_child(_hud_status_top)
+
+	_hud_status_bottom = Label.new()
+	_hud_status_bottom.position = Vector2(0, STATUS_ROW_2 * CELL_H - 2)
+	_hud_status_bottom.custom_minimum_size = Vector2(COLS * CELL_W, CELL_H)
+	_hud_status_bottom.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hud_status_bottom.add_theme_color_override("font_color", C_STATUS)
+	_hud_ui_root.add_child(_hud_status_bottom)
+
+	for i in range(MSG_LINES):
+		var msg := Label.new()
+		msg.position = Vector2(0, (MSG_START_ROW + i) * CELL_H - 4)
+		msg.custom_minimum_size = Vector2(COLS * CELL_W, CELL_H + 4)
+		msg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_hud_ui_root.add_child(msg)
+		_hud_message_labels.append(msg)
+
+
 func _on_turn_ended(_n: int) -> void:
 	_day_tint = _compute_day_tint()
 	_update_camera()
+	if _screen == Screen.INVENTORY:
+		_refresh_inventory_ui()
 	queue_redraw()
 
 
@@ -212,6 +374,8 @@ func _on_map_changed() -> void:
 	_day_tint = _compute_day_tint()
 	_update_camera()
 	_open_attribute_overlay_if_needed()
+	if _screen == Screen.INVENTORY:
+		_refresh_inventory_ui()
 	queue_redraw()
 
 
@@ -227,6 +391,679 @@ func _open_attribute_overlay_if_needed() -> void:
 		_screen = Screen.ATTRIBUTE_PICK
 	elif _screen == Screen.ATTRIBUTE_PICK:
 		_screen = Screen.NONE
+
+
+func _build_inventory_ui() -> void:
+	_inventory_ui_root = Control.new()
+	_inventory_ui_root.visible = false
+	_inventory_ui_root.mouse_filter = Control.MOUSE_FILTER_STOP
+	_inventory_ui_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_inventory_ui_root.theme = _ui_theme
+	_ui_layer.add_child(_inventory_ui_root)
+
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.82)
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_inventory_ui_root.add_child(dim)
+
+	_inventory_shell = PanelContainer.new()
+	_inventory_shell.position = Vector2(52, 34)
+	_inventory_shell.size = Vector2(976, 412)
+	_inventory_shell.mouse_filter = Control.MOUSE_FILTER_STOP
+	_inventory_ui_root.add_child(_inventory_shell)
+
+	var outer := MarginContainer.new()
+	outer.add_theme_constant_override("margin_left", 12)
+	outer.add_theme_constant_override("margin_top", 10)
+	outer.add_theme_constant_override("margin_right", 12)
+	outer.add_theme_constant_override("margin_bottom", 10)
+	_inventory_shell.add_child(outer)
+
+	var root_v := VBoxContainer.new()
+	root_v.add_theme_constant_override("separation", 8)
+	outer.add_child(root_v)
+
+	_inventory_title_label = Label.new()
+	_inventory_title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_inventory_title_label.add_theme_color_override("font_color", C_STATUS)
+	root_v.add_child(_inventory_title_label)
+
+	var body := HBoxContainer.new()
+	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.add_theme_constant_override("separation", 12)
+	root_v.add_child(body)
+
+	var left_panel := PanelContainer.new()
+	left_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left_panel.size_flags_stretch_ratio = 2.2
+	left_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.add_child(left_panel)
+
+	var left_margin := MarginContainer.new()
+	left_margin.add_theme_constant_override("margin_left", 10)
+	left_margin.add_theme_constant_override("margin_top", 10)
+	left_margin.add_theme_constant_override("margin_right", 10)
+	left_margin.add_theme_constant_override("margin_bottom", 10)
+	left_panel.add_child(left_margin)
+
+	var left_v := VBoxContainer.new()
+	left_v.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	left_v.add_theme_constant_override("separation", 8)
+	left_margin.add_child(left_v)
+
+	var left_header := Label.new()
+	left_header.text = "PACK"
+	left_header.add_theme_color_override("font_color", C_STATUS)
+	left_v.add_child(left_header)
+
+	var pack_scroll := ScrollContainer.new()
+	pack_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	pack_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	left_v.add_child(pack_scroll)
+
+	_inventory_pack_list = VBoxContainer.new()
+	_inventory_pack_list.add_theme_constant_override("separation", 4)
+	_inventory_pack_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	pack_scroll.add_child(_inventory_pack_list)
+
+	_inventory_summary_box = VBoxContainer.new()
+	_inventory_summary_box.add_theme_constant_override("separation", 2)
+	left_v.add_child(_inventory_summary_box)
+
+	_inventory_left_hint_label = Label.new()
+	_inventory_left_hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_inventory_left_hint_label.add_theme_color_override("font_color", C_DIVIDER)
+	left_v.add_child(_inventory_left_hint_label)
+
+	var right_panel := PanelContainer.new()
+	right_panel.custom_minimum_size = Vector2(280, 0)
+	right_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.add_child(right_panel)
+
+	var right_margin := MarginContainer.new()
+	right_margin.add_theme_constant_override("margin_left", 10)
+	right_margin.add_theme_constant_override("margin_top", 10)
+	right_margin.add_theme_constant_override("margin_right", 10)
+	right_margin.add_theme_constant_override("margin_bottom", 10)
+	right_panel.add_child(right_margin)
+
+	var right_v := VBoxContainer.new()
+	right_v.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	right_v.add_theme_constant_override("separation", 8)
+	right_margin.add_child(right_v)
+
+	var right_header := Label.new()
+	right_header.text = "LOADOUT"
+	right_header.add_theme_color_override("font_color", C_STATUS)
+	right_v.add_child(right_header)
+
+	_inventory_loadout_box = VBoxContainer.new()
+	_inventory_loadout_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_inventory_loadout_box.add_theme_constant_override("separation", 6)
+	right_v.add_child(_inventory_loadout_box)
+
+	_inventory_right_hint_label = Label.new()
+	_inventory_right_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_inventory_right_hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_inventory_right_hint_label.add_theme_color_override("font_color", C_DIVIDER)
+	right_v.add_child(_inventory_right_hint_label)
+
+
+func _sync_inventory_ui_visibility() -> void:
+	if _inventory_ui_root == null:
+		return
+	var should_show: bool = _screen == Screen.INVENTORY
+	if _inventory_ui_root.visible == should_show:
+		return
+	_inventory_ui_root.visible = should_show
+	if should_show:
+		_apply_inventory_shell_layout()
+		_refresh_inventory_ui()
+
+
+func _clear_control_children(node: Node) -> void:
+	for child in node.get_children():
+		node.remove_child(child)
+		child.free()
+
+
+func _refresh_inventory_ui() -> void:
+	if _inventory_ui_root == null or _world == null or _player == null:
+		return
+	_inventory_title_label.text = "-=[ INVENTORY ]=-"
+	_inventory_left_hint_label.text = "[a-z] use / equip / read"
+	_inventory_right_hint_label.text = "[w/r/b/f/h/u] unequip    [Esc] close"
+	_clear_control_children(_inventory_pack_list)
+	_clear_control_children(_inventory_summary_box)
+	_clear_control_children(_inventory_loadout_box)
+
+	var load_line := Label.new()
+	load_line.text = "%s / %s" % [_format_lbs(_player.total_carry_weight), _format_lbs(_player.max_carry_weight)]
+	load_line.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	load_line.add_theme_color_override("font_color", C_STATUS)
+	_inventory_pack_list.add_child(load_line)
+
+	var section_order := ["weapons", "ammo", "armor", "lights", "consumables", "goods", "tablets", "other"]
+	var next_letter_ord: int = ord("a")
+	var display_items: Array = _inventory_display_items()
+	if display_items.is_empty():
+		var empty_label := Label.new()
+		empty_label.text = "Your pack is empty."
+		empty_label.add_theme_color_override("font_color", C_MSG_OLD)
+		_inventory_pack_list.add_child(empty_label)
+	else:
+		for section_key in section_order:
+			var items: Array = []
+			for item in display_items:
+				if _inventory_section_key(item) == section_key:
+					items.append(item)
+			if items.is_empty():
+				continue
+			var section_row := HBoxContainer.new()
+			var section_label := Label.new()
+			section_label.text = "[-] %s" % _inventory_section_title(section_key)
+			section_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			section_label.add_theme_color_override("font_color", C_STATUS)
+			section_row.add_child(section_label)
+			var section_weight: int = 0
+			for item in items:
+				section_weight += int(item.total_weight())
+			var section_value := Label.new()
+			section_value.text = "[%s]" % _format_lbs(section_weight)
+			section_value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+			section_value.add_theme_color_override("font_color", C_STATUS)
+			section_row.add_child(section_value)
+			_inventory_pack_list.add_child(section_row)
+
+			for item in items:
+				var row := HBoxContainer.new()
+				row.add_theme_constant_override("separation", 6)
+				row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+				var key_button := Button.new()
+				key_button.text = "%s)" % char(next_letter_ord)
+				key_button.flat = true
+				key_button.custom_minimum_size = Vector2(36, 0)
+				key_button.pressed.connect(func(): _activate_inventory_item(item))
+				row.add_child(key_button)
+
+				var name_button := Button.new()
+				var item_name: String = item.name
+				if item.stack_label() != "":
+					item_name += " %s" % item.stack_label()
+				name_button.text = item_name
+				name_button.flat = true
+				name_button.clip_text = true
+				name_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+				name_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+				name_button.pressed.connect(func(): _activate_inventory_item(item))
+				row.add_child(name_button)
+
+				var detail_label := Label.new()
+				detail_label.text = _inventory_item_detail(item)
+				detail_label.clip_text = true
+				detail_label.custom_minimum_size = Vector2(140, 0)
+				row.add_child(detail_label)
+
+				var weight_label := Label.new()
+				weight_label.text = "[%s]" % item.weight_label()
+				weight_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+				weight_label.custom_minimum_size = Vector2(86, 0)
+				row.add_child(weight_label)
+
+				_inventory_pack_list.add_child(row)
+				next_letter_ord += 1
+
+	var carry_label := Label.new()
+	carry_label.text = "Carry: %s / %s" % [_format_lbs(_player.total_carry_weight), _format_lbs(_player.max_carry_weight)]
+	_inventory_summary_box.add_child(carry_label)
+	var str_label := Label.new()
+	str_label.text = "STR bonus: %+d lbs." % (_player.max_carry_weight - ActorClass.BASE_CARRY_WEIGHT)
+	_inventory_summary_box.add_child(str_label)
+	var gold_label := Label.new()
+	gold_label.text = "Gold: %d" % _player.gold
+	gold_label.add_theme_color_override("font_color", C_GOLD)
+	_inventory_summary_box.add_child(gold_label)
+
+	var equipped_title := Label.new()
+	equipped_title.text = "EQUIPPED"
+	equipped_title.add_theme_color_override("font_color", C_STATUS)
+	_inventory_loadout_box.add_child(equipped_title)
+
+	var slot_rows: Array = [
+		[ItemClass.SLOT_WEAPON, "w) WEAPON"],
+		[ItemClass.SLOT_RANGED, "r) RANGED"],
+		[ItemClass.SLOT_BODY,   "b) BODY"],
+		[ItemClass.SLOT_FEET,   "f) FEET"],
+		[ItemClass.SLOT_HEAD,   "h) HEAD"],
+		[ItemClass.SLOT_LIGHT,  "u) LIGHT"],
+	]
+	for sdata in slot_rows:
+		var slot_key: String = str(sdata[0])
+		var slot_button := Button.new()
+		slot_button.text = str(sdata[1])
+		slot_button.flat = true
+		slot_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		slot_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		slot_button.pressed.connect(func():
+			var msg: String = _player.unequip(slot_key)
+			if msg != "":
+				_world.add_msg(msg)
+				_refresh_inventory_ui()
+				queue_redraw()
+		)
+		_inventory_loadout_box.add_child(slot_button)
+
+		var eq_item = _player.equipped.get(slot_key)
+		if eq_item == null:
+			var dash := Label.new()
+			dash.text = "  -"
+			dash.add_theme_color_override("font_color", C_MSG_OLD)
+			_inventory_loadout_box.add_child(dash)
+			continue
+
+		var item_row := HBoxContainer.new()
+		item_row.add_theme_constant_override("separation", 6)
+		var item_name := Label.new()
+		item_name.text = (eq_item as ItemClass).name
+		item_name.clip_text = true
+		item_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		item_row.add_child(item_name)
+		var item_weight := Label.new()
+		item_weight.text = "[%s]" % (eq_item as ItemClass).weight_label()
+		item_weight.custom_minimum_size = Vector2(86, 0)
+		item_weight.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		item_row.add_child(item_weight)
+		_inventory_loadout_box.add_child(item_row)
+
+		var detail := _inventory_item_detail(eq_item)
+		if not detail.is_empty():
+			var detail_label := Label.new()
+			detail_label.text = "  %s" % detail
+			detail_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			detail_label.add_theme_color_override("font_color", C_MSG_OLD)
+			_inventory_loadout_box.add_child(detail_label)
+
+
+func _build_menu_ui() -> void:
+	_menu_ui_root = Control.new()
+	_menu_ui_root.visible = false
+	_menu_ui_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_menu_ui_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_menu_ui_root.theme = _ui_theme
+	_ui_layer.add_child(_menu_ui_root)
+
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.76)
+	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_menu_ui_root.add_child(dim)
+
+	_menu_shell = PanelContainer.new()
+	_menu_shell.position = Vector2(184, 78)
+	_menu_shell.size = Vector2(712, 368)
+	_menu_shell.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_menu_ui_root.add_child(_menu_shell)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 12)
+	margin.add_theme_constant_override("margin_top", 12)
+	margin.add_theme_constant_override("margin_right", 12)
+	margin.add_theme_constant_override("margin_bottom", 12)
+	_menu_shell.add_child(margin)
+
+	var v := VBoxContainer.new()
+	v.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	v.add_theme_constant_override("separation", 8)
+	margin.add_child(v)
+
+	_menu_title_label = Label.new()
+	_menu_title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_menu_title_label.add_theme_color_override("font_color", C_STATUS)
+	v.add_child(_menu_title_label)
+
+	_menu_body_text = RichTextLabel.new()
+	_menu_body_text.bbcode_enabled = false
+	_menu_body_text.fit_content = false
+	_menu_body_text.scroll_active = true
+	_menu_body_text.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_menu_body_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	v.add_child(_menu_body_text)
+
+	_menu_footer_label = Label.new()
+	_menu_footer_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_menu_footer_label.add_theme_color_override("font_color", C_DIVIDER)
+	v.add_child(_menu_footer_label)
+
+
+func _build_trade_ui() -> void:
+	_trade_ui_root = Control.new()
+	_trade_ui_root.visible = false
+	_trade_ui_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_trade_ui_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_trade_ui_root.theme = _ui_theme
+	_ui_layer.add_child(_trade_ui_root)
+
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.82)
+	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_trade_ui_root.add_child(dim)
+
+	_trade_shell = PanelContainer.new()
+	_trade_shell.position = Vector2(52, 34)
+	_trade_shell.size = Vector2(976, 412)
+	_trade_shell.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_trade_ui_root.add_child(_trade_shell)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 12)
+	margin.add_theme_constant_override("margin_top", 12)
+	margin.add_theme_constant_override("margin_right", 12)
+	margin.add_theme_constant_override("margin_bottom", 12)
+	_trade_shell.add_child(margin)
+
+	var v := VBoxContainer.new()
+	v.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	v.add_theme_constant_override("separation", 8)
+	margin.add_child(v)
+
+	_trade_title_label = Label.new()
+	_trade_title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_trade_title_label.add_theme_color_override("font_color", C_STATUS)
+	v.add_child(_trade_title_label)
+
+	var split := HBoxContainer.new()
+	split.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	split.add_theme_constant_override("separation", 18)
+	v.add_child(split)
+
+	_trade_buy_text = RichTextLabel.new()
+	_trade_buy_text.fit_content = false
+	_trade_buy_text.scroll_active = true
+	_trade_buy_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_trade_buy_text.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_trade_buy_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	split.add_child(_trade_buy_text)
+
+	_trade_sell_text = RichTextLabel.new()
+	_trade_sell_text.fit_content = false
+	_trade_sell_text.scroll_active = true
+	_trade_sell_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_trade_sell_text.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_trade_sell_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	split.add_child(_trade_sell_text)
+
+	_trade_footer_label = Label.new()
+	_trade_footer_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_trade_footer_label.add_theme_color_override("font_color", C_DIVIDER)
+	v.add_child(_trade_footer_label)
+
+
+func _screen_uses_menu_ui() -> bool:
+	return _screen in [Screen.ESCAPE, Screen.CHARACTER, Screen.SETTINGS, Screen.ATTRIBUTE_PICK,
+		Screen.DISAMBIGUATE, Screen.HELP, Screen.READER, Screen.DIALOGUE, Screen.TRAVEL_EVENT]
+
+
+func _sync_menu_ui_visibility() -> void:
+	if _menu_ui_root == null:
+		return
+	var should_show: bool = _screen_uses_menu_ui()
+	_menu_ui_root.visible = should_show
+	if should_show:
+		_apply_menu_shell_layout()
+		_refresh_menu_ui()
+
+
+func _sync_trade_ui_visibility() -> void:
+	if _trade_ui_root == null:
+		return
+	var should_show: bool = _screen == Screen.TRADE
+	_trade_ui_root.visible = should_show
+	if should_show:
+		_apply_trade_shell_layout()
+		_refresh_trade_ui()
+
+
+func _apply_inventory_shell_layout() -> void:
+	if _inventory_shell == null:
+		return
+	_inventory_shell.size = Vector2(976, 412)
+	_inventory_shell.position = _centered_shell_pos(_inventory_shell.size)
+	_apply_shell_style(_inventory_shell, C_DIVIDER, 10, 2)
+
+
+func _apply_trade_shell_layout() -> void:
+	if _trade_shell == null:
+		return
+	_trade_shell.size = Vector2(976, 412)
+	_trade_shell.position = _centered_shell_pos(_trade_shell.size)
+	_apply_shell_style(_trade_shell, C_DIVIDER, 10, 2)
+
+
+func _apply_menu_shell_layout() -> void:
+	if _menu_shell == null:
+		return
+	match _screen:
+		Screen.ESCAPE:
+			_menu_shell.size = Vector2(376, 238)
+			_apply_shell_style(_menu_shell, C_STATUS, 8, 2)
+		Screen.TRAVEL_EVENT, Screen.DISAMBIGUATE, Screen.ATTRIBUTE_PICK:
+			_menu_shell.size = Vector2(472, 268)
+			_apply_shell_style(_menu_shell, C_STATUS, 8, 2)
+		Screen.SETTINGS:
+			_menu_shell.size = Vector2(440, 250)
+			_apply_shell_style(_menu_shell, C_STATUS, 8, 2)
+		Screen.DIALOGUE:
+			_menu_shell.size = Vector2(856, 146)
+			_apply_shell_style(_menu_shell, C_DIVIDER, 8, 2)
+		Screen.CHARACTER:
+			_menu_shell.size = Vector2(424, 388)
+			_apply_shell_style(_menu_shell, C_DIVIDER, 10, 2)
+		Screen.HELP, Screen.READER:
+			_menu_shell.size = Vector2(872, 416)
+			_apply_shell_style(_menu_shell, C_DIVIDER, 10, 2)
+		_:
+			_menu_shell.size = Vector2(712, 368)
+			_apply_shell_style(_menu_shell, C_DIVIDER, 10, 2)
+	_menu_shell.position = _centered_shell_pos(_menu_shell.size)
+
+
+func _centered_shell_pos(shell_size: Vector2) -> Vector2:
+	var viewport_size: Vector2 = get_viewport_rect().size
+	return Vector2(
+		floor((viewport_size.x - shell_size.x) * 0.5),
+		floor((viewport_size.y - shell_size.y) * 0.5)
+	)
+
+
+func _refresh_menu_ui() -> void:
+	if _menu_ui_root == null:
+		return
+	match _screen:
+		Screen.ESCAPE:
+			_menu_title_label.text = "-=[ PAUSED ]=-"
+			var body := ""
+			for i in range(ESCAPE_OPTIONS.size()):
+				body += ("%s %s\n" % [">" if i == _escape_cursor else " ", ESCAPE_OPTIONS[i]])
+			_menu_body_text.text = body
+			_menu_footer_label.text = "Enter: select    Esc: resume"
+		Screen.SETTINGS:
+			_menu_title_label.text = "-=[ SETTINGS ]=-"
+			_menu_body_text.text = "a) Auto-pickup items:  %s\nd) Debug tools:        %s\ng) God mode:           %s" % [
+				"ON" if GameState.auto_pickup else "OFF",
+				"ON" if GameState.debug_tools_enabled else "OFF",
+				"ON" if GameState.god_mode else "OFF",
+			]
+			_menu_footer_label.text = "Esc: back"
+		Screen.CHARACTER:
+			_menu_title_label.text = "-=[ CHARACTER ]=-"
+			var mount = _world.get_player_mount()
+			var ranged_weapon = _player.equipped.get(ItemClass.SLOT_RANGED)
+			var ranged_str := "none"
+			if ranged_weapon != null:
+				var ammo = _world.get_matching_ammo(ranged_weapon)
+				ranged_str = (ranged_weapon as ItemClass).name
+				if ammo != null:
+					ranged_str += " [%d]" % (ammo as ItemClass).stack_count()
+			_menu_body_text.text = "Name       %s\nClass      %s\nLevel      %d\nXP         %d / %d\nMount      %s\n\nHP         %d / %d\nAttack     1d6+%d\nRanged     %s\nAC         %d\nGold       %d\nCarry      %s / %s\nSTR Carry  %+d lbs.\n\nSTR        %d (%+d)\nDEX        %d (%+d)\nCON        %d (%+d)\nINT        %d (%+d)\nWIS        %d (%+d)\nCHA        %d (%+d)" % [
+				GameState.player_name,
+				GameState.player_class.capitalize(),
+				_player.level,
+				_player.xp, _player.xp_to_next,
+				mount.name.capitalize() if mount != null else "None",
+				_player.hp, _player.max_hp,
+				_player.power + _player.total_attack_bonus,
+				ranged_str,
+				_player.ac,
+				_player.gold,
+				_format_lbs(_player.total_carry_weight), _format_lbs(_player.max_carry_weight),
+				(_player.max_carry_weight - ActorClass.BASE_CARRY_WEIGHT),
+				_player.str_score, _player.str_mod,
+				_player.dex_score, _player.dex_mod,
+				_player.con_score, _player.con_mod,
+				_player.int_score, _player.int_mod,
+				_player.wis_score, _player.wis_mod,
+				_player.cha_score, _player.cha_mod,
+			]
+			_menu_footer_label.text = "Esc: close"
+		Screen.ATTRIBUTE_PICK:
+			_menu_title_label.text = "-=[ ATTRIBUTE INCREASE ]=-"
+			var attr_body := "Choose an attribute to raise by 1.\nUnspent points: %d\n\n" % _player.unspent_attribute_points
+			for opt in ATTRIBUTE_OPTIONS:
+				var score: int = int(_player.get("%s_score" % str(opt.code)))
+				attr_body += "[%s] %-12s %2d -> %2d\n" % [char(int(opt.key)), str(opt.label), score, score + 1]
+			_menu_body_text.text = attr_body
+			_menu_footer_label.text = "Press the matching key"
+		Screen.DISAMBIGUATE:
+			_menu_title_label.text = _disambig_prompt
+			var disambig_body := ""
+			for i in range(_disambig_options.size()):
+				var opt: Dictionary = _disambig_options[i]
+				disambig_body += "%s [%s] %s\n" % [
+					">" if i == _disambig_cursor else " ",
+					char(int(opt.key)) if int(opt.key) >= KEY_A and int(opt.key) <= KEY_Z else "•",
+					str(opt.label)
+				]
+			_menu_body_text.text = disambig_body
+			_menu_footer_label.text = "Enter: confirm    Esc: cancel"
+		Screen.HELP:
+			_menu_title_label.text = "-=[ KEYBINDS ]=-"
+			_menu_body_text.text = "MOVEMENT\narrows / numpad  move\nnumpad 7/9/1/3   diagonal move\nnumpad 5 / .     wait one turn\n\nACTIONS\nm  mount / dismount\ng  pick up items\ns  skin/butcher carcass\nt  trade (near merchant)\nf  fire ranged weapon\nShift+dir  force attack\n>  descend / enter\n<  ascend / world map\n\nMENUS\ni  inventory\nc  character sheet\nl  look mode\n?  this help screen\nEsc  pause menu\n\nINVENTORY\n[a-z] use / equip item\n[w/r/b/f/h/u] unequip slot\n\nTRADE\n[a-z] buy item\n[Tab + A-Z] sell item\n\nWORLD MAP\narrows  travel between chunks\nl  toggle look cursor\n>  enter chunk view"
+			_menu_footer_label.text = "Any key to close"
+		Screen.READER:
+			_menu_title_label.text = "-=[ %s ]=-" % (_reader_item.name.to_upper() if _reader_item != null else "READER")
+			var visible := _reader_lines.slice(_reader_scroll, _reader_scroll + 18)
+			_menu_body_text.text = "\n".join(visible)
+			_menu_footer_label.text = "Esc / Space close    Up / Down scroll"
+		Screen.DIALOGUE:
+			var npc: NpcClass = _dialogue_npc as NpcClass
+			_menu_title_label.text = "-=[ %s ]=-" % npc.name.to_upper()
+			_menu_body_text.text = _dialogue_line
+			_menu_footer_label.text = "[T] Trade    [Any other key] Close" if npc.is_merchant else "[Any key] Close"
+		Screen.TRAVEL_EVENT:
+			var event_data: Dictionary = _world.pending_travel_event
+			_menu_title_label.text = "-=[ %s ]=-" % str(event_data.get("title", "TRAVEL EVENT"))
+			var options: Array[String] = ["[E] Enter the chunk"]
+			if bool(event_data.get("can_ignore", false)):
+				options.append("[I] Ignore and continue")
+			if bool(event_data.get("can_flee", false)):
+				options.append("[F] Attempt to flee")
+			_menu_body_text.text = "%s\n\n%s" % [str(event_data.get("desc", "")), "\n".join(options)]
+			_menu_footer_label.text = "Choose an option"
+
+
+func _refresh_trade_ui() -> void:
+	if _trade_ui_root == null or _trade_npc == null:
+		return
+	var npc: NpcClass = _trade_npc as NpcClass
+	_trade_title_label.text = "-=[ TRADE: %s ]=-" % npc.name.capitalize()
+	var buy_text := "MERCHANT SELLS\n\n"
+	if npc.trade_stock.is_empty():
+		buy_text += "Nothing for sale."
+	else:
+		for i in range(npc.trade_stock.size()):
+			var entry: Dictionary = npc.trade_stock[i]
+			var sl := char(ord("a") + i)
+			var itype := str(entry.get("item_type", ""))
+			var qty := int(entry.get("qty", 0))
+			var price := int(entry.get("price", 0))
+			var marker := ">" if _trade_panel == 0 and i == _trade_buy_cursor else " "
+			buy_text += "%s %s) %-18s %3dg  %8s  x%d\n" % [marker, sl, itype.replace("_", " "), price, _format_lbs(_item_weight_for_type(itype)), qty]
+	buy_text += "\nGold: %d" % _player.gold
+	_trade_buy_text.text = buy_text
+
+	var sell_text := "YOUR PACK\n\n"
+	var sellable: Array = _build_sellable()
+	if sellable.is_empty():
+		sell_text += "Nothing to sell."
+	else:
+		for i in range(sellable.size()):
+			var item = sellable[i]
+			var sl := char(ord("A") + i)
+			var offer: int = npc.buy_price(item)
+			var marker := ">" if _trade_panel == 1 and i == _trade_sell_cursor else " "
+			sell_text += "%s %s) %-18s %3dg  %8s\n" % [marker, sl, (item as ItemClass).name, offer, _format_lbs(int((item as ItemClass).total_weight()))]
+	_trade_sell_text.text = sell_text
+
+	var hint: String = "[a-z] buy   [Tab] sell panel   [Esc] leave" if _trade_panel == 0 else "[A-Z] sell   [Tab] buy panel   [Esc] leave"
+	_trade_footer_label.text = hint
+
+
+func _refresh_hud_ui() -> void:
+	if _hud_ui_root == null or _world == null or _player == null:
+		return
+	var hp_frac: float = float(_player.hp) / float(_player.max_hp)
+	var hp_color := C_STATUS.lerp(Color(0.8, 0.15, 0.05), 1.0 - hp_frac)
+	var wpn = _player.equipped.get(ItemClass.SLOT_WEAPON)
+	var wpn_str := ("  WPN: %s" % (wpn as ItemClass).name) if wpn != null else ""
+	var lit = _player.equipped.get(ItemClass.SLOT_LIGHT)
+	var lit_str := ""
+	if lit != null:
+		var lt := lit as ItemClass
+		lit_str = "  LIT: %dt" % lt.value if lt.burn_turns > 0 else "  LIT"
+	var mount = _world.get_player_mount()
+	var mount_str := ""
+	if mount != null:
+		mount_str = "  MOUNT: %s" % mount.name
+	var move_cost_str := "  MOVE: %s" % _world.get_move_cost_label()
+	var cal_str: String = _world.get_calendar_string()
+	var sky_str: String = _sky_track()
+	var thr_pct: int = int(float(_player.thirst) / float(ActorClass.THIRST_MAX) * 100.0)
+	var fat_pct: int = int(float(_player.fatigue) / float(ActorClass.FATIGUE_MAX) * 100.0)
+	var thr_str: String = ("  THR: %d%%" % thr_pct) if _floor == 0 else ""
+	var fat_str: String = "  FAT: %d%%" % fat_pct
+	var floor_label: String = "HUB" if _world.debug_hub_active else str(_floor)
+	_hud_status_top.text = "Lvl: %d   HP: %d/%d   ATK: 1d6+%d  AC: %d   Gold: %d   Floor: %s   %s  %s" % [
+		_player.level, _player.hp, _player.max_hp, _player.power + _player.total_attack_bonus,
+		_player.ac, _player.gold, floor_label, cal_str, sky_str
+	]
+	_hud_status_top.add_theme_color_override("font_color", hp_color)
+	_hud_status_bottom.text = ("%s%s%s%s%s" % [thr_str, fat_str, wpn_str, lit_str, mount_str + move_cost_str]).strip_edges()
+
+	for label in _hud_message_labels:
+		label.text = ""
+		label.add_theme_color_override("font_color", C_MSG_OLD)
+
+	var hud_lines: Array = []
+	if _screen == Screen.LOOK:
+		hud_lines = [_look_description(), "l / Esc / Enter to exit look mode"]
+	elif _screen == Screen.TARGET:
+		hud_lines = [_target_description(), "f / Esc: cancel   arrows: aim   Tab: cycle targets   Enter/click: fire"]
+	elif _screen == Screen.WORLD_MAP and _world_look_mode:
+		hud_lines = ["%s  [travel %d]" % [_world_map_look_label(), _world.get_world_map_travel_cost(_world_look_cursor)],
+			"arrows: move look cursor    l/esc: exit look"]
+	else:
+		hud_lines = _messages.duplicate()
+
+	for i in range(mini(MSG_LINES, hud_lines.size())):
+		var label: Label = _hud_message_labels[i]
+		label.text = str(hud_lines[i])
+		if _screen == Screen.LOOK or _screen == Screen.TARGET or (_screen == Screen.WORLD_MAP and _world_look_mode):
+			label.add_theme_color_override("font_color", C_MSG_RECENT if i == 0 else C_DIVIDER)
+		else:
+			var is_last: bool = i == hud_lines.size() - 1
+			label.add_theme_color_override("font_color", C_MSG_RECENT if is_last else C_MSG_OLD)
 
 
 func _handle_post_player_action() -> void:
@@ -468,6 +1305,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		Screen.LOOK:
 			_handle_look_input(event)
 			return
+		Screen.TARGET:
+			_handle_target_input(event)
+			return
 		Screen.WORLD_MAP:
 			_handle_world_map_input(event)
 			return
@@ -534,6 +1374,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				_screen   = Screen.LOOK
 				get_viewport().set_input_as_handled()
 				queue_redraw()
+				return
+			KEY_F:
+				get_viewport().set_input_as_handled()
+				_open_ranged_targeting()
 				return
 			KEY_S:
 				get_viewport().set_input_as_handled()
@@ -633,15 +1477,23 @@ func _handle_mouse_motion(event: InputEventMouseMotion) -> void:
 		_hover_active = false
 		if should_highlight and _map.explored[map_pos.y][map_pos.x]:
 			_look_pos = map_pos
+	elif _screen == Screen.TARGET:
+		_hover_active = false
+		if should_highlight and _map.explored[map_pos.y][map_pos.x]:
+			_target_pos = map_pos
 	else:
 		_hover_active = false
-	if _screen == Screen.NONE or _screen == Screen.LOOK:
+	if _screen == Screen.NONE or _screen == Screen.LOOK or _screen == Screen.TARGET:
 		queue_redraw()
 
 
 func _handle_mouse_button(event: InputEventMouseButton) -> void:
 	if event.button_index == MOUSE_BUTTON_RIGHT:
 		match _screen:
+			Screen.TARGET:
+				_close_targeting()
+				queue_redraw()
+				get_viewport().set_input_as_handled()
 			Screen.LOOK, Screen.INVENTORY, Screen.CHARACTER, Screen.SETTINGS, Screen.TRADE, Screen.HELP, Screen.READER, Screen.DIALOGUE:
 				_screen = Screen.NONE
 				queue_redraw()
@@ -655,6 +1507,8 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 			_handle_map_mouse_click(event.position)
 		Screen.LOOK:
 			_handle_look_mouse_click(event.position)
+		Screen.TARGET:
+			_handle_target_mouse_click(event.position)
 		Screen.ESCAPE:
 			_handle_escape_mouse_click(event.position)
 		Screen.SETTINGS:
@@ -721,6 +1575,109 @@ func _handle_look_mouse_click(mouse_pos: Vector2) -> void:
 	_look_pos = map_pos
 	get_viewport().set_input_as_handled()
 	queue_redraw()
+
+
+func _open_ranged_targeting() -> void:
+	var weapon = _world.get_equipped_ranged_weapon()
+	if weapon == null:
+		_world.add_msg("You have no ranged weapon readied.")
+		queue_redraw()
+		return
+	var ammo = _world.get_matching_ammo(weapon)
+	if ammo == null:
+		_world.add_msg("You have no ammunition for the %s." % (weapon as ItemClass).name)
+		queue_redraw()
+		return
+	_refresh_target_candidates()
+	if not _target_candidates.is_empty():
+		_target_candidate_index = 0
+		_target_pos = (_target_candidates[0] as ActorClass).pos
+	else:
+		_target_pos = _player.pos + Vector2i(0, -1)
+		if _map != null:
+			_target_pos.x = clampi(_target_pos.x, 0, _map.width - 1)
+			_target_pos.y = clampi(_target_pos.y, 0, _map.height - 1)
+	_screen = Screen.TARGET
+	_hover_active = false
+	_cam_x = clampi(_target_pos.x - (COLS >> 1), 0, _map.width - COLS)
+	_cam_y = clampi(_target_pos.y - (MAP_ROWS >> 1), 0, _map.height - MAP_ROWS)
+	queue_redraw()
+
+
+func _refresh_target_candidates() -> void:
+	_target_candidates = _world.get_ranged_targets()
+	if _target_candidates.is_empty():
+		_target_candidate_index = 0
+		return
+	_target_candidate_index = clampi(_target_candidate_index, 0, _target_candidates.size() - 1)
+
+
+func _close_targeting() -> void:
+	_screen = Screen.NONE
+	_target_candidates.clear()
+	_target_candidate_index = 0
+	_target_pos = Vector2i.ZERO
+	_update_camera()
+	queue_redraw()
+
+
+func _cycle_target_candidate(step: int) -> void:
+	_refresh_target_candidates()
+	if _target_candidates.is_empty():
+		return
+	_target_candidate_index = wrapi(_target_candidate_index + step, 0, _target_candidates.size())
+	_target_pos = (_target_candidates[_target_candidate_index] as ActorClass).pos
+	_cam_x = clampi(_target_pos.x - (COLS >> 1), 0, _map.width - COLS)
+	_cam_y = clampi(_target_pos.y - (MAP_ROWS >> 1), 0, _map.height - MAP_ROWS)
+	queue_redraw()
+
+
+func _handle_target_input(event: InputEvent) -> void:
+	get_viewport().set_input_as_handled()
+	match event.physical_keycode:
+		KEY_ESCAPE, KEY_F:
+			_close_targeting()
+			return
+		KEY_ENTER, KEY_KP_ENTER:
+			_world.fire_ranged_at(_target_pos)
+			_close_targeting()
+			_handle_post_player_action()
+			return
+		KEY_TAB:
+			_cycle_target_candidate(-1 if event.shift_pressed else 1)
+			return
+
+	var delta := Vector2i.ZERO
+	match event.physical_keycode:
+		KEY_KP_8, KEY_UP:    delta = Vector2i(0, -1)
+		KEY_KP_2, KEY_DOWN:  delta = Vector2i(0, 1)
+		KEY_KP_4, KEY_LEFT:  delta = Vector2i(-1, 0)
+		KEY_KP_6, KEY_RIGHT: delta = Vector2i(1, 0)
+		KEY_KP_7:            delta = Vector2i(-1, -1)
+		KEY_KP_9:            delta = Vector2i(1, -1)
+		KEY_KP_1:            delta = Vector2i(-1, 1)
+		KEY_KP_3:            delta = Vector2i(1, 1)
+		_: return
+	_target_pos += delta
+	_target_pos.x = clampi(_target_pos.x, 0, _map.width - 1)
+	_target_pos.y = clampi(_target_pos.y, 0, _map.height - 1)
+	_cam_x = clampi(_target_pos.x - (COLS >> 1), 0, _map.width - COLS)
+	_cam_y = clampi(_target_pos.y - (MAP_ROWS >> 1), 0, _map.height - MAP_ROWS)
+	queue_redraw()
+
+
+func _handle_target_mouse_click(mouse_pos: Vector2) -> void:
+	var cell := _mouse_cell(mouse_pos)
+	if cell.y < 0 or cell.y >= MAP_ROWS:
+		return
+	var map_pos := _screen_to_map(cell)
+	if not _map.is_in_bounds(map_pos.x, map_pos.y) or not _map.explored[map_pos.y][map_pos.x]:
+		return
+	_target_pos = map_pos
+	get_viewport().set_input_as_handled()
+	_world.fire_ranged_at(_target_pos)
+	_close_targeting()
+	_handle_post_player_action()
 
 
 func _handle_escape_input(event: InputEvent) -> void:
@@ -847,6 +1804,7 @@ func _activate_inventory_item(item) -> void:
 		var msg: String = _player.equip(item)
 		_world.add_msg(msg)
 		_screen = Screen.NONE
+		_sync_inventory_ui_visibility()
 		_world.resolve_action()
 	elif item.category == ItemClass.CATEGORY_USABLE:
 		var msg: String = item.use(_player)
@@ -854,16 +1812,18 @@ func _activate_inventory_item(item) -> void:
 			_world.add_msg(msg)
 			_player.inventory.erase(item)
 			_screen = Screen.NONE
+			_sync_inventory_ui_visibility()
 			_world.resolve_action()
 	elif item.category == ItemClass.CATEGORY_READABLE:
 		_open_reader(item)
 	else:
+		_refresh_inventory_ui()
 		queue_redraw()
 
 
 func _inventory_item_at_row(row: int):
 	var current_row: int = 5
-	var section_order := ["weapons", "armor", "lights", "consumables", "goods", "tablets", "other"]
+	var section_order := ["weapons", "ammo", "armor", "lights", "consumables", "goods", "tablets", "other"]
 	for section_key in section_order:
 		var section_items: Array = []
 		for item in _player.inventory:
@@ -898,10 +1858,10 @@ func _handle_inventory_mouse_click(mouse_pos: Vector2) -> void:
 		if item != null:
 			_activate_inventory_item(item)
 			return
-	for si in range(5):
+	for si in range(6):
 		var label_row: int = BOX_Y + 6 + si * 2
 		if cell.x >= RIGHT_X and cell.x < RIGHT_X + RIGHT_W and cell.y >= label_row and cell.y <= label_row + 2:
-			var slot_key: String = [ItemClass.SLOT_WEAPON, ItemClass.SLOT_BODY, ItemClass.SLOT_FEET, ItemClass.SLOT_HEAD, ItemClass.SLOT_LIGHT][si]
+			var slot_key: String = [ItemClass.SLOT_WEAPON, ItemClass.SLOT_RANGED, ItemClass.SLOT_BODY, ItemClass.SLOT_FEET, ItemClass.SLOT_HEAD, ItemClass.SLOT_LIGHT][si]
 			var msg: String = _player.unequip(slot_key)
 			if msg != "":
 				_world.add_msg(msg)
@@ -914,6 +1874,7 @@ func _handle_inventory_input(event: InputEvent) -> void:
 	var key: int = event.physical_keycode
 	if key == KEY_ESCAPE or (key == KEY_I and not event.shift_pressed):
 		_screen = Screen.NONE
+		_sync_inventory_ui_visibility()
 		queue_redraw()
 		return
 
@@ -922,6 +1883,7 @@ func _handle_inventory_input(event: InputEvent) -> void:
 		var unequip_slot := ""
 		match key:
 			KEY_W: unequip_slot = ItemClass.SLOT_WEAPON
+			KEY_R: unequip_slot = ItemClass.SLOT_RANGED
 			KEY_B: unequip_slot = ItemClass.SLOT_BODY
 			KEY_F: unequip_slot = ItemClass.SLOT_FEET
 			KEY_H: unequip_slot = ItemClass.SLOT_HEAD
@@ -930,6 +1892,7 @@ func _handle_inventory_input(event: InputEvent) -> void:
 			var msg: String = _player.unequip(unequip_slot)
 			if msg != "":
 				_world.add_msg(msg)
+				_refresh_inventory_ui()
 				queue_redraw()
 			return
 
@@ -1308,8 +2271,6 @@ func _draw() -> void:
 	if _screen == Screen.WORLD_MAP or _screen == Screen.TRAVEL_EVENT:
 		_draw_world_map()
 		_draw_ui()
-		if _screen == Screen.TRAVEL_EVENT:
-			_draw_travel_event_overlay()
 		return
 	_draw_map()
 	_draw_entities()
@@ -1317,17 +2278,18 @@ func _draw() -> void:
 		_draw_hover_cursor()
 	_draw_ui()
 	match _screen:
-		Screen.ESCAPE:       _draw_escape_menu()
-		Screen.INVENTORY:    _draw_inventory()
-		Screen.CHARACTER:    _draw_character_sheet()
-		Screen.SETTINGS:     _draw_settings()
+		Screen.ESCAPE:       pass
+		Screen.INVENTORY:    pass
+		Screen.CHARACTER:    pass
+		Screen.SETTINGS:     pass
 		Screen.LOOK:         _draw_look_cursor()
-		Screen.ATTRIBUTE_PICK: _draw_attribute_pick_overlay()
-		Screen.TRADE:        _draw_trade_screen()
-		Screen.DISAMBIGUATE: _draw_disambig_overlay()
-		Screen.HELP:         _draw_help_screen()
-		Screen.READER:       _draw_reader_screen()
-		Screen.DIALOGUE:     _draw_dialogue_screen()
+		Screen.TARGET:       _draw_target_cursor()
+		Screen.ATTRIBUTE_PICK: pass
+		Screen.TRADE:        pass
+		Screen.DISAMBIGUATE: pass
+		Screen.HELP:         pass
+		Screen.READER:       pass
+		Screen.DIALOGUE:     pass
 
 
 func _draw_map() -> void:
@@ -1405,61 +2367,42 @@ func _display_entity_for_cell(entities_on_cell: Array):
 
 
 func _draw_ui() -> void:
-	draw_rect(
-		Rect2(0, DIVIDER_ROW * CELL_H, COLS * CELL_W, (ROWS - DIVIDER_ROW) * CELL_H),
-		C_BG
-	)
+	return
 
-	var hp_frac: float = float(_player.hp) / float(_player.max_hp)
-	var hp_color       := C_STATUS.lerp(Color(0.8, 0.15, 0.05), 1.0 - hp_frac)
-	var wpn     = _player.equipped.get(ItemClass.SLOT_WEAPON)
-	var wpn_str := ("  WPN: %s" % (wpn as ItemClass).name) if wpn != null else ""
-	var lit     = _player.equipped.get(ItemClass.SLOT_LIGHT)
-	var lit_str := ""
-	if lit != null:
-		var lt := lit as ItemClass
-		lit_str = "  LIT: %dt" % lt.value if lt.burn_turns > 0 else "  LIT"
-	var mount = _world.get_player_mount()
-	var mount_str := ""
-	if mount != null:
-		mount_str = "  MOUNT: %s" % mount.name
-	var move_cost_str := "  MOVE: %s" % _world.get_move_cost_label()
-	var cal_str: String   = _world.get_calendar_string()
-	var phase_str: String = _world.get_day_phase()
-	var thr_pct: int      = int(float(_player.thirst)  / float(ActorClass.THIRST_MAX)  * 100.0)
-	var fat_pct: int      = int(float(_player.fatigue) / float(ActorClass.FATIGUE_MAX) * 100.0)
-	var thr_str: String   = ("  THR: %d%%" % thr_pct) if _floor == 0 else ""
-	var fat_str: String   = "  FAT: %d%%" % fat_pct
-	var floor_label: String = "HUB" if _world.debug_hub_active else str(_floor)
-	var status_top := "Lvl: %d   HP: %d/%d   ATK: 1d6+%d  AC: %d   Gold: %d   Floor: %s   %s  %s" % [
-		_player.level, _player.hp, _player.max_hp, _player.power + _player.total_attack_bonus,
-		_player.ac, _player.gold, floor_label, cal_str, phase_str
-	]
-	var status_bottom := "%s%s%s%s%s" % [thr_str, fat_str, wpn_str, lit_str, mount_str + move_cost_str]
-	_puts(0, STATUS_ROW, status_top, hp_color)
-	_puts(0, STATUS_ROW_2, status_bottom.strip_edges(), C_STATUS)
 
-	if _screen == Screen.LOOK:
-		draw_rect(
-			Rect2(0, MSG_START_ROW * CELL_H, COLS * CELL_W, MSG_LINES * CELL_H),
-			C_BG
-		)
-		_puts(0, MSG_START_ROW, _look_description(), C_MSG_RECENT)
-		_puts(0, MSG_START_ROW + 1, "l / Esc / Enter to exit look mode", C_DIVIDER)
-		return
+func _sky_track() -> String:
+	const TRACK_LEN: int = 19
+	var t: float = _world.time_of_day
+	var is_night: bool = _world.is_night
+	var body: String = "o" if is_night else "*"
+	var travel_t: float
+	if is_night:
+		travel_t = t / 0.20 if t < 0.20 else (t - 0.80) / 0.20
+	else:
+		travel_t = (t - 0.20) / 0.60
+	travel_t = clampf(travel_t, 0.0, 1.0)
+	var pos: int = int(round(travel_t * float(TRACK_LEN - 1)))
+	var track := ""
+	for i in range(TRACK_LEN):
+		track += body if i == pos else "-"
+	return "[%s]" % track
 
-	if _screen == Screen.WORLD_MAP and _world_look_mode:
-		draw_rect(
-			Rect2(0, MSG_START_ROW * CELL_H, COLS * CELL_W, MSG_LINES * CELL_H),
-			C_BG
-		)
-		_puts(0, MSG_START_ROW, "%s  [travel %d]" % [_world_map_look_label(), _world.get_world_map_travel_cost(_world_look_cursor)], C_MSG_RECENT)
-		_puts(0, MSG_START_ROW + 1, "arrows: move look cursor    l/esc: exit look", C_DIVIDER)
-		return
 
-	for i in range(_messages.size()):
-		var is_last: bool = i == _messages.size() - 1
-		_puts(0, MSG_START_ROW + i, _messages[i], C_MSG_RECENT if is_last else C_MSG_OLD)
+func _target_description() -> String:
+	var weapon = _world.get_equipped_ranged_weapon()
+	if weapon == null:
+		return "No ranged weapon readied."
+	var ammo = _world.get_matching_ammo(weapon)
+	var range_str := "range %d" % int((weapon as ItemClass).ranged_range)
+	var ammo_str := "no ammo"
+	if ammo != null:
+		ammo_str = "%s %s" % [(ammo as ItemClass).name, (ammo as ItemClass).stack_label()]
+		ammo_str = ammo_str.strip_edges()
+	var target = _world._first_actor_on_line(_player.pos, _target_pos)
+	var target_str := "empty ground"
+	if target != null:
+		target_str = "%s (%d/%d HP)" % [target.name, target.hp, target.max_hp]
+	return "Aim %s using %s [%s, %s]." % [target_str, (weapon as ItemClass).name, ammo_str, range_str]
 
 
 func _world_map_look_label() -> String:
@@ -1551,7 +2494,7 @@ func _draw_inventory() -> void:
 	_puts(LEFT_X, BOX_Y + 2, load_header, C_STATUS)
 	_puts(LEFT_X + LEFT_W - load_value.length(), BOX_Y + 2, load_value, C_STATUS)
 
-	var section_order := ["weapons", "armor", "lights", "consumables", "goods", "tablets", "other"]
+	var section_order := ["weapons", "ammo", "armor", "lights", "consumables", "goods", "tablets", "other"]
 	var section_items: Dictionary = {}
 	for section_key in section_order:
 		section_items[section_key] = []
@@ -1567,7 +2510,7 @@ func _draw_inventory() -> void:
 			continue
 		var section_weight: int = 0
 		for item in items:
-			section_weight += int(item.weight)
+			section_weight += int(item.total_weight())
 		var section_label := "[-] %s" % _inventory_section_title(section_key)
 		var section_value := "[%s]" % _format_lbs(section_weight)
 		_puts(LEFT_X, row, section_label, C_STATUS)
@@ -1581,10 +2524,13 @@ func _draw_inventory() -> void:
 			if next_letter_ord <= ord("z"):
 				letter = char(next_letter_ord)
 			var detail: String = _inventory_item_detail(item)
-			var detail_col: String = "%-10s" % detail if not detail.is_empty() else "          "
+			var item_name: String = item.name
+			if item.stack_label() != "":
+				item_name += " %s" % item.stack_label()
+			var detail_col: String = "%-16s" % detail if not detail.is_empty() else "                "
 			var weight_col := "[%s]" % item.weight_label()
 			_puts(LEFT_X + 2, row,
-				"%s) %-28s %s %s" % [letter, item.name, detail_col, weight_col],
+				"%s) %-24s %s %s" % [letter, item_name.left(24), detail_col, weight_col],
 				C_MSG_RECENT)
 			next_letter_ord += 1
 			row += 1
@@ -1605,6 +2551,7 @@ func _draw_inventory() -> void:
 	_puts(RIGHT_X, BOX_Y + 4, "EQUIPPED", C_STATUS)
 	var slot_rows: Array = [
 		[ItemClass.SLOT_WEAPON, "w) WEAPON"],
+		[ItemClass.SLOT_RANGED, "r) RANGED"],
 		[ItemClass.SLOT_BODY,   "b) BODY  "],
 		[ItemClass.SLOT_FEET,   "f) FEET  "],
 		[ItemClass.SLOT_HEAD,   "h) HEAD  "],
@@ -1630,7 +2577,7 @@ func _draw_inventory() -> void:
 			_puts(RIGHT_X + 2, BOX_Y + 7 + si * 2, "-", C_MSG_OLD)
 
 	var left_hint := "[a-z] use / equip / read"
-	var right_hint := "[w/b/f/h/u] unequip  [Esc] close"
+	var right_hint := "[w/r/b/f/h/u] unequip  [Esc] close"
 	_puts(LEFT_X + ((LEFT_W - left_hint.length()) >> 1), BOX_Y + BOX_H - 2, left_hint, C_DIVIDER)
 	_puts(RIGHT_X + ((RIGHT_W - right_hint.length()) >> 1), BOX_Y + BOX_H - 2, right_hint, C_DIVIDER)
 
@@ -1667,6 +2614,15 @@ func _draw_character_sheet() -> void:
 	if _player.total_attack_bonus > 0:
 		atk_str += "  (+%d from gear)" % _player.total_attack_bonus
 	_stat_line(BOX_X + 4, r, "Attack", atk_str); r += 1
+	var ranged_weapon = _player.equipped.get(ItemClass.SLOT_RANGED)
+	var ranged_str := "none"
+	if ranged_weapon != null:
+		var ammo = _world.get_matching_ammo(ranged_weapon)
+		var ammo_suffix := ""
+		if ammo != null:
+			ammo_suffix = "  [%d]" % (ammo as ItemClass).stack_count()
+		ranged_str = "%s  1d6+%d%s" % [(ranged_weapon as ItemClass).name, _player.dex_mod + _player.total_ranged_bonus, ammo_suffix]
+	_stat_line(BOX_X + 4, r, "Ranged", ranged_str); r += 1
 	var ac_str := str(_player.ac)
 	if _player.total_defense_bonus > 0:
 		ac_str += "  (+%d from gear)" % _player.total_defense_bonus
@@ -1720,6 +2676,24 @@ func _draw_look_cursor() -> void:
 	draw_rect(
 		Rect2(sp.x * CELL_W, sp.y * CELL_H, CELL_W, CELL_H),
 		Color(0.20, 0.75, 0.90, 0.40)
+	)
+
+
+func _draw_target_cursor() -> void:
+	if not _on_screen(_target_pos.x, _target_pos.y):
+		return
+	for point in _world._bresenham_line(_player.pos, _target_pos):
+		if point == _player.pos or not _on_screen(point.x, point.y):
+			continue
+		var line_sp := _to_screen(point.x, point.y)
+		draw_rect(
+			Rect2(line_sp.x * CELL_W, line_sp.y * CELL_H, CELL_W, CELL_H),
+			Color(0.80, 0.20, 0.10, 0.14)
+		)
+	var sp := _to_screen(_target_pos.x, _target_pos.y)
+	draw_rect(
+		Rect2(sp.x * CELL_W, sp.y * CELL_H, CELL_W, CELL_H),
+		Color(0.92, 0.28, 0.12, 0.42)
 	)
 
 
@@ -1867,6 +2841,7 @@ func _draw_help_screen() -> void:
 	_help_row(COL1, r, "g",           "pick up items");           r += 1
 	_help_row(COL1, r, "s",           "skin/butcher carcass");    r += 1
 	_help_row(COL1, r, "t",           "trade (near merchant)");   r += 1
+	_help_row(COL1, r, "f",           "fire ranged weapon");      r += 1
 	_help_row(COL1, r, "Shift+dir",   "force attack (any NPC)");  r += 1
 	_help_row(COL1, r, ">",           "descend / enter");         r += 1
 	_help_row(COL1, r, "<",           "ascend / world map");      r += 1
@@ -1883,7 +2858,7 @@ func _draw_help_screen() -> void:
 	r += 1
 	_puts(COL2, r, "INVENTORY", C_STATUS); r += 1
 	_help_row(COL2, r, "a-z",    "use / equip item"); r += 1
-	_help_row(COL2, r, "w/b/f/h/u","unequip slot");   r += 1
+	_help_row(COL2, r, "w/r/b/f/h/u","unequip slot");   r += 1
 	r += 1
 	_puts(COL2, r, "TRADE", C_STATUS); r += 1
 	_help_row(COL2, r, "a-z",       "buy item");  r += 1
@@ -1994,7 +2969,7 @@ func _draw_trade_screen() -> void:
 			var offer: int = npc.buy_price(item)
 			var color := C_STATUS if (_trade_panel == 1 and i == _trade_sell_cursor) else C_MSG_RECENT
 			_puts(SELL_X, BOX_Y + 4 + i,
-				"%s) %-16s %3dg %8s" % [sl, (item as ItemClass).name, offer, _format_lbs(int((item as ItemClass).weight))], color)
+				"%s) %-16s %3dg %8s" % [sl, (item as ItemClass).name, offer, _format_lbs(int((item as ItemClass).total_weight()))], color)
 
 	_puts(BUY_X, BOX_Y + BOX_H - 4, "Gold: %d" % _player.gold, C_GOLD)
 
@@ -2015,7 +2990,7 @@ func _build_sellable() -> Array:
 
 
 func _item_weight_for_type(item_type: String) -> int:
-	return int(ItemClass.new(Vector2i.ZERO, item_type, 0).weight)
+	return int(ItemClass.new(Vector2i.ZERO, item_type, 0).total_weight())
 
 
 func _format_lbs(weight: int) -> String:
@@ -2025,12 +3000,14 @@ func _format_lbs(weight: int) -> String:
 func _inventory_section_key(item) -> String:
 	if item.category == ItemClass.CATEGORY_EQUIPMENT:
 		match item.slot:
-			ItemClass.SLOT_WEAPON:
+			ItemClass.SLOT_WEAPON, ItemClass.SLOT_RANGED:
 				return "weapons"
 			ItemClass.SLOT_BODY, ItemClass.SLOT_FEET, ItemClass.SLOT_HEAD:
 				return "armor"
 			ItemClass.SLOT_LIGHT:
 				return "lights"
+	if item.category == ItemClass.CATEGORY_AMMO:
+		return "ammo"
 	if item.category == ItemClass.CATEGORY_USABLE:
 		return "consumables"
 	if item.category == ItemClass.CATEGORY_TRADE:
@@ -2043,6 +3020,7 @@ func _inventory_section_key(item) -> String:
 func _inventory_section_title(section_key: String) -> String:
 	match section_key:
 		"weapons": return "WEAPONS"
+		"ammo": return "AMMUNITION"
 		"armor": return "ARMOR"
 		"lights": return "LIGHT SOURCES"
 		"consumables": return "CONSUMABLES"
@@ -2053,6 +3031,8 @@ func _inventory_section_title(section_key: String) -> String:
 
 func _inventory_item_detail(item) -> String:
 	if item.category == ItemClass.CATEGORY_EQUIPMENT:
+		if item.slot == ItemClass.SLOT_RANGED:
+			return "%+d atk  %s  rng %d" % [item.attack_bonus, item.ammo_type.replace("_", " "), item.ranged_range]
 		if item.attack_bonus > 0:
 			return "+%d atk" % item.attack_bonus
 		if item.defense_bonus > 0:
@@ -2062,6 +3042,8 @@ func _inventory_item_detail(item) -> String:
 		return "equip"
 	if item.category == ItemClass.CATEGORY_USABLE:
 		return item.dice_label()
+	if item.category == ItemClass.CATEGORY_AMMO:
+		return "ammo"
 	if item.category == ItemClass.CATEGORY_READABLE:
 		return "read"
 	if item.category == ItemClass.CATEGORY_TRADE and item.base_value > 0:
@@ -2071,7 +3053,7 @@ func _inventory_item_detail(item) -> String:
 
 func _inventory_display_items() -> Array:
 	var ordered: Array = []
-	var section_order := ["weapons", "armor", "lights", "consumables", "goods", "tablets", "other"]
+	var section_order := ["weapons", "ammo", "armor", "lights", "consumables", "goods", "tablets", "other"]
 	for section_key in section_order:
 		for item in _player.inventory:
 			if _inventory_section_key(item) == section_key:
