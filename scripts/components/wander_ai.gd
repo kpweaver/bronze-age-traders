@@ -63,5 +63,5 @@ func take_turn(player, game_map) -> String:
 	if candidates.is_empty():
 		return ""
 
-	actor.pos = candidates[randi() % candidates.size()]
+	game_map.move_entity(actor, candidates[randi() % candidates.size()])
 	return ""

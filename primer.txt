@@ -38,12 +38,16 @@ Every keypress the player makes triggers this sequence:
 
   1. ascii_map.gd reads the key and calls game_world.do_player_turn(direction)
   2. game_world.gd moves the player (or attacks, or opens a door, etc.)
-  3. game_world.do_enemy_turns() runs every NPC and monster's AI for one tick
-  4. game_world.end_turn() updates FOV, increments the turn counter, drains
-     thirst (on the overworld), then fires the turn_ended signal
-  5. ascii_map.gd receives the signal and redraws the screen
+  3. game_world resolves the action's COST (100 = normal turn, lower = faster)
+  4. Enemy turns only fire when enough action cost has accumulated
+  5. game_world.end_turn(cost) updates FOV, advances world time, drains
+     thirst/fatigue/torch burn when enough cost adds up to a full turn, then
+     fires the turn_ended signal
+  6. ascii_map.gd receives the signal and redraws the screen
 
-One player action = one turn = 2 real minutes of in-game time.
+The important change is that one player action no longer has to equal one full
+turn. Fast movement can cost less than 100, so it advances danger and calendar
+time more slowly than a normal action.
 
 
 ────────────────────────────────────────────────────────────────────────────────
@@ -65,6 +69,7 @@ One player action = one turn = 2 real minutes of in-game time.
     category    — 0=gold  1=usable (food/herbs)  2=trade good  3=equipment
     slot        — for equipment: "weapon" "body" "feet" "head" "light" or "" for none
     base_value  — price in gold coins (used by merchants as a baseline)
+    weight      — carrying weight in pounds
     attack_bonus / defense_bonus — combat stats for equipment
     dice_count / dice_sides — for usable items: how much HP they restore
                               (e.g. dice_count=2, dice_sides=4 → heals 2d4 HP)
@@ -126,7 +131,76 @@ One player action = one turn = 2 real minutes of in-game time.
                               speed up or slow down the day/night cycle.
     FOV_OVERWORLD    = 24   — tiles you can see during the day (daytime radius).
     FOV_NIGHT        = 1    — tiles you can see at night (near-zero).
-    FOV_RADIUS       = 8    — sight radius inside dungeons.
+    FOV_RADIUS       = 6    — sight radius inside dungeons.
+    ACTION_COST_BASE = 100  — one standard tactical action.
+    MOVE_COST_FOOT   = 100  — normal on-foot movement.
+    MOVE_COST_MOUNTED = 70  — current first-pass mounted movement cost.
+
+  ACTION COSTS (new core timing model):
+    Bronze Age Traders now uses a lightweight action-cost system instead of
+    assuming every resolved action is one full turn. The current model is:
+      cost 100 = standard action (wait, item use, equip, skin, mount/dismount)
+      cost <100 = faster-than-normal movement
+
+    Two accumulators matter:
+      enemy accumulator — when it reaches 100, enemies get one AI turn
+      world-time accumulator — when it reaches 100, the game advances one full
+      time unit for torches, thirst, fatigue, and calendar/day-night progression
+
+    Example:
+      two mounted moves at cost 70 do NOT immediately grant two enemy turns
+      the first move leaves enemies at 70/100
+      the second move pushes the total to 140/100, so enemies act once and 40
+      cost carries over
+
+    This is only a first pass. It gives mounts a real tactical/travel benefit
+    without rewriting the whole game into a full energy scheduler.
+
+    Important distinction:
+      local / tactical movement uses get_move_action_cost()
+      world-map chunk travel uses get_world_map_travel_cost()
+
+    Those are intentionally separate. Strategic travel is more abstract than
+    one tile-step, so it has its own balancing knobs.
+
+  AUTOEXPLORE:
+    Press x to autoexplore maps. Autoexplore is now animated rather
+    than instant: ascii_map.gd drives a timed auto-move loop (one step every
+    ~0.05 seconds), while game_world.gd still supplies the pathfinding.
+
+    The planner uses a breadth-first search to the nearest reachable
+    unexplored walkable tile and keeps walking until one of these interrupts
+    fires:
+      a hostile with HostileAI enters visible range
+      no reachable unexplored tiles remain
+      the player presses a key or clicks to cancel / retarget
+
+    Distant left-click travel uses the same animated auto-move framework, but
+    follows a path to the clicked explored tile instead of chasing unexplored
+    ground. This makes travel feel more like Caves of Qud: readable, paced,
+    and easy to interrupt.
+
+    Autoexplore also works on the overworld now. When crossing a chunk edge,
+    the move loop continues after the chunk transition instead of cancelling.
+
+  MOUNTS (prototype):
+    The first-pass mount system is intentionally small and experimental.
+    Press m while standing next to a mountable creature to ride it; press m
+    again to dismount onto a nearby open tile. For now, mounts:
+      share the rider's tile instead of occupying a second gameplay cell
+      use slow glyph cycling in ascii_map.gd so the tile alternates between
+      rider and mount every ~0.7 seconds
+      move with the player across normal overworld movement and chunk travel
+      cannot currently be taken up or down dungeon stairs
+
+    The prototype spawns a donkey near the player's starting position so the
+    system is easy to test. Onagers are also flagged as mountable in NPC data.
+    The important architectural idea is that "two things on one tile" is now
+    a supported display concept rather than an accidental overlap.
+
+    Mounts now plug into the action-cost system. Mounted movement currently
+    costs 70 instead of 100, so mounted travel advances enemy response and
+    world-time more slowly than on-foot travel.
 
   SURVIVAL SYSTEMS (thirst + fatigue):
     Both systems operate on `party` — an array in game_world that starts as
@@ -171,7 +245,7 @@ One player action = one turn = 2 real minutes of in-game time.
     Torches burn for 5000 turns; when exhausted the slot empties with a message.
     The inventory screen shows remaining turns: u) LIGHT: torch  (4823t left).
     Press u in the inventory screen to unequip the light slot.
-    (u is used instead of l because l falls within the a-t item range.)
+    (u is used instead of l because l falls within the a-z item range.)
     The status bar shows "LIT: Xt" while a torch is equipped.
 
     Static light fixtures (braziers in village plazas, road torches every ~25
@@ -180,6 +254,14 @@ One player action = one turn = 2 real minutes of in-game time.
     additively — standing near a brazier lights the plaza even at night.
     These are placed by _place_village_lights() and _place_road_lights() in
     procgen.gd. They use character "*" with a bright orange colour.
+
+  DUNGEON LIGHTING:
+    Dungeon floors now use Angband-style permanent room lighting. Corridors are
+    dark by default. During generation, rooms can be tagged as permanently lit;
+    when the player sees any tile in one of those rooms, the whole connected lit
+    region becomes visible immediately. Shallow floors generate many lit rooms,
+    while deeper floors become progressively darker. This state lives in
+    game_map.permanent_light and is saved with the rest of the map.
 
   CHUNK ENCOUNTERS:
     When the player crosses into a never-visited overworld chunk,
@@ -192,8 +274,20 @@ One player action = one turn = 2 real minutes of in-game time.
 
   WORLD-MAP TRAVEL EVENTS:
     World-map movement now checks freshly generated destination chunks for a
-    travel event after applying the 200-turn chunk-travel cost. The popup does
+    travel event after applying strategic chunk-travel cost. The popup does
     not replace the real map — it is only a decision point.
+
+    CURRENT STRATEGIC TRAVEL COST:
+      base chunk travel = 200
+      mounted chunk travel = base × 0.75
+      road destination chunk = additional × 0.90
+      minimum chunk cost = 120
+
+    In practice that means:
+      foot cross-country = 200
+      mounted cross-country = 150
+      foot on roads = 180
+      mounted on roads = 135
 
     Current event types:
       traveling_merchant — Enter or Ignore
@@ -239,6 +333,8 @@ One player action = one turn = 2 real minutes of in-game time.
 
     The hub currently contains:
       quartermaster merchant — broad stock for trading/inventory tests
+      speed marker + debug donkey — lets you compare MOVE: 100% on foot versus
+        MOVE: 70% while mounted, using the status line and speed-marker message
       sample items on the floor — equipment, consumables, readable tablet, goods
       training obelisk — grants XP
       healing spring — restores HP, thirst, and some fatigue
@@ -254,8 +350,11 @@ One player action = one turn = 2 real minutes of in-game time.
     (steppe), ibex (mountains/badlands), and hyena (desert/badlands).
     They are spawned by _spawn_wildlife() in procgen.gd when a chunk is
     first generated. Village chunks get no wildlife. They use WanderAI
-    with species-specific move probabilities; bumping into one prints an
-    observation line rather than the usual "NPC says:" message.
+    with species-specific move probabilities. Manual bumping into a
+    wildlife tile now opens a confirmation prompt ("Attack X?") instead
+    of spending a turn immediately; Enter confirms, Esc cancels, and
+    Shift+move still force-attacks directly. This applies to wildlife
+    only, not to neutral village NPCs or pack animals like the donkey.
     To add a species: add an entry to content/npcs.gd with is_wildlife: true
     and spawn_weight: 0, then add it to the table in _spawn_wildlife().
 
@@ -278,6 +377,29 @@ One player action = one turn = 2 real minutes of in-game time.
     WORLD_MAP, TRAVEL_EVENT, LOOK, SETTINGS, HELP, ESCAPE, READER, DIALOGUE.
     Each has its own _draw_*() and _handle_*_input() function pair.
 
+  MOUSE INPUT (first pass):
+    ascii_map.gd now also handles InputEventMouseMotion / InputEventMouseButton.
+    Current support:
+      main map — hover highlight on explored tiles; left click adjacent tile to
+                 move/attack, left click distant explored tile to path-travel there;
+                 adjacent clicks into wildlife open the same attack-confirm prompt
+      look mode — mouse updates the look target, right click closes
+      pause menu — click an option to activate it
+      settings — click a row to toggle it
+      inventory — click an item row to use/equip/read it; click an equipment
+                  slot in the right panel to unequip it
+      trade — click merchant rows to buy and player rows to sell
+    Not yet done: world-map mouse travel, drag selection, true ranged targeting,
+    or mouse interaction for every overlay.
+
+  DISTANT CLICK-TO-MOVE:
+    game_world.gd now owns distant travel via travel_to(target). It uses a BFS
+    over walkable tiles to build a path from the player's current position to a
+    clicked destination, then walks that path step by step through the normal
+    do_player_turn() loop. That means thirst, fatigue, combat, pickups, stairs,
+    and dialogue all keep working exactly as they do for keyboard movement.
+    Travel interrupts on visible hostiles or when the player cancels / retargets.
+
     TRAVEL_EVENT: Popup shown over the world map when chunk-scale travel
     reveals something important. The first version handles merchants
     (Enter/Ignore) and bandit ambushes (Enter/Flee).
@@ -286,10 +408,15 @@ One player action = one turn = 2 real minutes of in-game time.
     pressing the item's letter key in the inventory. Supports up/down scrolling.
     Space or Esc closes it. No turn is consumed.
 
-    DIALOGUE: Bottom-panel overlay that opens automatically when the player
+  DIALOGUE: Bottom-panel overlay that opens automatically when the player
     bumps a non-wildlife NPC. Shows NPC name + current dialogue line. Space/
     Enter advances to the next line. T opens the trade screen (merchants only).
     Esc closes. Dialogue lines cycle from content/npcs.gd.
+
+  DISAMBIGUATE:
+    Small centered confirm/choice overlay used for ambiguous actions. It now
+    supports a highlighted cursor, arrow/tab navigation, Enter/Space to confirm,
+    and Esc to cancel. Wildlife attack confirmation uses this overlay.
 
   COLOURS:
     All colour constants are at the top of the file (C_BG, C_STATUS, etc.).
@@ -305,6 +432,22 @@ One player action = one turn = 2 real minutes of in-game time.
   arrays (for fog of war), and the entity list for one map (one chunk or one
   dungeon floor).
 
+  PERFORMANCE NOTE:
+    GameMap now owns the authoritative entity bookkeeping. New code should use:
+      add_entity(entity)
+      remove_entity(entity)
+      move_entity(entity, new_pos)
+      get_entities_at(x, y)
+      get_blocking_entity_at(x, y)
+    instead of mutating map.entities directly.
+
+    Why this matters:
+      GameMap keeps a per-cell occupancy index and a blocking-entity index.
+      Movement, AI collision checks, auto-pickup, stairs, and debug fixtures no
+      longer need to scan the full entity list just to answer "what is on this
+      tile?" This was a meaningful optimization for crowded scenes and the
+      debug hub.
+
   TILE CONSTANTS:
     TILE_WALL   = 0  (dungeon wall — blocks movement and sight)
     TILE_FLOOR  = 1  (dungeon floor)
@@ -315,8 +458,20 @@ One player action = one turn = 2 real minutes of in-game time.
     TILE_GRASS  = 6  (lush grass near water, walkable)
     TILE_ROAD   = 7  (trade road, walkable — faster travel feel eventually)
 
-  FOV is computed here using a shadowcasting algorithm. You don't need to touch
-  this unless you're changing how sight works fundamentally.
+  FOV is computed here using recursive shadowcasting, which is the classic
+  roguelike approach. Instead of drawing a separate line to every tile, it
+  sweeps outward octant-by-octant and tracks which angular slices are blocked
+  by walls. This scales much better as sight radius grows.
+
+  In practice:
+    compute_fov() clears the visible grid, then runs the shadowcasting sweep.
+    compute_fov_additive() reuses the same sweep without clearing first, which
+    is how static light fixtures extend visibility on top of the player's own
+    sight radius.
+
+  You usually do not need to touch this unless you're changing how sight works
+  fundamentally. For performance-sensitive test spaces such as the debug hub,
+  game_world.gd still bypasses the sweep entirely and simply reveals the room.
 
 
 ── scripts/map/procgen.gd ────────────────────────────────────────────────────
@@ -347,6 +502,9 @@ One player action = one turn = 2 real minutes of in-game time.
                 Has: pos (tile position), char (display glyph), color, name,
                 blocks_movement, light_radius (>0 for placed light fixtures
                 like braziers or road torches).
+                Entities intentionally do NOT store a back-reference to their
+                GameMap. That old pattern formed RefCounted cycles and caused
+                leak warnings at shutdown.
 
   actor.gd    — Extends Entity. Living beings that can move, fight, and die.
                 Adds: hp, max_hp, defense, power, inventory, equipped gear,
@@ -354,6 +512,9 @@ One player action = one turn = 2 real minutes of in-game time.
                 Also holds the six D&D-style attribute scores (str_score through
                 cha_score, default 10) and their computed modifiers.
                 THIRST_MAX = FATIGUE_MAX = 720 turns (1 in-game day).
+                Carrying capacity is weight-based now. Actor.max_carry_weight
+                starts at 60 lbs. and changes by +10 lbs. per point of STR modifier.
+                Actor.total_carry_weight includes both inventory and equipped gear.
 
   npc.gd      — Extends Actor. Village inhabitants built from content/npcs.gd
                 data. Adds: dialogue cycling, trade stock, merchant logic.
@@ -399,7 +560,8 @@ One player action = one turn = 2 real minutes of in-game time.
   add it here in two places: save_game() to write it, and restore() to read it.
   Look at how "thirst" is handled as a template for this.
   Current player progression fields saved here: level, xp, xp_to_next, and
-  unspent_attribute_points.
+  unspent_attribute_points. Dungeon room-lighting state is also serialized here
+  as permanent_light for the active map and all stored maps.
 
 
 ── ui/char_create.gd ─────────────────────────────────────────────────────────
@@ -415,6 +577,17 @@ One player action = one turn = 2 real minutes of in-game time.
 
   To add a new class, append an entry to CLASSES following the existing format
   and add the matching case to _apply_archetype() in game_world.gd.
+
+
+── ui/main_menu.gd ───────────────────────────────────────────────────────────
+
+  WHAT IT IS: The title screen. It now supports both keyboard and mouse input.
+
+  CURRENT INPUT:
+    arrows / numpad — move selection
+    enter / space   — confirm selection
+    mouse hover     — highlights a menu option
+    left click      — activates the hovered option
 
 
 ────────────────────────────────────────────────────────────────────────────────
@@ -508,7 +681,7 @@ Say you want to understand how a merchant ends up in the world with items to sel
   Score 8 → mod -1.  Score 12 → mod +1.  Score 14 → mod +2.  Score 16 → mod +3.
 
   ACTIVE ATTRIBUTES (implemented):
-    STR (Strength)     — +str_mod damage on melee attacks; +2 inventory slots/mod
+    STR (Strength)     — +str_mod damage on melee attacks; +10 lbs. carry/mod
     DEX (Dexterity)    — +dex_mod to Armour Class; future: ranged weapon damage
     CON (Constitution) — +con_mod*3 max HP; slows thirst drain; speeds rest recovery
 

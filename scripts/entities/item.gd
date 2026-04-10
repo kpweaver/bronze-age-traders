@@ -95,6 +95,7 @@ var material: String   = ""
 
 var value: int         = 0   # gold coin amount (TYPE_GOLD only)
 var base_value: int    = 0   # canonical trade / buy-sell price in gold
+var weight: int        = 0   # carrying weight in pounds
 
 var dice_count: int    = 0   # usable items — dice rolled on use
 var dice_sides: int    = 0
@@ -118,6 +119,7 @@ func _init(p_pos: Vector2i, p_type: String, p_value: int) -> void:
 	slot         = str(d.get("slot", SLOT_NONE))
 	material     = str(d.get("material", ""))
 	base_value   = int(d.get("base_value", 0))
+	weight       = int(d.get("weight", 0))
 	dice_count   = int(d.get("dice_count", 0))
 	dice_sides   = int(d.get("dice_sides", 0))
 	attack_bonus  = int(d.get("attack_bonus",  0))
@@ -146,6 +148,10 @@ func _roll() -> int:
 # Human-readable dice label e.g. "1d6".
 func dice_label() -> String:
 	return "%dd%d" % [dice_count, dice_sides]
+
+
+func weight_label() -> String:
+	return "%d lbs." % weight
 
 
 # Applies the item effect to actor. Returns a log message. Usable items only.

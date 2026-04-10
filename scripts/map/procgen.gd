@@ -69,7 +69,8 @@ static func generate_dungeon(
 		if overlaps:
 			continue
 
-		_carve_room(map, new_room)
+		var room_is_lit: bool = _room_is_lit(floor)
+		_carve_room(map, new_room, room_is_lit)
 
 		if rooms.is_empty():
 			player.pos = new_room.center()
@@ -84,14 +85,21 @@ static func generate_dungeon(
 	if not rooms.is_empty():
 		var stairs_pos: Vector2i = rooms.back().center()
 		var stairs := EntityClass.new(stairs_pos, ">", Color(0.90, 0.85, 0.60), "stairs down", false)
-		stairs.game_map = map
-		map.entities.append(stairs)
+		map.add_entity(stairs)
 
 
-static func _carve_room(map, room: RectRoom) -> void:
+static func _carve_room(map, room: RectRoom, is_lit: bool = false) -> void:
 	for y in range(room.y1, room.y2):
 		for x in range(room.x1, room.x2):
 			map.tiles[y][x] = GameMapClass.TILE_FLOOR
+			if is_lit:
+				map.permanent_light[y][x] = true
+
+
+static func _room_is_lit(floor: int) -> bool:
+	# Angband-inspired: shallow rooms are frequently lit; deeper rooms trend dark.
+	var lit_chance: float = clampf(0.85 - float(maxi(0, floor - 1)) * 0.12, 0.18, 0.85)
+	return randf() < lit_chance
 
 
 static func _carve_tunnel(map, a: Vector2i, b: Vector2i) -> void:
@@ -132,8 +140,7 @@ static func _place_monsters(map, room: RectRoom, max_monsters: int, floor: int) 
 			var power := 3  + (floor - 1)
 			monster = ActorClass.new(Vector2i(x, y), "r", Color(0.72, 0.22, 0.10), "raider", hp, 0, power)
 		monster.ai       = HostileAIClass.new(monster)
-		monster.game_map = map
-		map.entities.append(monster)
+		map.add_entity(monster)
 
 
 static func _place_items(map, room: RectRoom, max_items: int, floor: int) -> void:
@@ -156,8 +163,7 @@ static func _place_items(map, room: RectRoom, max_items: int, floor: int) -> voi
 			# Gold — scales with floor
 			var amount := randi_range(5, 15) * floor
 			item = ItemClass.new(Vector2i(x, y), ItemClass.TYPE_GOLD, amount)
-		item.game_map = map
-		map.entities.append(item)
+		map.add_entity(item)
 
 
 static func _item_at(map, x: int, y: int) -> bool:
@@ -411,8 +417,7 @@ static func generate_debug_hub(map) -> void:
 	var quartermaster := NpcClass.new(Vector2i(16, 11), "merchant", merchant_data)
 	quartermaster.trade_stock = _debug_quartermaster_stock()
 	quartermaster.gold = 9999
-	quartermaster.game_map = map
-	map.entities.append(quartermaster)
+	map.add_entity(quartermaster)
 
 	# Armory / sample items.
 	var sample_items: Array[String] = [
@@ -424,8 +429,7 @@ static func generate_debug_hub(map) -> void:
 	var sx: int = 10
 	for item_type: String in sample_items:
 		var item = ItemClass.new(Vector2i(sx, 31), item_type, 0)
-		item.game_map = map
-		map.entities.append(item)
+		map.add_entity(item)
 		sx += 2
 
 	# Central fixtures.
@@ -434,6 +438,11 @@ static func generate_debug_hub(map) -> void:
 	_add_debug_fixture(map, Vector2i(55, 22), "~", Color(0.28, 0.58, 0.92), "healing spring")
 	_add_debug_fixture(map, Vector2i(55, 26), "!", Color(0.78, 0.32, 0.16), "trial brazier")
 	_add_debug_fixture(map, Vector2i(63, 22), "<", Color(0.90, 0.85, 0.60), "return waystone")
+	_add_debug_fixture(map, Vector2i(47, 18), "=", Color(0.88, 0.78, 0.42), "speed marker")
+	var debug_mount_data: Dictionary = NpcDataClass.get_npc("donkey")
+	var debug_mount := NpcClass.new(Vector2i(47, 22), "donkey", debug_mount_data)
+	debug_mount.ai = null
+	map.add_entity(debug_mount)
 
 	# Combat arena fixtures.
 	_place_light_fixture(map, 98, 12, "brazier")
@@ -445,8 +454,7 @@ static func generate_debug_hub(map) -> void:
 
 static func _add_debug_fixture(map, pos: Vector2i, ch: String, col: Color, nm: String) -> void:
 	var fixture = EntityClass.new(pos, ch, col, nm, false)
-	fixture.game_map = map
-	map.entities.append(fixture)
+	map.add_entity(fixture)
 
 
 static func _debug_quartermaster_stock() -> Array:
@@ -806,8 +814,7 @@ static func _place_village(map, world_seed: int, world_x: int, world_y: int) -> 
 			# Non-merchant NPCs wander (diurnal — rest at night); merchants stay put.
 			if not npc.is_merchant:
 				npc.ai = DocileAIClass.new(npc, 0.35, true)
-			npc.game_map = map
-			map.entities.append(npc)
+			map.add_entity(npc)
 			spawned_npc += 1
 
 
@@ -824,7 +831,7 @@ static func _place_furniture(map, x: int, y: int, ch: String, col: Color, nm: St
 	for e in map.entities:
 		if e.pos == Vector2i(x, y) and not (e is ActorClass):
 			return   # don't stack furniture
-	map.entities.append(EntityClass.new(Vector2i(x, y), ch, col, nm, false))
+	map.add_entity(EntityClass.new(Vector2i(x, y), ch, col, nm, false))
 
 
 # Home — hearth, beds, storage jars.
@@ -908,8 +915,7 @@ static func _furnish_admin(map, rng: RandomNumberGenerator, bx: int, by_: int, b
 			continue
 		var ttype: String = READABLE_TABLETS[rng.randi_range(0, READABLE_TABLETS.size() - 1)]
 		var tablet = ItemClass.new(Vector2i(tx, ty), ttype, 0)
-		tablet.game_map = map
-		map.entities.append(tablet)
+		map.add_entity(tablet)
 		placed_tablets += 1
 
 
@@ -952,8 +958,7 @@ static func _place_light_fixture(map, x: int, y: int, nm: String) -> void:
 			return
 	var fixture = EntityClass.new(Vector2i(x, y), "*", Color(1.0, 0.65, 0.10), nm, false)
 	fixture.light_radius = 6
-	fixture.game_map = map
-	map.entities.append(fixture)
+	map.add_entity(fixture)
 
 
 # Place braziers in the village central plaza — permanent light sources.
@@ -1070,6 +1075,5 @@ static func _spawn_wildlife(map, biome: int, world_seed: int, world_x: int, worl
 			var npc := NpcClass.new(Vector2i(tx, ty), npc_type, npc_data)
 			var mc: float = float(npc_data.get("move_chance", 0.35))
 			npc.ai       = DocileAIClass.new(npc, mc, false)  # diurnal=false: active day & night
-			npc.game_map = map
-			map.entities.append(npc)
+			map.add_entity(npc)
 			placed += 1

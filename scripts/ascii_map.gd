@@ -22,7 +22,8 @@ const CELL_H: float = 14.0
 const MAP_ROWS: int      = 44
 const DIVIDER_ROW: int   = 44
 const STATUS_ROW: int    = 46
-const MSG_START_ROW: int = 48
+const STATUS_ROW_2: int  = 47
+const MSG_START_ROW: int = 49
 const MSG_LINES: int     = 3
 
 # ---------------------------------------------------------------------------
@@ -64,6 +65,7 @@ var _escape_cursor: int = 0
 # Overlay screens
 # ---------------------------------------------------------------------------
 enum Screen { NONE, ESCAPE, INVENTORY, CHARACTER, SETTINGS, LOOK, WORLD_MAP, TRAVEL_EVENT, ATTRIBUTE_PICK, TRADE, DISAMBIGUATE, HELP, READER, DIALOGUE }
+enum AutoMoveMode { NONE, EXPLORE, TRAVEL }
 var _screen: Screen              = Screen.NONE
 var _world_look_mode: bool       = false
 var _world_look_cursor: Vector2i = Vector2i.ZERO
@@ -96,6 +98,7 @@ var _trade_panel:       int = 0   # 0 = buy, 1 = sell
 # Disambiguation overlay
 var _disambig_prompt:  String = ""
 var _disambig_options: Array  = []
+var _disambig_cursor: int     = 0
 
 # ---------------------------------------------------------------------------
 # Camera
@@ -103,6 +106,15 @@ var _disambig_options: Array  = []
 var _cam_x: int = 0
 var _cam_y: int = 0
 var _look_pos: Vector2i = Vector2i.ZERO
+var _hover_pos: Vector2i = Vector2i.ZERO
+var _hover_active: bool = false
+var _auto_move_mode: AutoMoveMode = AutoMoveMode.NONE
+var _auto_move_target: Vector2i = Vector2i.ZERO
+var _auto_move_accum: float = 0.0
+var _auto_move_steps_taken: int = 0
+const AUTO_MOVE_STEP_SECONDS: float = 0.05
+const MOUNT_GLYPH_CYCLE_MS: int = 700
+var _mount_cycle_bucket: int = -1
 
 # ---------------------------------------------------------------------------
 # Day/night tint — applied to map tiles and entities only (UI stays lit).
@@ -142,6 +154,7 @@ func _ready() -> void:
 	_font  = _make_font()
 	_world = GameWorldClass.new()
 	add_child(_world)
+	set_process(true)
 	_world.turn_ended.connect(_on_turn_ended)
 	_world.map_changed.connect(_on_map_changed)
 	_world.attribute_points_changed.connect(_on_attribute_points_changed)
@@ -154,6 +167,23 @@ func _ready() -> void:
 	# in case _ready runs before the signal handler is wired (belt-and-suspenders).
 	_day_tint = _compute_day_tint()
 	_open_attribute_overlay_if_needed()
+
+
+func _process(delta: float) -> void:
+	if _world != null and _world.get_player_mount() != null:
+		var bucket: int = int(Time.get_ticks_msec() / MOUNT_GLYPH_CYCLE_MS)
+		if bucket != _mount_cycle_bucket:
+			_mount_cycle_bucket = bucket
+			queue_redraw()
+	if _auto_move_mode == AutoMoveMode.NONE:
+		return
+	if _screen != Screen.NONE or _game_over:
+		_stop_auto_move()
+		return
+	_auto_move_accum += delta
+	while _auto_move_mode != AutoMoveMode.NONE and _auto_move_accum >= AUTO_MOVE_STEP_SECONDS:
+		_auto_move_accum -= AUTO_MOVE_STEP_SECONDS
+		_tick_auto_move()
 
 
 func _make_font() -> Font:
@@ -181,15 +211,175 @@ func _on_map_changed() -> void:
 
 
 func _on_attribute_points_changed(_n: int) -> void:
+	_stop_auto_move()
 	_open_attribute_overlay_if_needed()
 	queue_redraw()
 
 
 func _open_attribute_overlay_if_needed() -> void:
 	if _world != null and _world.has_unspent_attribute_points():
+		_stop_auto_move()
 		_screen = Screen.ATTRIBUTE_PICK
 	elif _screen == Screen.ATTRIBUTE_PICK:
 		_screen = Screen.NONE
+
+
+func _handle_post_player_action() -> void:
+	_open_attribute_overlay_if_needed()
+	if _screen == Screen.NONE and _world.nearby_npc != null and not (_world.nearby_npc as NpcClass).is_wildlife:
+		_open_dialogue(_world.nearby_npc)
+
+
+func _wildlife_at_bump(dir: Vector2i):
+	if dir == Vector2i.ZERO or _map == null:
+		return null
+	var next: Vector2i = _player.pos + dir
+	if not _map.is_in_bounds(next.x, next.y):
+		return null
+	var target = _map.get_blocking_entity_at(next.x, next.y)
+	if target is NpcClass:
+		var npc: NpcClass = target as NpcClass
+		if npc.is_alive and npc.is_wildlife:
+			return npc
+	return null
+
+
+func _maybe_prompt_wildlife_attack(dir: Vector2i, force_attack: bool) -> bool:
+	if force_attack or _screen != Screen.NONE:
+		return false
+	var npc = _wildlife_at_bump(dir)
+	if npc == null:
+		return false
+	_world.nearby_npc = null
+	_disambiguate(
+		"Attack %s?" % str((npc as NpcClass).name),
+		[
+			{"key": KEY_A, "label": "Attack", "callback": Callable(self, "_confirm_wildlife_attack").bind(dir)},
+			{"key": KEY_L, "label": "Leave it be", "callback": Callable(self, "_close_disambig_overlay")},
+		]
+	)
+	return true
+
+
+func _confirm_wildlife_attack(dir: Vector2i) -> void:
+	_close_disambig_overlay()
+	_world.do_player_turn(dir, true)
+	_handle_post_player_action()
+	queue_redraw()
+
+
+func _close_disambig_overlay() -> void:
+	_screen = Screen.NONE
+	_disambig_prompt = ""
+	_disambig_options.clear()
+	_disambig_cursor = 0
+	queue_redraw()
+
+
+func _stop_auto_move(message: String = "") -> void:
+	_auto_move_mode = AutoMoveMode.NONE
+	_auto_move_target = Vector2i.ZERO
+	_auto_move_accum = 0.0
+	_auto_move_steps_taken = 0
+	if not message.is_empty():
+		_world.add_msg(message)
+	queue_redraw()
+
+
+func _start_autoexplore() -> void:
+	if _screen != Screen.NONE or _game_over:
+		return
+	if _auto_move_mode != AutoMoveMode.NONE:
+		_stop_auto_move("Autoexplore stops.")
+		return
+	if _world._visible_hostile_exists():
+		_world.add_msg("Autoexplore stops: danger is already in sight.")
+		queue_redraw()
+		return
+	if _world._next_autoexplore_step() == Vector2i.ZERO:
+		_world.add_msg("There is nothing left to explore.")
+		queue_redraw()
+		return
+	_auto_move_mode = AutoMoveMode.EXPLORE
+	_auto_move_accum = 0.0
+	_auto_move_steps_taken = 0
+	_tick_auto_move()
+
+
+func _start_travel_to(target: Vector2i) -> void:
+	if _screen != Screen.NONE or _game_over:
+		return
+	if _auto_move_mode != AutoMoveMode.NONE:
+		_stop_auto_move()
+	if not _map.is_in_bounds(target.x, target.y) or target == _player.pos:
+		return
+	if _world._visible_hostile_exists():
+		_world.add_msg("Travel stops: danger is already in sight.")
+		queue_redraw()
+		return
+	var path: Array = _world._path_to(target, true)
+	if path.is_empty():
+		_world.add_msg("You cannot find a clear path there.")
+		queue_redraw()
+		return
+	_auto_move_mode = AutoMoveMode.TRAVEL
+	_auto_move_target = target
+	_auto_move_accum = 0.0
+	_auto_move_steps_taken = 0
+	_tick_auto_move()
+
+
+func _tick_auto_move() -> void:
+	match _auto_move_mode:
+		AutoMoveMode.EXPLORE:
+			_tick_autoexplore_step()
+		AutoMoveMode.TRAVEL:
+			_tick_travel_step()
+
+
+func _tick_autoexplore_step() -> void:
+	if _world._visible_hostile_exists():
+		_stop_auto_move("Autoexplore stops: danger is already in sight.")
+		return
+	var dir: Vector2i = _world._next_autoexplore_step()
+	if dir == Vector2i.ZERO:
+		_stop_auto_move("Autoexplore complete." if _auto_move_steps_taken > 0 else "There is nothing left to explore.")
+		return
+	_world.do_player_turn(dir)
+	_auto_move_steps_taken += 1
+	_after_auto_move_step("Autoexplore")
+
+
+func _tick_travel_step() -> void:
+	if _player.pos == _auto_move_target:
+		_stop_auto_move()
+		return
+	if _world._visible_hostile_exists():
+		_stop_auto_move("Travel stops: danger is already in sight.")
+		return
+	var path: Array = _world._path_to(_auto_move_target, true)
+	if path.is_empty():
+		_stop_auto_move("You cannot find a clear path there.")
+		return
+	var next_pos: Vector2i = path[0]
+	var dir: Vector2i = next_pos - _player.pos
+	if maxi(absi(dir.x), absi(dir.y)) > 1:
+		_stop_auto_move("You cannot find a clear path there.")
+		return
+	_world.do_player_turn(dir)
+	_auto_move_steps_taken += 1
+	_after_auto_move_step("Travel")
+	if _auto_move_mode == AutoMoveMode.TRAVEL and _player.pos == _auto_move_target:
+		_stop_auto_move()
+
+
+func _after_auto_move_step(label: String) -> void:
+	_open_attribute_overlay_if_needed()
+	if _auto_move_mode == AutoMoveMode.NONE or _screen != Screen.NONE or _game_over:
+		return
+	if _world._visible_hostile_exists():
+		_stop_auto_move("%s stops: danger spotted." % label)
+		return
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +431,19 @@ func _compute_day_tint() -> Color:
 # ===========================================================================
 
 func _unhandled_input(event: InputEvent) -> void:
+	var should_interrupt_auto_move: bool = false
+	if event is InputEventKey:
+		should_interrupt_auto_move = event.pressed and not event.echo
+	elif event is InputEventMouseButton:
+		should_interrupt_auto_move = event.pressed
+	if _auto_move_mode != AutoMoveMode.NONE and should_interrupt_auto_move:
+		_stop_auto_move()
+	if event is InputEventMouseMotion:
+		_handle_mouse_motion(event)
+		return
+	if event is InputEventMouseButton and event.pressed:
+		_handle_mouse_button(event)
+		return
 	if not event is InputEventKey or not event.pressed:
 		return
 
@@ -348,6 +551,15 @@ func _unhandled_input(event: InputEvent) -> void:
 					})
 				_disambiguate("Trade with which merchant?", options)
 				return
+			KEY_M:
+				get_viewport().set_input_as_handled()
+				_world.toggle_mount()
+				queue_redraw()
+				return
+			KEY_X:
+				get_viewport().set_input_as_handled()
+				_start_autoexplore()
+				return
 
 	if _game_over:
 		if event.physical_keycode == KEY_R and not event.shift_pressed:
@@ -387,17 +599,107 @@ func _unhandled_input(event: InputEvent) -> void:
 		KEY_G:
 			if not event.shift_pressed:
 				_world.auto_pickup()
-				_world.do_enemy_turns()
-				_world.end_turn()
+				_world.resolve_action()
 			return
 		_: return
 
 	get_viewport().set_input_as_handled()
-	_world.do_player_turn(dir, event.shift_pressed and dir != Vector2i.ZERO)
-	_open_attribute_overlay_if_needed()
-	# Open dialogue panel when the player bumps a non-wildlife NPC.
+	var force_attack: bool = event.shift_pressed and dir != Vector2i.ZERO
+	if _maybe_prompt_wildlife_attack(dir, force_attack):
+		return
+	_world.do_player_turn(dir, force_attack)
+	_handle_post_player_action()
+
+
+func _handle_mouse_motion(event: InputEventMouseMotion) -> void:
+	var cell := _mouse_cell(event.position)
+	var map_pos := Vector2i(cell.x + _cam_x, cell.y + _cam_y)
+	var should_highlight: bool = cell.y >= 0 and cell.y < MAP_ROWS and _map != null and _map.is_in_bounds(map_pos.x, map_pos.y)
+	if _screen == Screen.NONE:
+		_hover_active = should_highlight and _map.explored[map_pos.y][map_pos.x]
+		if _hover_active:
+			_hover_pos = map_pos
+	elif _screen == Screen.LOOK:
+		_hover_active = false
+		if should_highlight and _map.explored[map_pos.y][map_pos.x]:
+			_look_pos = map_pos
+	else:
+		_hover_active = false
+	if _screen == Screen.NONE or _screen == Screen.LOOK:
+		queue_redraw()
+
+
+func _handle_mouse_button(event: InputEventMouseButton) -> void:
+	if event.button_index == MOUSE_BUTTON_RIGHT:
+		match _screen:
+			Screen.LOOK, Screen.INVENTORY, Screen.CHARACTER, Screen.SETTINGS, Screen.TRADE, Screen.HELP, Screen.READER, Screen.DIALOGUE:
+				_screen = Screen.NONE
+				queue_redraw()
+				get_viewport().set_input_as_handled()
+		return
+	if event.button_index != MOUSE_BUTTON_LEFT:
+		return
+
+	match _screen:
+		Screen.NONE:
+			_handle_map_mouse_click(event.position)
+		Screen.LOOK:
+			_handle_look_mouse_click(event.position)
+		Screen.ESCAPE:
+			_handle_escape_mouse_click(event.position)
+		Screen.SETTINGS:
+			_handle_settings_mouse_click(event.position)
+		Screen.INVENTORY:
+			_handle_inventory_mouse_click(event.position)
+		Screen.TRADE:
+			_handle_trade_mouse_click(event.position)
+		Screen.CHARACTER, Screen.HELP, Screen.READER, Screen.DIALOGUE:
+			_screen = Screen.NONE
+			queue_redraw()
+
+
+func _mouse_cell(mouse_pos: Vector2) -> Vector2i:
+	return Vector2i(int(floor(mouse_pos.x / CELL_W)), int(floor(mouse_pos.y / CELL_H)))
+
+
+func _screen_to_map(cell: Vector2i) -> Vector2i:
+	return Vector2i(cell.x + _cam_x, cell.y + _cam_y)
+
+
+func _handle_map_mouse_click(mouse_pos: Vector2) -> void:
+	var cell := _mouse_cell(mouse_pos)
+	if cell.y < 0 or cell.y >= MAP_ROWS:
+		return
+	var map_pos := _screen_to_map(cell)
+	if not _map.is_in_bounds(map_pos.x, map_pos.y) or not _map.explored[map_pos.y][map_pos.x]:
+		return
+
+	var delta: Vector2i = map_pos - _player.pos
+	if maxi(absi(delta.x), absi(delta.y)) <= 1 and delta != Vector2i.ZERO:
+		get_viewport().set_input_as_handled()
+		var step := Vector2i(clampi(delta.x, -1, 1), clampi(delta.y, -1, 1))
+		if _maybe_prompt_wildlife_attack(step, false):
+			return
+		_world.do_player_turn(step, false)
+		_handle_post_player_action()
+		return
+	get_viewport().set_input_as_handled()
+	_start_travel_to(map_pos)
 	if _screen == Screen.NONE and _world.nearby_npc != null and not (_world.nearby_npc as NpcClass).is_wildlife:
 		_open_dialogue(_world.nearby_npc)
+	queue_redraw()
+
+
+func _handle_look_mouse_click(mouse_pos: Vector2) -> void:
+	var cell := _mouse_cell(mouse_pos)
+	if cell.y < 0 or cell.y >= MAP_ROWS:
+		return
+	var map_pos := _screen_to_map(cell)
+	if not _map.is_in_bounds(map_pos.x, map_pos.y) or not _map.explored[map_pos.y][map_pos.x]:
+		return
+	_look_pos = map_pos
+	get_viewport().set_input_as_handled()
+	queue_redraw()
 
 
 func _handle_escape_input(event: InputEvent) -> void:
@@ -432,6 +734,87 @@ func _confirm_escape() -> void:
 			get_tree().quit()
 
 
+func _handle_escape_mouse_click(mouse_pos: Vector2) -> void:
+	const BOX_W := 52
+	const BOX_H := 12
+	const BOX_X := (COLS - BOX_W) >> 1
+	const BOX_Y := (MAP_ROWS - BOX_H) >> 1
+	var cell := _mouse_cell(mouse_pos)
+	if cell.x < BOX_X or cell.x >= BOX_X + BOX_W or cell.y < BOX_Y or cell.y >= BOX_Y + BOX_H:
+		return
+	var idx: int = cell.y - (BOX_Y + 3)
+	if idx >= 0 and idx < ESCAPE_OPTIONS.size():
+		_escape_cursor = idx
+		_confirm_escape()
+
+
+func _activate_inventory_item(item) -> void:
+	if item.category == ItemClass.CATEGORY_EQUIPMENT:
+		var msg: String = _player.equip(item)
+		_world.add_msg(msg)
+		_screen = Screen.NONE
+		_world.resolve_action()
+	elif item.category == ItemClass.CATEGORY_USABLE:
+		var msg: String = item.use(_player)
+		if msg != "":
+			_world.add_msg(msg)
+			_player.inventory.erase(item)
+			_screen = Screen.NONE
+			_world.resolve_action()
+	elif item.category == ItemClass.CATEGORY_READABLE:
+		_open_reader(item)
+	else:
+		queue_redraw()
+
+
+func _inventory_item_at_row(row: int):
+	var current_row: int = 5
+	var section_order := ["weapons", "armor", "lights", "consumables", "goods", "tablets", "other"]
+	for section_key in section_order:
+		var section_items: Array = []
+		for item in _player.inventory:
+			if _inventory_section_key(item) == section_key:
+				section_items.append(item)
+		if section_items.is_empty():
+			continue
+		if row == current_row:
+			return null
+		current_row += 1
+		for item in section_items:
+			if row == current_row:
+				return item
+			current_row += 1
+		current_row += 1
+	return null
+
+
+func _handle_inventory_mouse_click(mouse_pos: Vector2) -> void:
+	const BOX_X := 2
+	const BOX_Y := 1
+	const BOX_W := 116
+	const BOX_H := 32
+	const LEFT_X := BOX_X + 2
+	const RIGHT_X := BOX_X + 77
+	const RIGHT_W := 35
+	var cell := _mouse_cell(mouse_pos)
+	if cell.x < BOX_X or cell.x >= BOX_X + BOX_W or cell.y < BOX_Y or cell.y >= BOX_Y + BOX_H:
+		return
+	if cell.x >= LEFT_X and cell.x < 73:
+		var item = _inventory_item_at_row(cell.y)
+		if item != null:
+			_activate_inventory_item(item)
+			return
+	for si in range(5):
+		var label_row: int = BOX_Y + 6 + si * 2
+		if cell.x >= RIGHT_X and cell.x < RIGHT_X + RIGHT_W and cell.y >= label_row and cell.y <= label_row + 2:
+			var slot_key: String = [ItemClass.SLOT_WEAPON, ItemClass.SLOT_BODY, ItemClass.SLOT_FEET, ItemClass.SLOT_HEAD, ItemClass.SLOT_LIGHT][si]
+			var msg: String = _player.unequip(slot_key)
+			if msg != "":
+				_world.add_msg(msg)
+				queue_redraw()
+			return
+
+
 func _handle_inventory_input(event: InputEvent) -> void:
 	get_viewport().set_input_as_handled()
 	var key: int = event.physical_keycode
@@ -457,28 +840,11 @@ func _handle_inventory_input(event: InputEvent) -> void:
 			return
 
 	# a–t — use / equip / read depending on item category (unshifted only).
-	if not event.shift_pressed and key >= KEY_A and key <= KEY_T:
+	if not event.shift_pressed and key >= KEY_A and key <= KEY_Z:
 		var idx: int = key - KEY_A
-		if idx < _player.inventory.size():
-			var item = _player.inventory[idx]
-			if item.category == ItemClass.CATEGORY_EQUIPMENT:
-				var msg: String = _player.equip(item)
-				_world.add_msg(msg)
-				_screen = Screen.NONE
-				_world.do_enemy_turns()
-				_world.end_turn()
-			elif item.category == ItemClass.CATEGORY_USABLE:
-				var msg: String = item.use(_player)
-				if msg != "":
-					_world.add_msg(msg)
-					_player.inventory.remove_at(idx)
-					_screen = Screen.NONE
-					_world.do_enemy_turns()
-					_world.end_turn()
-			elif item.category == ItemClass.CATEGORY_READABLE:
-				_open_reader(item)
-			else:
-				queue_redraw()
+		var display_items: Array = _inventory_display_items()
+		if idx < display_items.size():
+			_activate_inventory_item(display_items[idx])
 
 
 # ---------------------------------------------------------------------------
@@ -580,6 +946,26 @@ func _handle_settings_input(event: InputEvent) -> void:
 				queue_redraw()
 
 
+func _handle_settings_mouse_click(mouse_pos: Vector2) -> void:
+	const BOX_W := 54
+	const BOX_H := 13
+	const BOX_X := (COLS - BOX_W) >> 1
+	const BOX_Y := (MAP_ROWS - BOX_H) >> 1
+	var cell := _mouse_cell(mouse_pos)
+	if cell.x < BOX_X or cell.x >= BOX_X + BOX_W or cell.y < BOX_Y or cell.y >= BOX_Y + BOX_H:
+		return
+	match cell.y:
+		BOX_Y + 3:
+			GameState.auto_pickup = not GameState.auto_pickup
+		BOX_Y + 4:
+			GameState.debug_tools_enabled = not GameState.debug_tools_enabled
+		BOX_Y + 5:
+			GameState.god_mode = not GameState.god_mode
+		_:
+			return
+	queue_redraw()
+
+
 func _handle_look_input(event: InputEvent) -> void:
 	get_viewport().set_input_as_handled()
 	var moved := true
@@ -628,8 +1014,12 @@ func _look_description() -> String:
 		return "You remember: %s." % tile
 
 	var names: Array[String] = []
-	for e in _map.entities:
-		if e.pos == Vector2i(x, y):
+	for e in _map.get_entities_at(x, y):
+		if e == _player:
+			names.append("you")
+		elif e is ActorClass and e.is_mounted:
+			names.append("%s (mounted)" % e.name)
+		else:
 			names.append(e.name as String)
 	if names.is_empty():
 		return "You see: %s." % tile
@@ -710,11 +1100,9 @@ func _dir_to_arrow(d: Vector2i) -> String:
 func _disambiguate(prompt: String, options: Array) -> void:
 	if options.is_empty():
 		return
-	if options.size() == 1:
-		(options[0].callback as Callable).call()
-		return
 	_disambig_prompt  = prompt
 	_disambig_options = options
+	_disambig_cursor  = 0
 	_screen           = Screen.DISAMBIGUATE
 	queue_redraw()
 
@@ -722,12 +1110,24 @@ func _disambiguate(prompt: String, options: Array) -> void:
 func _handle_disambig_input(event: InputEvent) -> void:
 	get_viewport().set_input_as_handled()
 	if event.physical_keycode == KEY_ESCAPE:
-		_screen = Screen.NONE
-		queue_redraw()
+		_close_disambig_overlay()
 		return
+	match event.physical_keycode:
+		KEY_UP, KEY_LEFT:
+			_disambig_cursor = wrapi(_disambig_cursor - 1, 0, _disambig_options.size())
+			queue_redraw()
+			return
+		KEY_DOWN, KEY_RIGHT, KEY_TAB:
+			_disambig_cursor = wrapi(_disambig_cursor + 1, 0, _disambig_options.size())
+			queue_redraw()
+			return
+		KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
+			if not _disambig_options.is_empty():
+				var selected: Dictionary = _disambig_options[_disambig_cursor]
+				(selected.callback as Callable).call()
+			return
 	for opt: Dictionary in _disambig_options:
 		if event.physical_keycode == int(opt.key):
-			_screen = Screen.NONE
 			(opt.callback as Callable).call()
 			return
 
@@ -781,6 +1181,8 @@ func _draw() -> void:
 		return
 	_draw_map()
 	_draw_entities()
+	if _screen == Screen.NONE:
+		_draw_hover_cursor()
 	_draw_ui()
 	match _screen:
 		Screen.ESCAPE:       _draw_escape_menu()
@@ -833,22 +1235,41 @@ func _draw_entities() -> void:
 	var cell_map: Dictionary = {}
 
 	for e in _map.entities:
-		if not (e is ActorClass) and _on_screen(e.pos.x, e.pos.y) \
-				and _map.visible[e.pos.y][e.pos.x]:
-			cell_map[_to_screen(e.pos.x, e.pos.y)] = e
-	for e in _map.entities:
-		if (e is ActorClass) and not e.is_alive and _on_screen(e.pos.x, e.pos.y) \
-				and _map.visible[e.pos.y][e.pos.x]:
-			cell_map[_to_screen(e.pos.x, e.pos.y)] = e
-	for e in _map.entities:
-		if (e is ActorClass) and e.is_alive and _on_screen(e.pos.x, e.pos.y) \
-				and _map.visible[e.pos.y][e.pos.x]:
-			cell_map[_to_screen(e.pos.x, e.pos.y)] = e
+		if not _on_screen(e.pos.x, e.pos.y) or not _map.visible[e.pos.y][e.pos.x]:
+			continue
+		var sp := _to_screen(e.pos.x, e.pos.y)
+		if not cell_map.has(sp):
+			cell_map[sp] = []
+		(cell_map[sp] as Array).append(e)
 
 	for sp in cell_map:
-		var e = cell_map[sp]
+		var e = _display_entity_for_cell(cell_map[sp] as Array)
+		if e == null:
+			continue
 		draw_rect(Rect2(sp.x * CELL_W, sp.y * CELL_H, CELL_W, CELL_H), C_BG)
 		_put(sp.x, sp.y, e.char as String, e.color * _day_tint)
+
+
+func _display_entity_for_cell(entities_on_cell: Array):
+	var mounted_player_stack: Array = []
+	for e in entities_on_cell:
+		if e == _player or (e is ActorClass and e.is_mounted):
+			mounted_player_stack.append(e)
+	if mounted_player_stack.size() >= 2:
+		for e in mounted_player_stack:
+			if e != _player and e is ActorClass and e.is_mounted:
+				return e if (_mount_cycle_bucket % 2 == 0) else _player
+
+	var best = null
+	var best_priority: int = -1
+	for e in entities_on_cell:
+		var priority: int = 0
+		if e is ActorClass:
+			priority = 2 if e.is_alive else 1
+		if priority >= best_priority:
+			best_priority = priority
+			best = e
+	return best
 
 
 func _draw_ui() -> void:
@@ -866,6 +1287,11 @@ func _draw_ui() -> void:
 	if lit != null:
 		var lt := lit as ItemClass
 		lit_str = "  LIT: %dt" % lt.value if lt.burn_turns > 0 else "  LIT"
+	var mount = _world.get_player_mount()
+	var mount_str := ""
+	if mount != null:
+		mount_str = "  MOUNT: %s" % mount.name
+	var move_cost_str := "  MOVE: %s" % _world.get_move_cost_label()
 	var cal_str: String   = _world.get_calendar_string()
 	var phase_str: String = _world.get_day_phase()
 	var thr_pct: int      = int(float(_player.thirst)  / float(ActorClass.THIRST_MAX)  * 100.0)
@@ -873,11 +1299,13 @@ func _draw_ui() -> void:
 	var thr_str: String   = ("  THR: %d%%" % thr_pct) if _floor == 0 else ""
 	var fat_str: String   = "  FAT: %d%%" % fat_pct
 	var floor_label: String = "HUB" if _world.debug_hub_active else str(_floor)
-	var status := "Lvl: %d   HP: %d/%d   ATK: 1d6+%d  AC: %d   Gold: %d   Floor: %s   %s  %s%s%s%s%s" % [
+	var status_top := "Lvl: %d   HP: %d/%d   ATK: 1d6+%d  AC: %d   Gold: %d   Floor: %s   %s  %s" % [
 		_player.level, _player.hp, _player.max_hp, _player.power + _player.total_attack_bonus,
-		_player.ac, _player.gold, floor_label, cal_str, phase_str, thr_str, fat_str, wpn_str, lit_str
+		_player.ac, _player.gold, floor_label, cal_str, phase_str
 	]
-	_puts(0, STATUS_ROW, status, hp_color)
+	var status_bottom := "%s%s%s%s%s" % [thr_str, fat_str, wpn_str, lit_str, mount_str + move_cost_str]
+	_puts(0, STATUS_ROW, status_top, hp_color)
+	_puts(0, STATUS_ROW_2, status_bottom.strip_edges(), C_STATUS)
 
 	if _screen == Screen.LOOK:
 		draw_rect(
@@ -893,7 +1321,7 @@ func _draw_ui() -> void:
 			Rect2(0, MSG_START_ROW * CELL_H, COLS * CELL_W, MSG_LINES * CELL_H),
 			C_BG
 		)
-		_puts(0, MSG_START_ROW, _world_map_look_label(), C_MSG_RECENT)
+		_puts(0, MSG_START_ROW, "%s  [travel %d]" % [_world_map_look_label(), _world.get_world_map_travel_cost(_world_look_cursor)], C_MSG_RECENT)
 		_puts(0, MSG_START_ROW + 1, "arrows: move look cursor    l/esc: exit look", C_DIVIDER)
 		return
 
@@ -971,8 +1399,10 @@ func _draw_inventory() -> void:
 	const BOX_Y := 1
 	const BOX_W := 116
 	const BOX_H := 32
-	const PACK_X  := BOX_X + 2
-	const EQUIP_X := BOX_X + 64
+	const LEFT_X := BOX_X + 2
+	const RIGHT_X := BOX_X + 77
+	const LEFT_W := 70
+	const RIGHT_W := 35
 
 	draw_rect(Rect2(Vector2.ZERO, Vector2(COLS * CELL_W, ROWS * CELL_H)), Color(0, 0, 0, 0.85))
 	draw_rect(Rect2(BOX_X * CELL_W, BOX_Y * CELL_H, BOX_W * CELL_W, BOX_H * CELL_H), C_BG)
@@ -980,31 +1410,67 @@ func _draw_inventory() -> void:
 
 	var title := "-=[ INVENTORY ]=-"
 	_puts(BOX_X + ((BOX_W - title.length()) >> 1), BOX_Y, title, C_STATUS)
+	for dy in range(2, BOX_H - 1):
+		_puts(BOX_X + 73, BOX_Y + dy, "|", C_DIVIDER)
 
-	# Left panel: pack
-	_puts(PACK_X, BOX_Y + 2, "PACK  (%d/%d)" % [_player.inventory.size(), _player.max_inventory], C_STATUS)
+	# Left panel: grouped inventory list, closer to a classic roguelike gear view.
+	var load_header := "PACK"
+	var load_value := "[%s / %s]" % [_format_lbs(_player.total_carry_weight), _format_lbs(_player.max_carry_weight)]
+	_puts(LEFT_X, BOX_Y + 2, load_header, C_STATUS)
+	_puts(LEFT_X + LEFT_W - load_value.length(), BOX_Y + 2, load_value, C_STATUS)
+
+	var section_order := ["weapons", "armor", "lights", "consumables", "goods", "tablets", "other"]
+	var section_items: Dictionary = {}
+	for section_key in section_order:
+		section_items[section_key] = []
+	for item in _player.inventory:
+		var section_key := _inventory_section_key(item)
+		(section_items[section_key] as Array).append(item)
+
+	var row: int = BOX_Y + 4
+	var next_letter_ord: int = ord("a")
+	for section_key in section_order:
+		var items: Array = section_items[section_key]
+		if items.is_empty():
+			continue
+		var section_weight: int = 0
+		for item in items:
+			section_weight += int(item.weight)
+		var section_label := "[-] %s" % _inventory_section_title(section_key)
+		var section_value := "[%s]" % _format_lbs(section_weight)
+		_puts(LEFT_X, row, section_label, C_STATUS)
+		_puts(LEFT_X + LEFT_W - section_value.length(), row, section_value, C_STATUS)
+		row += 1
+
+		for item in items:
+			if row >= BOX_Y + BOX_H - 3:
+				break
+			var letter := "?"
+			if next_letter_ord <= ord("z"):
+				letter = char(next_letter_ord)
+			var detail: String = _inventory_item_detail(item)
+			var detail_col: String = "%-10s" % detail if not detail.is_empty() else "          "
+			var weight_col := "[%s]" % item.weight_label()
+			_puts(LEFT_X + 2, row,
+				"%s) %-28s %s %s" % [letter, item.name, detail_col, weight_col],
+				C_MSG_RECENT)
+			next_letter_ord += 1
+			row += 1
+		row += 1
+
 	if _player.inventory.is_empty():
-		_puts(PACK_X, BOX_Y + 4, "Your pack is empty.", C_MSG_OLD)
-	else:
-		for i in range(_player.inventory.size()):
-			var item = _player.inventory[i]
-			var sl   := char(ord("a") + i)
-			var tag  := ""
-			if item.category == ItemClass.CATEGORY_EQUIPMENT:
-				tag = "  [equip]"
-			elif item.category == ItemClass.CATEGORY_USABLE:
-				tag = "  (%s HP)" % item.dice_label()
-			elif item.category == ItemClass.CATEGORY_READABLE:
-				tag = "  [read]"
-			elif item.category == ItemClass.CATEGORY_TRADE and item.base_value > 0:
-				tag = "  (%dg)" % item.base_value
-			_puts(PACK_X, BOX_Y + 4 + i,
-				"%s) %-28s%s" % [sl, item.name, tag], C_MSG_RECENT)
+		_puts(LEFT_X, BOX_Y + 5, "Your pack is empty.", C_MSG_OLD)
 
-	_puts(PACK_X, BOX_Y + BOX_H - 4, "Gold: %d" % _player.gold, C_GOLD)
+	# Bottom-left summary block.
+	_puts(LEFT_X, BOX_Y + BOX_H - 6, "Carry: %s / %s" %
+		[_format_lbs(_player.total_carry_weight), _format_lbs(_player.max_carry_weight)], C_MSG_RECENT)
+	_puts(LEFT_X, BOX_Y + BOX_H - 5, "STR bonus: %+d lbs." %
+		(_player.max_carry_weight - ActorClass.BASE_CARRY_WEIGHT), C_MSG_RECENT)
+	_puts(LEFT_X, BOX_Y + BOX_H - 4, "Gold: %d" % _player.gold, C_GOLD)
 
-	# Right panel: equipped gear
-	_puts(EQUIP_X, BOX_Y + 2, "EQUIPPED", C_STATUS)
+	# Right panel: equipment only.
+	_puts(RIGHT_X, BOX_Y + 2, "LOADOUT", C_STATUS)
+	_puts(RIGHT_X, BOX_Y + 4, "EQUIPPED", C_STATUS)
 	var slot_rows: Array = [
 		[ItemClass.SLOT_WEAPON, "w) WEAPON"],
 		[ItemClass.SLOT_BODY,   "b) BODY  "],
@@ -1019,18 +1485,22 @@ func _draw_inventory() -> void:
 		var eq    = _player.equipped.get(s_key)
 		if eq != null:
 			var eq_item: ItemClass = eq as ItemClass
-			var bonus_str := ""
-			if eq_item.attack_bonus  > 0: bonus_str = "  (+%d atk)" % eq_item.attack_bonus
-			if eq_item.defense_bonus > 0: bonus_str = "  (+%d def)" % eq_item.defense_bonus
-			if s_key == ItemClass.SLOT_LIGHT and eq_item.burn_turns > 0:
-				bonus_str = "  (%dt left)" % eq_item.value
-			_puts(EQUIP_X, BOX_Y + 4 + si * 2,
-				"%s: %-20s%s" % [s_lbl, eq_item.name, bonus_str], C_MSG_RECENT)
+			var bonus_str := _inventory_item_detail(eq_item)
+			var weight_str := "[%s]" % eq_item.weight_label()
+			_puts(RIGHT_X, BOX_Y + 6 + si * 2,
+				"%s" % s_lbl, C_STATUS)
+			_puts(RIGHT_X + 2, BOX_Y + 7 + si * 2, eq_item.name.left(18), C_MSG_RECENT)
+			_puts(RIGHT_X + RIGHT_W - weight_str.length(), BOX_Y + 7 + si * 2, weight_str, C_MSG_RECENT)
+			if not bonus_str.is_empty():
+				_puts(RIGHT_X + 2, BOX_Y + 8 + si * 2, bonus_str.left(RIGHT_W - 4), C_MSG_OLD)
 		else:
-			_puts(EQUIP_X, BOX_Y + 4 + si * 2, "%s: -" % s_lbl, C_MSG_OLD)
+			_puts(RIGHT_X, BOX_Y + 6 + si * 2, "%s" % s_lbl, C_STATUS)
+			_puts(RIGHT_X + 2, BOX_Y + 7 + si * 2, "-", C_MSG_OLD)
 
-	var hint := "[a-t] use / equip / read   [w/b/f/h/u] unequip   [Esc] close"
-	_puts(BOX_X + ((BOX_W - hint.length()) >> 1), BOX_Y + BOX_H - 2, hint, C_DIVIDER)
+	var left_hint := "[a-z] use / equip / read"
+	var right_hint := "[w/b/f/h/u] unequip  [Esc] close"
+	_puts(LEFT_X + ((LEFT_W - left_hint.length()) >> 1), BOX_Y + BOX_H - 2, left_hint, C_DIVIDER)
+	_puts(RIGHT_X + ((RIGHT_W - right_hint.length()) >> 1), BOX_Y + BOX_H - 2, right_hint, C_DIVIDER)
 
 
 # ---------------------------------------------------------------------------
@@ -1054,6 +1524,8 @@ func _draw_character_sheet() -> void:
 	_stat_line(BOX_X + 4, r, "Class", GameState.player_class.capitalize());          r += 1
 	_stat_line(BOX_X + 4, r, "Level", str(_player.level));                           r += 1
 	_stat_line(BOX_X + 4, r, "XP",    "%d / %d" % [_player.xp, _player.xp_to_next]); r += 1
+	var mount = _world.get_player_mount()
+	_stat_line(BOX_X + 4, r, "Mount", mount.name.capitalize() if mount != null else "None"); r += 1
 	r += 1
 	_stat_line(BOX_X + 4, r, "Floor", "HUB" if _world.debug_hub_active else str(_floor)); r += 1
 	r += 1
@@ -1069,8 +1541,10 @@ func _draw_character_sheet() -> void:
 	_stat_line(BOX_X + 4, r, "AC", ac_str); r += 1
 	r += 1
 	_stat_line(BOX_X + 4, r, "Gold", str(_player.gold), C_GOLD); r += 1
-	_stat_line(BOX_X + 4, r, "Pack",
-		"%d / %d items" % [_player.inventory.size(), _player.max_inventory]); r += 1
+	_stat_line(BOX_X + 4, r, "Carry",
+		"%s / %s" % [_format_lbs(_player.total_carry_weight), _format_lbs(_player.max_carry_weight)]); r += 1
+	_stat_line(BOX_X + 4, r, "STR Carry",
+		"%+d lbs." % (_player.max_carry_weight - ActorClass.BASE_CARRY_WEIGHT)); r += 1
 	r += 1
 	_stat_line(BOX_X + 4, r, "STR", "%d (%+d)" % [_player.str_score, _player.str_mod]); r += 1
 	_stat_line(BOX_X + 4, r, "DEX", "%d (%+d)" % [_player.dex_score, _player.dex_mod]); r += 1
@@ -1114,6 +1588,16 @@ func _draw_look_cursor() -> void:
 	draw_rect(
 		Rect2(sp.x * CELL_W, sp.y * CELL_H, CELL_W, CELL_H),
 		Color(0.20, 0.75, 0.90, 0.40)
+	)
+
+
+func _draw_hover_cursor() -> void:
+	if not _hover_active or not _on_screen(_hover_pos.x, _hover_pos.y):
+		return
+	var sp := _to_screen(_hover_pos.x, _hover_pos.y)
+	draw_rect(
+		Rect2(sp.x * CELL_W, sp.y * CELL_H, CELL_W, CELL_H),
+		Color(0.85, 0.72, 0.20, 0.24)
 	)
 
 
@@ -1182,10 +1666,12 @@ func _draw_disambig_overlay() -> void:
 			KEY_LEFT:  arrow = "<"
 			KEY_RIGHT: arrow = ">"
 			_:         arrow = char(int(opt.key))
+		var prefix: String = "> " if i == _disambig_cursor else "  "
+		var color: Color = C_STATUS if i == _disambig_cursor else C_MSG_RECENT
 		_puts(box_x + PAD, box_y + 3 + i,
-			"[%s]  %s" % [arrow, str(opt.label)], C_MSG_RECENT)
+			"%s[%s]  %s" % [prefix, arrow, str(opt.label)], color)
 
-	_puts(box_x + ((box_w - 11) >> 1), box_y + box_h - 2, "[Esc] cancel", C_DIVIDER)
+	_puts(box_x + ((box_w - 25) >> 1), box_y + box_h - 2, "[Enter] confirm  [Esc] cancel", C_DIVIDER)
 
 
 func _draw_travel_event_overlay() -> void:
@@ -1245,6 +1731,7 @@ func _draw_help_screen() -> void:
 	_help_row(COL1, r, "numpad 5 / .",    "wait one turn");   r += 1
 	r += 1
 	_puts(COL1, r, "ACTIONS", C_STATUS); r += 1
+	_help_row(COL1, r, "m",           "mount / dismount");       r += 1
 	_help_row(COL1, r, "g",           "pick up items");           r += 1
 	_help_row(COL1, r, "s",           "skin/butcher carcass");    r += 1
 	_help_row(COL1, r, "t",           "trade (near merchant)");   r += 1
@@ -1263,7 +1750,7 @@ func _draw_help_screen() -> void:
 	_help_row(COL2, r, "Esc",  "pause menu");       r += 1
 	r += 1
 	_puts(COL2, r, "INVENTORY", C_STATUS); r += 1
-	_help_row(COL2, r, "a-t",    "use / equip item"); r += 1
+	_help_row(COL2, r, "a-z",    "use / equip item"); r += 1
 	_help_row(COL2, r, "w/b/f/h/u","unequip slot");   r += 1
 	r += 1
 	_puts(COL2, r, "TRADE", C_STATUS); r += 1
@@ -1356,9 +1843,10 @@ func _draw_trade_screen() -> void:
 			var itype := str(entry.get("item_type", ""))
 			var qty   := int(entry.get("qty", 0))
 			var price := int(entry.get("price", 0))
+			var weight := _item_weight_for_type(itype)
 			var color := C_STATUS if (_trade_panel == 0 and i == _trade_buy_cursor) else C_MSG_RECENT
 			_puts(BUY_X, BOX_Y + 4 + i,
-				"%s) %-24s %3dg  (x%d)" % [sl, itype.replace("_", " "), price, qty], color)
+				"%s) %-16s %3dg %8s (x%d)" % [sl, itype.replace("_", " "), price, _format_lbs(weight), qty], color)
 
 	# Right panel: player sells
 	_puts(SELL_X, BOX_Y + 2, "YOUR PACK", C_STATUS)
@@ -1372,7 +1860,7 @@ func _draw_trade_screen() -> void:
 			var offer: int = npc.buy_price(item)
 			var color := C_STATUS if (_trade_panel == 1 and i == _trade_sell_cursor) else C_MSG_RECENT
 			_puts(SELL_X, BOX_Y + 4 + i,
-				"%s) %-24s %3dg" % [sl, (item as ItemClass).name, offer], color)
+				"%s) %-16s %3dg %8s" % [sl, (item as ItemClass).name, offer, _format_lbs(int((item as ItemClass).weight))], color)
 
 	_puts(BUY_X, BOX_Y + BOX_H - 4, "Gold: %d" % _player.gold, C_GOLD)
 
@@ -1390,6 +1878,138 @@ func _build_sellable() -> Array:
 		if item.category != ItemClass.CATEGORY_GOLD and item.base_value > 0:
 			result.append(item)
 	return result
+
+
+func _item_weight_for_type(item_type: String) -> int:
+	return int(ItemClass.new(Vector2i.ZERO, item_type, 0).weight)
+
+
+func _format_lbs(weight: int) -> String:
+	return "%d lbs." % weight
+
+
+func _inventory_section_key(item) -> String:
+	if item.category == ItemClass.CATEGORY_EQUIPMENT:
+		match item.slot:
+			ItemClass.SLOT_WEAPON:
+				return "weapons"
+			ItemClass.SLOT_BODY, ItemClass.SLOT_FEET, ItemClass.SLOT_HEAD:
+				return "armor"
+			ItemClass.SLOT_LIGHT:
+				return "lights"
+	if item.category == ItemClass.CATEGORY_USABLE:
+		return "consumables"
+	if item.category == ItemClass.CATEGORY_TRADE:
+		return "goods"
+	if item.category == ItemClass.CATEGORY_READABLE:
+		return "tablets"
+	return "other"
+
+
+func _inventory_section_title(section_key: String) -> String:
+	match section_key:
+		"weapons": return "WEAPONS"
+		"armor": return "ARMOR"
+		"lights": return "LIGHT SOURCES"
+		"consumables": return "CONSUMABLES"
+		"goods": return "TRADE GOODS"
+		"tablets": return "TABLETS"
+		_: return "OTHER"
+
+
+func _inventory_item_detail(item) -> String:
+	if item.category == ItemClass.CATEGORY_EQUIPMENT:
+		if item.attack_bonus > 0:
+			return "+%d atk" % item.attack_bonus
+		if item.defense_bonus > 0:
+			return "+%d def" % item.defense_bonus
+		if item.slot == ItemClass.SLOT_LIGHT and item.burn_turns > 0:
+			return "%dt left" % item.value
+		return "equip"
+	if item.category == ItemClass.CATEGORY_USABLE:
+		return item.dice_label()
+	if item.category == ItemClass.CATEGORY_READABLE:
+		return "read"
+	if item.category == ItemClass.CATEGORY_TRADE and item.base_value > 0:
+		return "%dg" % item.base_value
+	return ""
+
+
+func _inventory_display_items() -> Array:
+	var ordered: Array = []
+	var section_order := ["weapons", "armor", "lights", "consumables", "goods", "tablets", "other"]
+	for section_key in section_order:
+		for item in _player.inventory:
+			if _inventory_section_key(item) == section_key:
+				ordered.append(item)
+	return ordered
+
+
+func _trade_buy(idx: int) -> void:
+	if _trade_npc == null:
+		return
+	var npc: NpcClass = _trade_npc as NpcClass
+	if idx < 0 or idx >= npc.trade_stock.size():
+		return
+	var entry: Dictionary = npc.trade_stock[idx]
+	var price: int = int(entry.get("price", 0))
+	var qty: int = int(entry.get("qty", 0))
+	var itype: String = str(entry.get("item_type", ""))
+	if qty <= 0:
+		_world.add_msg("The %s has no more %s." % [npc.name, itype.replace("_", " ")])
+	elif _player.gold < price:
+		_world.add_msg("You cannot afford that. (need %dg)" % price)
+	else:
+		var new_item := ItemClass.new(Vector2i(0, 0), itype, 0)
+		if not _player.can_carry(new_item):
+			_world.add_msg("That %s is too heavy for your current load." % new_item.name)
+			return
+		_player.gold -= price
+		entry["qty"] = qty - 1
+		_player.inventory.append(new_item)
+		_world.add_msg("You buy %s for %dg." % [itype.replace("_", " "), price])
+	queue_redraw()
+
+
+func _trade_sell(idx: int) -> void:
+	if _trade_npc == null:
+		return
+	var npc: NpcClass = _trade_npc as NpcClass
+	var sellable: Array = _build_sellable()
+	if idx < 0 or idx >= sellable.size():
+		return
+	var item = sellable[idx]
+	var offer: int = npc.buy_price(item)
+	_player.gold += offer
+	_player.inventory.erase(item)
+	_world.add_msg("You sell the %s for %dg." % [(item as ItemClass).name, offer])
+	queue_redraw()
+
+
+func _handle_trade_mouse_click(mouse_pos: Vector2) -> void:
+	const BOX_X := 2
+	const BOX_Y := 1
+	const BOX_W := 116
+	const BOX_H := 32
+	const BUY_X := BOX_X + 2
+	const SELL_X := BOX_X + 60
+	var cell := _mouse_cell(mouse_pos)
+	if cell.x < BOX_X or cell.x >= BOX_X + BOX_W or cell.y < BOX_Y or cell.y >= BOX_Y + BOX_H:
+		return
+	if cell.x < BOX_X + 57:
+		var buy_idx: int = cell.y - (BOX_Y + 4)
+		if buy_idx >= 0:
+			_trade_panel = 0
+			_trade_buy_cursor = buy_idx
+			_trade_buy(buy_idx)
+			return
+	elif cell.x >= SELL_X:
+		var sell_idx: int = cell.y - (BOX_Y + 4)
+		if sell_idx >= 0:
+			_trade_panel = 1
+			_trade_sell_cursor = sell_idx
+			_trade_sell(sell_idx)
+			return
 
 
 func _handle_trade_input(event: InputEvent) -> void:
@@ -1414,36 +2034,13 @@ func _handle_trade_input(event: InputEvent) -> void:
 	# Buy panel: lowercase a-z
 	if _trade_panel == 0 and key >= KEY_A and key <= KEY_Z:
 		var idx: int = key - KEY_A
-		if idx < npc.trade_stock.size():
-			var entry: Dictionary = npc.trade_stock[idx]
-			var price: int    = int(entry.get("price", 0))
-			var qty: int      = int(entry.get("qty",   0))
-			var itype: String = str(entry.get("item_type", ""))
-			if qty <= 0:
-				_world.add_msg("The %s has no more %s." % [npc.name, itype.replace("_", " ")])
-			elif _player.gold < price:
-				_world.add_msg("You cannot afford that. (need %dg)" % price)
-			elif _player.inventory.size() >= _player.max_inventory:
-				_world.add_msg("Your pack is full.")
-			else:
-				_player.gold -= price
-				entry["qty"] = qty - 1
-				_player.inventory.append(ItemClass.new(Vector2i(0, 0), itype, 0))
-				_world.add_msg("You buy %s for %dg." % [itype.replace("_", " "), price])
-				queue_redraw()
+		_trade_buy(idx)
 		return
 
 	# Sell panel: Tab is active, shift+letter
 	if _trade_panel == 1 and event.shift_pressed and key >= KEY_A and key <= KEY_Z:
 		var idx: int = key - KEY_A
-		var sellable: Array = _build_sellable()
-		if idx < sellable.size():
-			var item = sellable[idx]
-			var offer: int = npc.buy_price(item)
-			_player.gold += offer
-			_player.inventory.erase(item)
-			_world.add_msg("You sell the %s for %dg." % [(item as ItemClass).name, offer])
-			queue_redraw()
+		_trade_sell(idx)
 		return
 
 
@@ -1483,6 +2080,16 @@ func _biome_color(biome: int) -> Color:
 func _draw_world_map() -> void:
 	var title_str := "-=[ WORLD MAP - LOOK ]=-" if _world_look_mode else "-=[ WORLD MAP ]=-"
 	_puts_centered(0, title_str, C_STATUS)
+	var world_move_hint := "Chunk Travel: %d" % _world.get_world_map_travel_cost(_chunk)
+	_puts(COLS - world_move_hint.length() - 2, 0, world_move_hint, C_DIVIDER)
+	var mount = _world.get_player_mount()
+	var current_chunk_char: String = "@"
+	var current_chunk_color: Color = Color(0.80, 0.72, 0.55)
+	if mount != null and (_mount_cycle_bucket % 2 == 0):
+		current_chunk_char = mount.char as String
+		current_chunk_color = mount.color
+	elif mount != null:
+		current_chunk_color = Color(0.95, 0.80, 0.40)
 
 	var map_px_w: float = COLS * CELL_W
 	var map_px_y: float = CELL_H * 2.0
@@ -1514,8 +2121,8 @@ func _draw_world_map() -> void:
 				color = _biome_color(biome)
 
 			if is_current:
-				ch    = "@"
-				color = Color(0.95, 0.80, 0.40) if is_lk_curs else Color(0.80, 0.72, 0.55)
+				ch    = current_chunk_char
+				color = Color(0.95, 0.80, 0.40) if is_lk_curs else current_chunk_color
 
 			var cell_bg: Color = color.lerp(C_BG, 0.70)
 			if is_lk_curs:

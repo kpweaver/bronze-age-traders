@@ -19,10 +19,11 @@
 #   trade_stock   Array    — [{item_type, qty, price}] items the merchant sells
 #                            price overrides base_value; qty decreases on purchase
 #   spawn_weight  int      — relative spawn probability in village chunks (default 1)
+#   is_mountable  bool     — true if the creature can be ridden by the player
 
 const DATA: Dictionary = {
 	"merchant": {
-		"name": "merchant", "char": "@",
+		"name": "merchant", "char": "t",
 		"cr": 0.90, "cg": 0.72, "cb": 0.28,
 		"str": 10, "dex": 11, "con": 10, "int": 12, "wis": 11, "cha": 13,
 		"base_hp": 12, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
@@ -45,7 +46,7 @@ const DATA: Dictionary = {
 		"spawn_weight": 3,
 	},
 	"village_elder": {
-		"name": "village elder", "char": "@",
+		"name": "village elder", "char": "e",
 		"cr": 0.82, "cg": 0.68, "cb": 0.55,
 		"str": 8, "dex": 8, "con": 9, "int": 12, "wis": 14, "cha": 12,
 		"base_hp": 11, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
@@ -59,7 +60,7 @@ const DATA: Dictionary = {
 		"spawn_weight": 1,
 	},
 	"smith": {
-		"name": "smith", "char": "@",
+		"name": "smith", "char": "m",
 		"cr": 0.70, "cg": 0.45, "cb": 0.25,
 		"str": 15, "dex": 10, "con": 14, "int": 9, "wis": 10, "cha": 8,
 		"base_hp": 16, "defense": 1, "power": 3, "level": 1, "attack_speed": 1.0,
@@ -80,7 +81,7 @@ const DATA: Dictionary = {
 		"spawn_weight": 1,
 	},
 	"scribe": {
-		"name": "scribe", "char": "@",
+		"name": "scribe", "char": "s",
 		"cr": 0.72, "cg": 0.82, "cb": 0.72,
 		"str": 8, "dex": 12, "con": 9, "int": 15, "wis": 12, "cha": 10,
 		"base_hp": 9, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
@@ -94,7 +95,7 @@ const DATA: Dictionary = {
 		"spawn_weight": 1,
 	},
 	"weaver": {
-		"name": "weaver", "char": "@",
+		"name": "weaver", "char": "w",
 		"cr": 0.75, "cg": 0.78, "cb": 0.62,
 		"str": 9, "dex": 13, "con": 10, "int": 10, "wis": 12, "cha": 11,
 		"base_hp": 8, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
@@ -114,7 +115,7 @@ const DATA: Dictionary = {
 		"spawn_weight": 1,
 	},
 	"priest": {
-		"name": "priest", "char": "@",
+		"name": "priest", "char": "p",
 		"cr": 0.88, "cg": 0.78, "cb": 0.45,
 		"str": 9, "dex": 9, "con": 10, "int": 12, "wis": 14, "cha": 13,
 		"base_hp": 9, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
@@ -129,7 +130,7 @@ const DATA: Dictionary = {
 		"spawn_weight": 1,
 	},
 	"dyer": {
-		"name": "dyer", "char": "@",
+		"name": "dyer", "char": "d",
 		"cr": 0.65, "cg": 0.45, "cb": 0.70,
 		"str": 11, "dex": 10, "con": 10, "int": 10, "wis": 10, "cha": 11,
 		"base_hp": 8, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
@@ -148,7 +149,7 @@ const DATA: Dictionary = {
 		"spawn_weight": 1,
 	},
 	"foreign_trader": {
-		"name": "foreign trader", "char": "@",
+		"name": "foreign trader", "char": "f",
 		"cr": 0.80, "cg": 0.62, "cb": 0.38,
 		"str": 9, "dex": 12, "con": 10, "int": 13, "wis": 11, "cha": 14,
 		"base_hp": 11, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
@@ -170,7 +171,7 @@ const DATA: Dictionary = {
 		"spawn_weight": 2,
 	},
 	"caravan_guard": {
-		"name": "caravan guard", "char": "@",
+		"name": "caravan guard", "char": "g",
 		"cr": 0.65, "cg": 0.50, "cb": 0.30,
 		"str": 14, "dex": 12, "con": 13, "int": 9, "wis": 10, "cha": 9,
 		"base_hp": 19, "defense": 2, "power": 3, "level": 1, "attack_speed": 1.0,
@@ -192,7 +193,7 @@ const DATA: Dictionary = {
 		"spawn_weight": 2,
 	},
 	"herbalist": {
-		"name": "herbalist", "char": "@",
+		"name": "herbalist", "char": "h",
 		"cr": 0.58, "cg": 0.72, "cb": 0.45,
 		"str": 9, "dex": 13, "con": 10, "int": 13, "wis": 14, "cha": 11,
 		"base_hp": 8, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
@@ -241,7 +242,7 @@ const DATA: Dictionary = {
 		"cr": 0.72, "cg": 0.60, "cb": 0.42,
 		"str": 13, "dex": 12, "con": 13, "int": 2, "wis": 10, "cha": 5,
 		"base_hp": 13, "defense": 0, "power": 2, "level": 1, "attack_speed": 1.0,
-		"is_merchant": false, "is_wildlife": true,
+		"is_merchant": false, "is_wildlife": true, "is_mountable": true,
 		"wander_radius": 25, "move_chance": 0.40,
 		"dialogue": [
 			"The wild ass regards you with flat, suspicious eyes.",
@@ -254,6 +255,20 @@ const DATA: Dictionary = {
 			"great": [{"item_type": "game_meat",   "qty": 3}, {"item_type": "heavy_hide",   "qty": 1}],
 			"crit":  [{"item_type": "game_meat",   "qty": 3}, {"item_type": "heavy_hide",   "qty": 2}],
 		},
+		"spawn_weight": 0,
+	},
+	"donkey": {
+		"name": "donkey", "char": "d",
+		"cr": 0.66, "cg": 0.56, "cb": 0.40,
+		"str": 12, "dex": 10, "con": 12, "int": 2, "wis": 10, "cha": 7,
+		"base_hp": 11, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
+		"is_merchant": false, "is_wildlife": false, "is_mountable": true,
+		"wander_radius": 8, "move_chance": 0.20,
+		"dialogue": [
+			"The donkey flicks its ears and waits with practiced patience.",
+			"The donkey snorts softly and shifts its weight.",
+			"The donkey gives you a long, appraising look."
+		],
 		"spawn_weight": 0,
 	},
 	"ibex": {
@@ -297,7 +312,7 @@ const DATA: Dictionary = {
 		"spawn_weight": 0,
 	},
 	"water_carrier": {
-		"name": "water carrier", "char": "@",
+		"name": "water carrier", "char": "c",
 		"cr": 0.60, "cg": 0.68, "cb": 0.78,
 		"str": 13, "dex": 11, "con": 12, "int": 8, "wis": 10, "cha": 9,
 		"base_hp": 9, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,

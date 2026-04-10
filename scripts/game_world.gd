@@ -33,10 +33,16 @@ const OVERWORLD_W: int   = 200
 const OVERWORLD_H: int   = 200
 const DEBUG_HUB_W: int   = 120
 const DEBUG_HUB_H: int   = 44
-const FOV_RADIUS: int    = 8
+const FOV_RADIUS: int    = 6
 const FOV_OVERWORLD: int = 24   # daytime overworld sight range
 const FOV_NIGHT: int     = 1    # night-time overworld sight range — near-zero, pre-industrial darkness
 const MSG_MAX: int       = 3
+const ACTION_COST_BASE: int = 100
+const MOVE_COST_FOOT: int = 100
+const MOVE_COST_MOUNTED: int = 70
+const ACTION_COST_STANDARD: int = 100
+const WORLD_MAP_TRAVEL_COST_BASE: int = 200
+const WORLD_MAP_TRAVEL_COST_MIN: int = 120
 
 # Turns of thirst/fatigue drain applied per chunk moved on the world map.
 # One chunk = 20 miles; at 3 mph that is ~6.7 hours = ~200 turns.
@@ -83,6 +89,8 @@ var nearby_npc                       # last bumped NPC, cleared when player move
 var turn: int           = 0          # global turn counter — increments every resolved action
 var _resting: bool      = false      # true when the player waited this turn (affects fatigue)
 var _thirst_acc: float  = 0.0        # fractional thirst accumulator for rate < 1.0
+var _turn_progress_accum: int = 0
+var _enemy_turn_accum: int = 0
 var pending_travel_event: Dictionary = {}
 var debug_hub_active: bool = false
 var debug_return_depth: int = 0
@@ -147,6 +155,8 @@ func new_game() -> void:
 	game_over  = false
 	nearby_npc = null
 	turn       = 0
+	_turn_progress_accum = 0
+	_enemy_turn_accum = 0
 	pending_travel_event.clear()
 	debug_hub_active = false
 	debug_return_depth = 0
@@ -173,8 +183,7 @@ func new_game() -> void:
 	var entrance_pos: Vector2i = ProcgenClass.find_cave_entrance(ow_map)
 	var dungeon_entry := EntityClass.new(
 			entrance_pos, ">", Color(0.90, 0.85, 0.60), "dungeon entrance", false)
-	dungeon_entry.game_map = ow_map
-	ow_map.entities.append(dungeon_entry)
+	ow_map.add_entity(dungeon_entry)
 
 	var spawn_pos: Vector2i = _walk_toward_center(ow_map, entrance_pos, 6)
 	player = ActorClass.new(spawn_pos, "@", Color(0.80, 0.72, 0.55), "you", 30, 2, 5)
@@ -182,14 +191,14 @@ func new_game() -> void:
 	player.xp = 0
 	player.xp_to_next = _xp_threshold_for_level(player.level)
 	player.unspent_attribute_points = 0
-	player.game_map = ow_map
-	ow_map.entities.append(player)
+	ow_map.add_entity(player)
 	map   = ow_map
 	party = [player]
 
 	# Player starts with one torch in their pack.
 	var starting_torch := ItemClass.new(player.pos, ItemClass.TYPE_TORCH, 0)
 	player.inventory.append(starting_torch)
+	_place_starting_mount(ow_map, player.pos)
 
 	map.compute_fov(player.pos.x, player.pos.y, overworld_fov())
 	add_msg("You stand beneath a merciless sun. The dungeon entrance lies nearby. Press < for the world map.")
@@ -214,6 +223,8 @@ func load_from_save() -> void:
 	chunk  = result[4]
 	chunks = result[5]
 	turn   = result[6]
+	_turn_progress_accum = 0
+	_enemy_turn_accum = 0
 	var debug_data: Dictionary = result[7]
 	debug_hub_active = bool(debug_data.get("active", false))
 	debug_return_depth = int(debug_data.get("return_depth", 0))
@@ -321,11 +332,12 @@ func enter_pending_travel_event() -> void:
 
 func do_player_turn(dir: Vector2i, force_attack: bool = false) -> void:
 	_resting = (dir == Vector2i.ZERO)
+	var action_cost: int = ACTION_COST_STANDARD if dir == Vector2i.ZERO else get_move_action_cost(dir)
 	if dir != Vector2i.ZERO:
 		var next: Vector2i = player.pos + dir
 		if not map.is_in_bounds(next.x, next.y):
 			if map.map_type == GameMapClass.MAP_OVERWORLD:
-				chunk_transition(dir)
+				chunk_transition(dir, action_cost)
 			return
 
 		var target = map.get_blocking_entity_at(next.x, next.y)
@@ -340,6 +352,7 @@ func do_player_turn(dir: Vector2i, force_attack: bool = false) -> void:
 					if not (target as ActorClass).is_alive:
 						_award_kill_xp(target as ActorClass)
 						add_msg((target as ActorClass).die())
+						map.refresh_entity(target)
 				else:
 					nearby_npc = target
 					var npc: NpcClass = target as NpcClass
@@ -354,8 +367,10 @@ func do_player_turn(dir: Vector2i, force_attack: bool = false) -> void:
 				if not (target as ActorClass).is_alive:
 					_award_kill_xp(target as ActorClass)
 					add_msg((target as ActorClass).die())
+					map.refresh_entity(target)
 		elif map.is_walkable(next.x, next.y):
-			player.pos = next
+			map.move_entity(player, next)
+			_sync_mount_position()
 			nearby_npc = null
 			if GameState.auto_pickup:
 				auto_pickup()
@@ -364,8 +379,7 @@ func do_player_turn(dir: Vector2i, force_attack: bool = false) -> void:
 		else:
 			return  # wall — no turn consumed
 
-	do_enemy_turns()
-	end_turn()
+	resolve_action(action_cost)
 
 
 func do_enemy_turns() -> void:
@@ -373,7 +387,7 @@ func do_enemy_turns() -> void:
 	for e in map.entities:
 		if not (e is ActorClass):
 			continue
-		if e == player or not e.is_alive or e.ai == null:
+		if e == player or not e.is_alive or e.ai == null or e.is_mounted:
 			continue
 		# Push current time-of-day so AI can honour diurnal schedules.
 		if e.ai is WanderAIClass:
@@ -388,6 +402,7 @@ func do_enemy_turns() -> void:
 				player.hp = player.max_hp
 			else:
 				add_msg(player.die())
+				map.refresh_entity(player)
 				add_msg("You are dead.  Press r to try again.")
 				game_over = true
 				return
@@ -406,7 +421,10 @@ func player_light_fov() -> int:
 func _recompute_fov() -> void:
 	var base_fov: int
 	if debug_hub_active:
-		base_fov = maxi(map.width, map.height)
+		# The debug hub is a fixed test room, not a gameplay stealth space.
+		# Revealing it wholesale avoids an expensive full-room LOS pass every turn.
+		map.reveal_all()
+		return
 	elif map.map_type == GameMapClass.MAP_OVERWORLD:
 		base_fov = overworld_fov()
 	else:
@@ -437,13 +455,24 @@ func _tick_torch() -> void:
 			player.equipped[ItemClass.SLOT_LIGHT] = null
 
 
-func end_turn() -> void:
+func resolve_action(action_cost: int = ACTION_COST_STANDARD) -> void:
+	_enemy_turn_accum += action_cost
+	while _enemy_turn_accum >= ACTION_COST_BASE and not game_over:
+		_enemy_turn_accum -= ACTION_COST_BASE
+		do_enemy_turns()
+	end_turn(action_cost)
+
+
+func end_turn(action_cost: int = ACTION_COST_STANDARD) -> void:
 	_recompute_fov()
-	turn += 1
-	_tick_torch()
-	if depth == 0:
-		_drain_thirst()
-	_drain_fatigue()
+	_turn_progress_accum += action_cost
+	while _turn_progress_accum >= ACTION_COST_BASE:
+		_turn_progress_accum -= ACTION_COST_BASE
+		turn += 1
+		_tick_torch()
+		if depth == 0:
+			_drain_thirst()
+		_drain_fatigue()
 	turn_ended.emit(turn)
 
 
@@ -455,10 +484,9 @@ func try_skin() -> void:
 			if dx == 0 and dy == 0:
 				continue
 			var check_pos: Vector2i = player.pos + Vector2i(dx, dy)
-			for e in map.entities:
+			for e in map.get_entities_at(check_pos.x, check_pos.y):
 				if e is NpcClass and not (e as NpcClass).is_alive \
-						and (e as NpcClass).is_wildlife \
-						and e.pos == check_pos:
+						and (e as NpcClass).is_wildlife:
 					corpse = e
 					break
 		if corpse != null:
@@ -482,7 +510,7 @@ func try_skin() -> void:
 	else:            tier = "spoiled"
 
 	var loot_pos: Vector2i = corpse.pos
-	map.entities.erase(corpse)
+	map.remove_entity(corpse)
 
 	var wis_str: String = ("+%d" % player.wis_mod) if player.wis_mod >= 0 else str(player.wis_mod)
 	if tier == "spoiled" or not skin_table.has(tier):
@@ -496,8 +524,7 @@ func try_skin() -> void:
 			var qty: int          = int(entry.get("qty", 1))
 			for _i in range(qty):
 				var item := ItemClass.new(loot_pos, item_type, 0)
-				item.game_map = map
-				map.entities.append(item)
+				map.add_entity(item)
 			var display: String = str(ItemDataClass.get_item(item_type).get("name", item_type))
 			names.append("%dx %s" % [qty, display] if qty > 1 else display)
 		add_msg("You skin the %s: %s. [d20%s = %d]" \
@@ -507,25 +534,330 @@ func try_skin() -> void:
 
 	# Skinning consumes a turn.
 	_resting = false
-	do_enemy_turns()
-	end_turn()
+	resolve_action(ACTION_COST_STANDARD)
 
 
 func auto_pickup() -> void:
-	for e in map.entities.duplicate():
-		if not (e is ItemClass) or e.pos != player.pos:
+	for e in map.get_entities_at(player.pos.x, player.pos.y):
+		if not (e is ItemClass):
 			continue
 		if e.item_type == ItemClass.TYPE_GOLD:
 			player.gold += e.value
 			add_msg("You collect %d gold." % e.value)
-			map.entities.erase(e)
-		elif player.inventory.size() < player.max_inventory:
+			map.remove_entity(e)
+		elif player.can_carry(e):
 			player.inventory.append(e)
-			var slot := char(ord("a") + player.inventory.size() - 1)
-			add_msg("You pick up the %s. [%s]" % [e.name, slot])
-			map.entities.erase(e)
+			var item_idx: int = player.inventory.size() - 1
+			if item_idx < 26:
+				var slot := char(ord("a") + item_idx)
+				add_msg("You pick up the %s. [%s]" % [e.name, slot])
+			else:
+				add_msg("You pick up the %s." % e.name)
+			map.remove_entity(e)
 		else:
-			add_msg("Your pack is full!")
+			add_msg("The %s would put you over your carry limit." % e.name)
+
+
+func get_player_mount():
+	for e in map.entities:
+		if e != player and e is ActorClass and e.is_mounted:
+			return e
+	return null
+
+
+func get_move_action_cost(_dir: Vector2i = Vector2i.ZERO) -> int:
+	var mount = get_player_mount()
+	if mount != null:
+		return MOVE_COST_MOUNTED
+	return MOVE_COST_FOOT
+
+
+func get_move_cost_label() -> String:
+	return "%d%%" % get_move_action_cost()
+
+
+func get_world_map_travel_cost(target_chunk: Vector2i) -> int:
+	var cost: float = float(WORLD_MAP_TRAVEL_COST_BASE)
+	if get_player_mount() != null:
+		cost *= 0.75
+	if is_road_chunk(target_chunk.x, target_chunk.y):
+		cost *= 0.90
+	return maxi(WORLD_MAP_TRAVEL_COST_MIN, int(round(cost)))
+
+
+func toggle_mount() -> void:
+	if game_over:
+		return
+	var current_mount = get_player_mount()
+	if current_mount != null:
+		_dismount(current_mount as ActorClass)
+		return
+
+	var mount = _find_adjacent_mount()
+	if mount == null:
+		add_msg("There is no mountable beast beside you.")
+		return
+	_mount(mount)
+
+
+func _find_adjacent_mount():
+	for dy in range(-1, 2):
+		for dx in range(-1, 2):
+			if dx == 0 and dy == 0:
+				continue
+			for e in map.get_entities_at(player.pos.x + dx, player.pos.y + dy):
+				if e is ActorClass and e.is_alive and e.is_mountable and not e.is_mounted:
+					return e
+	return null
+
+
+func _mount(mount: ActorClass) -> void:
+	map.move_entity(mount, player.pos)
+	mount.is_mounted = true
+	mount.blocks_movement = false
+	mount.ai = null
+	map.refresh_entity(mount)
+	add_msg("You mount the %s." % mount.name)
+	_resting = false
+	resolve_action(ACTION_COST_STANDARD)
+
+
+func _dismount(mount: ActorClass) -> void:
+	var dismount_pos := _find_dismount_pos()
+	if dismount_pos == Vector2i(-1, -1):
+		add_msg("There is no room to dismount here.")
+		return
+	map.move_entity(mount, dismount_pos)
+	mount.is_mounted = false
+	mount.blocks_movement = true
+	_restore_mount_ai(mount)
+	map.refresh_entity(mount)
+	add_msg("You dismount the %s." % mount.name)
+	_resting = false
+	resolve_action(ACTION_COST_STANDARD)
+
+
+func _find_dismount_pos() -> Vector2i:
+	var dirs: Array[Vector2i] = [
+		Vector2i(0, 1), Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, -1),
+		Vector2i(1, 1), Vector2i(-1, 1), Vector2i(1, -1), Vector2i(-1, -1),
+	]
+	for dir: Vector2i in dirs:
+		var pos: Vector2i = player.pos + dir
+		if not map.is_in_bounds(pos.x, pos.y) or not map.is_walkable(pos.x, pos.y):
+			continue
+		if map.get_blocking_entity_at(pos.x, pos.y) != null:
+			continue
+		return pos
+	return Vector2i(-1, -1)
+
+
+func _restore_mount_ai(mount: ActorClass) -> void:
+	if mount is NpcClass:
+		var npc := mount as NpcClass
+		var move_chance: float = float(NpcDataClass.get_npc(npc.npc_type).get("move_chance", 0.35))
+		if npc.is_wildlife or npc.npc_type == "merchant" or npc.npc_type == "donkey":
+			npc.ai = DocileAIClass.new(npc, move_chance, not npc.is_wildlife)
+		else:
+			npc.ai = null
+
+
+func _sync_mount_position() -> void:
+	var current_mount = get_player_mount()
+	if current_mount != null and current_mount.pos != player.pos:
+		map.move_entity(current_mount, player.pos)
+
+
+func _place_starting_mount(target_map, origin: Vector2i) -> void:
+	var spawn_pos := _find_adjacent_open_tile(target_map, origin)
+	if spawn_pos == Vector2i(-1, -1):
+		return
+	var donkey_data: Dictionary = NpcDataClass.get_npc("donkey")
+	var donkey := NpcClass.new(spawn_pos, "donkey", donkey_data)
+	donkey.ai = DocileAIClass.new(donkey, float(donkey_data.get("move_chance", 0.20)), true)
+	target_map.add_entity(donkey)
+
+
+func _find_adjacent_open_tile(target_map, origin: Vector2i) -> Vector2i:
+	for dy in range(-1, 2):
+		for dx in range(-1, 2):
+			if dx == 0 and dy == 0:
+				continue
+			var pos := origin + Vector2i(dx, dy)
+			if not target_map.is_in_bounds(pos.x, pos.y):
+				continue
+			if not target_map.is_walkable(pos.x, pos.y):
+				continue
+			if target_map.get_blocking_entity_at(pos.x, pos.y) != null:
+				continue
+			return pos
+	return Vector2i(-1, -1)
+
+
+func autoexplore(max_steps: int = 256) -> void:
+	if game_over:
+		return
+	if _visible_hostile_exists():
+		add_msg("Autoexplore stops: danger is already in sight.")
+		return
+
+	var moved: bool = false
+	for _i in range(max_steps):
+		var dir: Vector2i = _next_autoexplore_step()
+		if dir == Vector2i.ZERO:
+			add_msg("Autoexplore complete." if moved else "There is nothing left to explore.")
+			return
+		do_player_turn(dir)
+		moved = true
+		if game_over:
+			return
+		if _visible_hostile_exists():
+			add_msg("Autoexplore stops: danger spotted.")
+			return
+	add_msg("Autoexplore pauses.")
+
+
+func travel_to(target: Vector2i, max_steps: int = 512) -> void:
+	if game_over:
+		return
+	if not map.is_in_bounds(target.x, target.y):
+		return
+	if target == player.pos:
+		return
+	if _visible_hostile_exists():
+		add_msg("Travel stops: danger is already in sight.")
+		return
+
+	var path: Array = _path_to(target, true)
+	if path.is_empty():
+		add_msg("You cannot find a clear path there.")
+		return
+
+	var moved: bool = false
+	var steps_taken: int = 0
+	for step in path:
+		if steps_taken >= max_steps:
+			add_msg("Travel pauses.")
+			return
+		var next_pos: Vector2i = step
+		var dir: Vector2i = next_pos - player.pos
+		if maxi(absi(dir.x), absi(dir.y)) > 1:
+			break
+		do_player_turn(dir)
+		moved = true
+		steps_taken += 1
+		if game_over:
+			return
+		if _visible_hostile_exists():
+			add_msg("Travel stops: danger spotted.")
+			return
+		if player.pos == target:
+			return
+	if not moved:
+		add_msg("You cannot find a clear path there.")
+
+
+func _next_autoexplore_step() -> Vector2i:
+	var path: Array = _path_to_nearest_unexplored()
+	if path.is_empty():
+		return Vector2i.ZERO
+	return path[0] - player.pos
+
+
+func _path_to_nearest_unexplored() -> Array:
+	var start: Vector2i = player.pos
+	var frontier: Array[Vector2i] = [start]
+	var visited: Dictionary = {start: true}
+	var came_from: Dictionary = {}
+	var dirs: Array[Vector2i] = [
+		Vector2i(0, -1), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(1, 0),
+		Vector2i(-1, -1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(1, 1),
+	]
+
+	while not frontier.is_empty():
+		var current: Vector2i = frontier.pop_front()
+		for dir: Vector2i in dirs:
+			var next: Vector2i = current + dir
+			if visited.has(next):
+				continue
+			if not map.is_in_bounds(next.x, next.y) or not map.is_walkable(next.x, next.y):
+				continue
+			var blocker = map.get_blocking_entity_at(next.x, next.y)
+			if blocker != null and next != player.pos:
+				continue
+			visited[next] = true
+			came_from[next] = current
+			if not map.explored[next.y][next.x]:
+				return _reconstruct_path(came_from, start, next)
+			frontier.append(next)
+	return []
+
+
+func _path_to(target: Vector2i, require_explored: bool = false) -> Array:
+	var start: Vector2i = player.pos
+	var frontier: Array[Vector2i] = [start]
+	var visited: Dictionary = {start: true}
+	var came_from: Dictionary = {}
+	var dirs: Array[Vector2i] = [
+		Vector2i(0, -1), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(1, 0),
+		Vector2i(-1, -1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(1, 1),
+	]
+
+	while not frontier.is_empty():
+		var current: Vector2i = frontier.pop_front()
+		if current == target:
+			return _reconstruct_path(came_from, start, target)
+		for dir: Vector2i in dirs:
+			var next: Vector2i = current + dir
+			if visited.has(next):
+				continue
+			if not map.is_in_bounds(next.x, next.y) or not map.is_walkable(next.x, next.y):
+				continue
+			if require_explored and not map.explored[next.y][next.x] and next != target:
+				continue
+			var blocker = map.get_blocking_entity_at(next.x, next.y)
+			if blocker != null and next != target:
+				continue
+			visited[next] = true
+			came_from[next] = current
+			frontier.append(next)
+	return []
+
+
+func _reconstruct_path(came_from: Dictionary, start: Vector2i, target: Vector2i) -> Array:
+	var path: Array = []
+	var current: Vector2i = target
+	while current != start:
+		path.push_front(current)
+		if not came_from.has(current):
+			return []
+		current = came_from[current]
+	return path
+
+
+func _visible_hostile_exists() -> bool:
+	for e in map.entities:
+		if e == player or not (e is ActorClass) or not e.is_alive:
+			continue
+		if e.ai is HostileAIClass and map.visible[e.pos.y][e.pos.x]:
+			return true
+	return false
+
+
+func _player_on_stairs() -> bool:
+	for e in map.get_entities_at(player.pos.x, player.pos.y):
+		if e is ActorClass:
+			continue
+		if e.char == ">" or e.char == "<":
+			return true
+	return false
+
+
+func _item_at_player_pos() -> bool:
+	for e in map.get_entities_at(player.pos.x, player.pos.y):
+		if e is ItemClass:
+			return true
+	return false
 
 
 func add_msg(text: String) -> void:
@@ -538,7 +870,8 @@ func add_msg(text: String) -> void:
 # Map transitions
 # ===========================================================================
 
-func chunk_transition(dir: Vector2i) -> void:
+func chunk_transition(dir: Vector2i, action_cost: int = ACTION_COST_STANDARD) -> void:
+	var current_mount = get_player_mount()
 	var next: Vector2i = player.pos + dir
 	var dc             := Vector2i.ZERO
 	var new_x: int     = next.x
@@ -559,7 +892,9 @@ func chunk_transition(dir: Vector2i) -> void:
 		add_msg("Beyond this lies only empty horizon. You cannot travel farther.")
 		return
 
-	map.entities.erase(player)
+	map.remove_entity(player)
+	if current_mount != null:
+		map.remove_entity(current_mount)
 	chunks[chunk] = map
 	chunk = dest_chunk
 
@@ -575,8 +910,10 @@ func chunk_transition(dir: Vector2i) -> void:
 		map = new_map
 
 	player.pos      = Vector2i(new_x, new_y)
-	player.game_map = map
-	map.entities.append(player)
+	map.add_entity(player)
+	if current_mount != null:
+		current_mount.pos = player.pos
+		map.add_entity(current_mount)
 
 	_recompute_fov()
 	var arrival_v: Variant = get_village_at_chunk(chunk.x, chunk.y)
@@ -584,19 +921,24 @@ func chunk_transition(dir: Vector2i) -> void:
 		add_msg("You enter %s." % arrival_v.name)
 	else:
 		add_msg("You enter the %s." % _biome_label(get_chunk_biome(chunk)))
+	resolve_action(action_cost)
 	map_changed.emit()
 
 
 # World-map screen fast-travel: moves one chunk and drains thirst/fatigue
 # proportional to the travel time (TURNS_PER_CHUNK_TRAVEL).
 func world_map_navigate(dir: Vector2i) -> void:
+	var current_mount = get_player_mount()
 	var dest := Vector2i(
 		clampi(chunk.x + dir.x, 0, GameState.WORLD_W - 1),
 		clampi(chunk.y + dir.y, 0, GameState.WORLD_H - 1))
 	if dest == chunk:
 		return
+	var travel_cost: int = get_world_map_travel_cost(dest)
 
-	map.entities.erase(player)
+	map.remove_entity(player)
+	if current_mount != null:
+		map.remove_entity(current_mount)
 	chunks[chunk] = map
 	chunk = dest
 
@@ -612,31 +954,43 @@ func world_map_navigate(dir: Vector2i) -> void:
 		map = new_map
 
 	player.pos      = Vector2i(OVERWORLD_W >> 1, OVERWORLD_H >> 1)
-	player.game_map = map
-	map.entities.append(player)
+	map.add_entity(player)
+	if current_mount != null:
+		current_mount.pos = player.pos
+		map.add_entity(current_mount)
 
-	turn += TURNS_PER_CHUNK_TRAVEL
-	_drain_travel(TURNS_PER_CHUNK_TRAVEL)
+	turn += travel_cost
+	_drain_travel(travel_cost)
 	pending_travel_event = _roll_world_map_travel_event(chunk, dir, is_fresh_chunk)
+	if current_mount != null:
+		add_msg("You cover the distance quickly from the saddle. [%d]" % travel_cost)
+	elif is_road_chunk(chunk.x, chunk.y):
+		add_msg("The road shortens the journey. [%d]" % travel_cost)
 	turn_ended.emit(turn)
 
 
 func try_descend() -> void:
+	if get_player_mount() != null:
+		add_msg("You should dismount before taking the stairs down.")
+		return
 	if debug_hub_active:
 		add_msg("There are no stairs leading down from the developer's oasis.")
 		return
-	for e in map.entities:
-		if not (e is ActorClass) and e.char == ">" and e.pos == player.pos:
+	for e in map.get_entities_at(player.pos.x, player.pos.y):
+		if not (e is ActorClass) and e.char == ">":
 			_descend()
 			return
 
 
 func try_ascend() -> void:
+	if get_player_mount() != null and not debug_hub_active:
+		add_msg("You should dismount before taking the stairs up.")
+		return
 	if debug_hub_active:
 		exit_debug_hub()
 		return
-	for e in map.entities:
-		if not (e is ActorClass) and e.char == "<" and e.pos == player.pos:
+	for e in map.get_entities_at(player.pos.x, player.pos.y):
+		if not (e is ActorClass) and e.char == "<":
 			_ascend()
 			return
 
@@ -684,7 +1038,7 @@ func get_road_dirs(c: Vector2i) -> Array:
 # ===========================================================================
 
 func _descend() -> void:
-	map.entities.erase(player)
+	map.remove_entity(player)
 	if depth == 0:
 		chunks[chunk] = map
 		depth = 1
@@ -695,19 +1049,16 @@ func _descend() -> void:
 	if floors.has(depth):
 		map             = floors[depth]
 		player.pos      = _stairs_pos(map, "<")
-		player.game_map = map
-		map.entities.append(player)
+		map.add_entity(player)
 	else:
 		var new_map = GameMapClass.new(DUNGEON_W, DUNGEON_H)
-		player.game_map = new_map
 		player.pos      = Vector2i(0, 0)
-		new_map.entities.append(player)
+		new_map.add_entity(player)
 		map = new_map
 		var monsters := mini(2 + (depth - 1) >> 1, 4)
 		ProcgenClass.generate_dungeon(map, 50, 5, 14, monsters, player, depth)
 		var up_stairs := EntityClass.new(player.pos, "<", Color(0.55, 0.80, 0.95), "stairs up", false)
-		up_stairs.game_map = map
-		map.entities.append(up_stairs)
+		map.add_entity(up_stairs)
 		award_xp(XP_FLOOR_DISCOVERY, "for discovering dungeon floor %d" % depth)
 
 	_recompute_fov()
@@ -719,7 +1070,7 @@ func _ascend() -> void:
 	if depth <= 0:
 		add_msg("There is nothing above.")
 		return
-	map.entities.erase(player)
+	map.remove_entity(player)
 	floors[depth] = map
 	depth -= 1
 
@@ -727,8 +1078,7 @@ func _ascend() -> void:
 		if chunks.has(chunk):
 			map             = chunks[chunk]
 			player.pos      = _stairs_pos(map, ">")
-			player.game_map = map
-			map.entities.append(player)
+			map.add_entity(player)
 		else:
 			# Chunk was evicted — regenerate it.
 			var new_map := GameMapClass.new(OVERWORLD_W, OVERWORLD_H)
@@ -740,18 +1090,15 @@ func _ascend() -> void:
 			var entrance_pos: Vector2i = ProcgenClass.find_cave_entrance(new_map)
 			var dungeon_entry := EntityClass.new(
 					entrance_pos, ">", Color(0.90, 0.85, 0.60), "dungeon entrance", false)
-			dungeon_entry.game_map = new_map
-			new_map.entities.append(dungeon_entry)
+			new_map.add_entity(dungeon_entry)
 			player.pos      = entrance_pos
-			player.game_map = new_map
-			new_map.entities.append(player)
+			new_map.add_entity(player)
 			map = new_map
 	else:
 		if floors.has(depth):
 			map             = floors[depth]
 			player.pos      = _stairs_pos(map, ">")
-			player.game_map = map
-			map.entities.append(player)
+			map.add_entity(player)
 
 	_recompute_fov()
 	if depth == 0:
@@ -771,8 +1118,8 @@ func _stairs_pos(m, ch: String) -> Vector2i:
 func _check_stairs() -> void:
 	if debug_hub_active:
 		return
-	for e in map.entities:
-		if (e is ActorClass) or e.pos != player.pos:
+	for e in map.get_entities_at(player.pos.x, player.pos.y):
+		if e is ActorClass:
 			continue
 		if e.char == ">":
 			if (e.name as String) == "dungeon entrance":
@@ -793,7 +1140,7 @@ func enter_debug_hub() -> void:
 		chunks[chunk] = map
 	else:
 		floors[depth] = map
-	map.entities.erase(player)
+	map.remove_entity(player)
 	debug_return_depth = depth
 	debug_return_chunk = chunk
 	debug_return_pos = player.pos
@@ -804,8 +1151,7 @@ func enter_debug_hub() -> void:
 	depth = -1
 	debug_hub_active = true
 	player.pos = Vector2i(8, DEBUG_HUB_H >> 1)
-	player.game_map = map
-	map.entities.append(player)
+	map.add_entity(player)
 	_recompute_fov()
 	add_msg("You step into the developer's oasis.")
 	add_msg("Quartermaster west. Training center ahead. Arena east. Waystone to return.")
@@ -815,7 +1161,7 @@ func enter_debug_hub() -> void:
 func exit_debug_hub() -> void:
 	if not debug_hub_active:
 		return
-	map.entities.erase(player)
+	map.remove_entity(player)
 	depth = debug_return_depth
 	chunk = debug_return_chunk
 
@@ -835,8 +1181,7 @@ func exit_debug_hub() -> void:
 		map = floors.get(depth, map)
 
 	player.pos = debug_return_pos
-	player.game_map = map
-	map.entities.append(player)
+	map.add_entity(player)
 	debug_hub_active = false
 	_recompute_fov()
 	add_msg("You leave the developer's oasis.")
@@ -846,8 +1191,8 @@ func exit_debug_hub() -> void:
 func _check_debug_fixture() -> void:
 	if not debug_hub_active:
 		return
-	for e in map.entities:
-		if e is ActorClass or e.pos != player.pos:
+	for e in map.get_entities_at(player.pos.x, player.pos.y):
+		if e is ActorClass:
 			continue
 		match e.name:
 			"training obelisk":
@@ -865,6 +1210,9 @@ func _check_debug_fixture() -> void:
 				player.thirst = mini(ActorClass.THIRST_MAX - 1, ActorClass.THIRST_MAX * 7 / 10)
 				player.fatigue = mini(ActorClass.FATIGUE_MAX - 1, ActorClass.FATIGUE_MAX * 7 / 10)
 				add_msg("Heat and strain wash over you.")
+				return
+			"speed marker":
+				add_msg("Current move cost: %s. Mounted travel should advance time and enemy turns more slowly." % get_move_cost_label())
 				return
 			"return waystone":
 				exit_debug_hub()
@@ -903,8 +1251,7 @@ func _spawn_debug_enemy(kind: String) -> void:
 		_:
 			actor = ActorClass.new(spawn_pos, "B", Color(0.48, 0.32, 0.12), "desert beast", 22, 2, 5)
 	actor.ai = HostileAIClass.new(actor)
-	actor.game_map = map
-	map.entities.append(actor)
+	map.add_entity(actor)
 	add_msg("A %s enters the arena." % actor.name)
 
 
@@ -1132,6 +1479,7 @@ func _drain_thirst() -> void:
 		player.take_damage(1)
 		if not player.is_alive:
 			add_msg(player.die())
+			map.refresh_entity(player)
 			add_msg("You perish from thirst. Press r to try again.")
 			game_over = true
 		elif t % 60 == 0:
@@ -1164,6 +1512,7 @@ func _drain_fatigue() -> void:
 		player.take_damage(1)
 		if not player.is_alive:
 			add_msg(player.die())
+			map.refresh_entity(player)
 			add_msg("You collapse from exhaustion. Press r to try again.")
 			game_over = true
 		elif f % 60 == 0:
@@ -1281,8 +1630,7 @@ func _place_bandits_in(target_map, player_entry: Vector2i) -> void:
 		var bandit := ActorClass.new(pos, "B", Color(0.72, 0.32, 0.20),
 				"desert bandit", 12, 1, 3)
 		bandit.ai       = HostileAIClass.new(bandit)
-		bandit.game_map = target_map
-		target_map.entities.append(bandit)
+		target_map.add_entity(bandit)
 
 
 # Places a lone traveling merchant in target_map, away from the player entry point.
@@ -1293,8 +1641,7 @@ func _place_merchant_in(target_map, player_entry: Vector2i) -> void:
 	var npc_data: Dictionary = NpcDataClass.get_npc("merchant")
 	var npc := NpcClass.new(pos, "merchant", npc_data)
 	npc.ai       = DocileAIClass.new(npc, 0.25, false)  # travels day and night; flees if attacked
-	npc.game_map = target_map
-	target_map.entities.append(npc)
+	target_map.add_entity(npc)
 
 
 # Biome labels for in-game log messages.

@@ -58,6 +58,7 @@ static func save_game(game_map, player, floor: int, floors: Dictionary, chunk: V
 			"map_type": game_map.map_type,
 			"tiles":    game_map.tiles,
 			"explored": game_map.explored,
+			"permanent_light": game_map.permanent_light,
 		},
 		"entities": _serialize_entities(game_map.entities, player),
 		"stored_floors": _serialize_stored_floors(floors),
@@ -78,6 +79,7 @@ static func _serialize_stored_floors(floors: Dictionary) -> Dictionary:
 			"map_type": m.map_type,
 			"tiles":    m.tiles,
 			"explored": m.explored,
+			"permanent_light": m.permanent_light,
 			"entities": _serialize_entities(m.entities, null),
 		}
 	return result
@@ -94,6 +96,7 @@ static func _serialize_stored_chunks(chunks: Dictionary) -> Dictionary:
 			"map_type": m.map_type,
 			"tiles":    m.tiles,
 			"explored": m.explored,
+			"permanent_light": m.permanent_light,
 			"entities": _serialize_entities(m.entities, null),
 		}
 	return result
@@ -134,6 +137,7 @@ static func _serialize_entities(entities: Array, player) -> Array:
 			entry["npc_type"]     = (e as NpcClass).npc_type
 			entry["hp"]           = e.hp
 			entry["max_hp"]       = e.max_hp
+			entry["is_mounted"]   = e.is_mounted
 			entry["dialogue_idx"] = (e as NpcClass)._dialogue_idx
 			entry["trade_stock"]  = (e as NpcClass).trade_stock.duplicate(true)
 			# Persist flee state so a scared animal stays scared after reload.
@@ -145,6 +149,8 @@ static func _serialize_entities(entities: Array, player) -> Array:
 			entry["max_hp"]  = e.max_hp
 			entry["defense"] = e.defense
 			entry["power"]   = e.power
+			entry["is_mountable"] = e.is_mountable
+			entry["is_mounted"] = e.is_mounted
 			entry["has_ai"]  = e.ai != null
 		elif e is ItemClass:
 			entry["type"]       = "item"
@@ -195,10 +201,13 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 
 	var tiles_raw: Array = md["tiles"]
 	var explored_raw: Array = md["explored"]
+	var permanent_light_raw: Array = md.get("permanent_light", [])
 	for y in range(game_map.height):
 		for x in range(game_map.width):
 			game_map.tiles[y][x]    = int(tiles_raw[y][x])
 			game_map.explored[y][x] = bool(explored_raw[y][x])
+			if not permanent_light_raw.is_empty():
+				game_map.permanent_light[y][x] = bool(permanent_light_raw[y][x])
 
 	var pd: Dictionary = data["player"]
 	var player = ActorClass.new(
@@ -230,8 +239,7 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 		if eq_data != null and eq_data is Dictionary:
 			var eq_item = ItemClass.new(Vector2i(0,0), str(eq_data["item_type"]), int(eq_data.get("value",0)))
 			player.equipped[slot] = eq_item
-	player.game_map = game_map
-	game_map.entities.append(player)
+	game_map.add_entity(player)
 
 	for ed: Dictionary in data["entities"]:
 		var color := Color(float(ed["cr"]), float(ed["cg"]), float(ed["cb"]))
@@ -242,32 +250,35 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 				var npc_data: Dictionary = NpcDataClass.get_npc(npc_type)
 				var npc = NpcClass.new(pos, npc_type, npc_data)
 				npc.hp             = int(ed.get("hp", npc.max_hp))
+				npc.is_mounted     = bool(ed.get("is_mounted", false))
+				npc.blocks_movement = not npc.is_mounted
 				npc._dialogue_idx  = int(ed.get("dialogue_idx", 0))
 				# Restore per-instance stock (qtys may have changed from purchases).
 				var saved_stock = ed.get("trade_stock", [])
 				if not (saved_stock as Array).is_empty():
 					npc.trade_stock = (saved_stock as Array).duplicate(true)
-				_restore_npc_ai(npc, ed)
-				npc.game_map = game_map
-				game_map.entities.append(npc)
+				if npc.is_mounted:
+					npc.ai = null
+				else:
+					_restore_npc_ai(npc, ed)
+				game_map.add_entity(npc)
 			"actor":
 				var actor = ActorClass.new(pos, ed["char"], color, ed["name"],
 						int(ed["max_hp"]), int(ed["defense"]), int(ed["power"]))
 				actor.hp              = int(ed["hp"])
+				actor.is_mountable    = bool(ed.get("is_mountable", false))
+				actor.is_mounted      = bool(ed.get("is_mounted", false))
 				actor.blocks_movement = bool(ed["blocks_movement"])
 				if bool(ed["has_ai"]) and actor.is_alive:
 					actor.ai = HostileAIClass.new(actor)
-				actor.game_map = game_map
-				game_map.entities.append(actor)
+				game_map.add_entity(actor)
 			"item":
 				var item = ItemClass.new(pos, str(ed["item_type"]), int(ed["value"]))
-				item.game_map = game_map
-				game_map.entities.append(item)
+				game_map.add_entity(item)
 			"entity":
 				var ent = load("res://scripts/entities/entity.gd").new(pos, ed["char"], color, ed["name"], bool(ed["blocks_movement"]))
 				ent.light_radius = int(ed.get("light_radius", 0))
-				ent.game_map = game_map
-				game_map.entities.append(ent)
+				game_map.add_entity(ent)
 
 	game_map.compute_fov(player.pos.x, player.pos.y, fov_radius)
 
@@ -279,10 +290,13 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 		stored_map.map_type = int(fd.get("map_type", GameMapClass.MAP_DUNGEON))
 		var st_raw: Array = fd["tiles"]
 		var se_raw: Array = fd["explored"]
+		var spl_raw: Array = fd.get("permanent_light", [])
 		for y in range(stored_map.height):
 			for x in range(stored_map.width):
 				stored_map.tiles[y][x]    = int(st_raw[y][x])
 				stored_map.explored[y][x] = bool(se_raw[y][x])
+				if not spl_raw.is_empty():
+					stored_map.permanent_light[y][x] = bool(spl_raw[y][x])
 		for ed: Dictionary in fd["entities"]:
 			var color := Color(float(ed["cr"]), float(ed["cg"]), float(ed["cb"]))
 			var pos   := Vector2i(int(ed["x"]), int(ed["y"]))
@@ -292,32 +306,35 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 					var npc_data: Dictionary = NpcDataClass.get_npc(npc_type)
 					var npc = NpcClass.new(pos, npc_type, npc_data)
 					npc.hp            = int(ed.get("hp", npc.max_hp))
+					npc.is_mounted    = bool(ed.get("is_mounted", false))
+					npc.blocks_movement = not npc.is_mounted
 					npc._dialogue_idx = int(ed.get("dialogue_idx", 0))
 					var saved_stock = ed.get("trade_stock", [])
 					if not (saved_stock as Array).is_empty():
 						npc.trade_stock = (saved_stock as Array).duplicate(true)
-					_restore_npc_ai(npc, ed)
-					npc.game_map = stored_map
-					stored_map.entities.append(npc)
+					if npc.is_mounted:
+						npc.ai = null
+					else:
+						_restore_npc_ai(npc, ed)
+					stored_map.add_entity(npc)
 				"actor":
 					var actor = ActorClass.new(pos, ed["char"], color, ed["name"],
 							int(ed["max_hp"]), int(ed["defense"]), int(ed["power"]))
 					actor.hp              = int(ed["hp"])
+					actor.is_mountable    = bool(ed.get("is_mountable", false))
+					actor.is_mounted      = bool(ed.get("is_mounted", false))
 					actor.blocks_movement = bool(ed["blocks_movement"])
 					if bool(ed["has_ai"]) and actor.is_alive:
 						actor.ai = HostileAIClass.new(actor)
-					actor.game_map = stored_map
-					stored_map.entities.append(actor)
+					stored_map.add_entity(actor)
 				"item":
 					var item = ItemClass.new(pos, ed["item_type"], int(ed["value"]))
-					item.game_map = stored_map
-					stored_map.entities.append(item)
+					stored_map.add_entity(item)
 				"entity":
 					var ent = load("res://scripts/entities/entity.gd").new(
 							pos, ed["char"], color, ed["name"], bool(ed["blocks_movement"]))
 					ent.light_radius = int(ed.get("light_radius", 0))
-					ent.game_map = stored_map
-					stored_map.entities.append(ent)
+					stored_map.add_entity(ent)
 		floors[f_int] = stored_map
 
 	# Restore visited overworld chunks.
@@ -332,10 +349,13 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 		cmap.map_type = int(cd.get("map_type", GameMapClass.MAP_OVERWORLD))
 		var ct_raw: Array = cd["tiles"]
 		var ce_raw: Array = cd["explored"]
+		var cpl_raw: Array = cd.get("permanent_light", [])
 		for y in range(cmap.height):
 			for x in range(cmap.width):
 				cmap.tiles[y][x]    = int(ct_raw[y][x])
 				cmap.explored[y][x] = bool(ce_raw[y][x])
+				if not cpl_raw.is_empty():
+					cmap.permanent_light[y][x] = bool(cpl_raw[y][x])
 		for ed: Dictionary in cd.get("entities", []):
 			var color := Color(float(ed["cr"]), float(ed["cg"]), float(ed["cb"]))
 			var pos   := Vector2i(int(ed["x"]), int(ed["y"]))
@@ -345,32 +365,35 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 					var npc_data: Dictionary = NpcDataClass.get_npc(npc_type)
 					var npc = NpcClass.new(pos, npc_type, npc_data)
 					npc.hp            = int(ed.get("hp", npc.max_hp))
+					npc.is_mounted    = bool(ed.get("is_mounted", false))
+					npc.blocks_movement = not npc.is_mounted
 					npc._dialogue_idx = int(ed.get("dialogue_idx", 0))
 					var saved_stock = ed.get("trade_stock", [])
 					if not (saved_stock as Array).is_empty():
 						npc.trade_stock = (saved_stock as Array).duplicate(true)
-					_restore_npc_ai(npc, ed)
-					npc.game_map = cmap
-					cmap.entities.append(npc)
+					if npc.is_mounted:
+						npc.ai = null
+					else:
+						_restore_npc_ai(npc, ed)
+					cmap.add_entity(npc)
 				"actor":
 					var actor = ActorClass.new(pos, ed["char"], color, ed["name"],
 							int(ed["max_hp"]), int(ed["defense"]), int(ed["power"]))
 					actor.hp              = int(ed["hp"])
+					actor.is_mountable    = bool(ed.get("is_mountable", false))
+					actor.is_mounted      = bool(ed.get("is_mounted", false))
 					actor.blocks_movement = bool(ed["blocks_movement"])
 					if bool(ed["has_ai"]) and actor.is_alive:
 						actor.ai = HostileAIClass.new(actor)
-					actor.game_map = cmap
-					cmap.entities.append(actor)
+					cmap.add_entity(actor)
 				"entity":
 					var ent = load("res://scripts/entities/entity.gd").new(
 							pos, ed["char"], color, ed["name"], bool(ed["blocks_movement"]))
 					ent.light_radius = int(ed.get("light_radius", 0))
-					ent.game_map = cmap
-					cmap.entities.append(ent)
+					cmap.add_entity(ent)
 				"item":
 					var item = ItemClass.new(pos, str(ed["item_type"]), int(ed.get("value", 0)))
-					item.game_map = cmap
-					cmap.entities.append(item)
+					cmap.add_entity(item)
 		chunks[c] = cmap
 
 	var turn: int = int(data.get("turn", 0))

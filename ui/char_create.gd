@@ -166,7 +166,8 @@ func _draw_name_phase() -> void:
 		display += "_"
 	else:
 		display += " "
-	_puts_centered(17, display.lpad(BOX_W >> 1).rpad(BOX_W), C_INPUT)
+	var display_x := BOX_X + ((BOX_W - display.length()) >> 1)
+	_puts(display_x, 17, display, C_INPUT)
 
 	# Underline
 	var ul := ""

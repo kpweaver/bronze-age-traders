@@ -80,7 +80,7 @@ func _do_wander(game_map) -> String:
 	if candidates.is_empty():
 		return ""
 
-	actor.pos = candidates[randi() % candidates.size()]
+	game_map.move_entity(actor, candidates[randi() % candidates.size()])
 	return ""
 
 
@@ -108,7 +108,7 @@ func _do_flee(player, game_map) -> String:
 				best_dist = d
 				best_pos  = Vector2i(nx, ny)
 
-	actor.pos = best_pos
+	game_map.move_entity(actor, best_pos)
 	return ""
 
 

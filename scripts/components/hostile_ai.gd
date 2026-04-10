@@ -27,7 +27,7 @@ func take_turn(player, game_map) -> String:
 	for s in candidates:
 		var next: Vector2i = actor.pos + s
 		if game_map.is_walkable(next.x, next.y) and not game_map.get_blocking_entity_at(next.x, next.y):
-			actor.pos = next
+			game_map.move_entity(actor, next)
 			return ""
 
 	return ""

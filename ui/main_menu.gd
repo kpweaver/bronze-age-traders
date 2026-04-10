@@ -21,6 +21,7 @@ const OPTIONS := ["Continue", "New Game", "Quit"]
 var _font: Font
 var _cursor: int = 0
 var _save_exists: bool = false
+var _hovered_option: int = -1
 
 
 func _ready() -> void:
@@ -42,6 +43,12 @@ func _load_font() -> Font:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion:
+		_handle_mouse_motion(event)
+		return
+	if event is InputEventMouseButton and event.pressed:
+		_handle_mouse_button(event)
+		return
 	if not event is InputEventKey or not event.pressed:
 		return
 	get_viewport().set_input_as_handled()
@@ -76,6 +83,37 @@ func _confirm() -> void:
 			get_tree().quit()
 
 
+func _handle_mouse_motion(event: InputEventMouseMotion) -> void:
+	var idx: int = _option_at_pos(event.position)
+	if idx != _hovered_option:
+		_hovered_option = idx
+		if idx >= 0 and not (idx == 0 and not _save_exists):
+			_cursor = idx
+		queue_redraw()
+
+
+func _handle_mouse_button(event: InputEventMouseButton) -> void:
+	if event.button_index != MOUSE_BUTTON_LEFT:
+		return
+	var idx: int = _option_at_pos(event.position)
+	if idx < 0:
+		return
+	if idx == 0 and not _save_exists:
+		return
+	_cursor = idx
+	get_viewport().set_input_as_handled()
+	_confirm()
+
+
+func _option_at_pos(mouse_pos: Vector2) -> int:
+	var row: int = int(floor(mouse_pos.y / CELL_H))
+	for i in range(OPTIONS.size()):
+		var option_row: int = 22 + i * 2
+		if row == option_row:
+			return i
+	return -1
+
+
 func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, Vector2(COLS * CELL_W, ROWS * CELL_H)), C_BG)
 	_draw_border()
@@ -106,19 +144,20 @@ func _draw_options() -> void:
 	for i in range(OPTIONS.size()):
 		var is_disabled := i == 0 and not _save_exists
 		var is_selected := i == _cursor and not is_disabled
+		var is_hovered := i == _hovered_option and not is_disabled
 		var color: Color
 		if is_disabled:
 			color = C_DISABLED
-		elif is_selected:
+		elif is_selected or is_hovered:
 			color = C_SELECTED
 		else:
 			color = C_NORMAL
-		var prefix := "> " if is_selected else "  "
+		var prefix := "> " if is_selected or is_hovered else "  "
 		_puts_centered(22 + i * 2, prefix + OPTIONS[i], color)
 
 
 func _draw_hint() -> void:
-	_puts_centered(ROWS - 2, "arrows: navigate    enter: select", C_BORDER)
+	_puts_centered(ROWS - 2, "arrows/mouse: navigate    enter/click: select", C_BORDER)
 
 
 func _puts_centered(row: int, text: String, color: Color) -> void:

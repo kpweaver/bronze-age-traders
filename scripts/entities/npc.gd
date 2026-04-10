@@ -61,6 +61,7 @@ func _init(p_pos: Vector2i, p_type: String, p_data: Dictionary) -> void:
 	dialogue      = p_data.get("dialogue", ["..."])
 	is_merchant   = bool(p_data.get("is_merchant", false))
 	is_wildlife   = bool(p_data.get("is_wildlife", false))
+	is_mountable  = bool(p_data.get("is_mountable", false))
 	trade_stock   = p_data.get("trade_stock", []).duplicate(true)
 	buy_mult      = float(p_data.get("buy_mult",  0.70))
 	sell_mult     = float(p_data.get("sell_mult", 1.35))
