@@ -680,6 +680,7 @@ const _BT_COMMERCIAL := 2   # market stall, smithy, workshop
 static func _place_village(map, world_seed: int, world_x: int, world_y: int) -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = world_seed ^ (world_x * 73856093) ^ (world_y * 19349663)
+	var home_chunk := Vector2i(world_x / map.width, world_y / map.height)
 
 	var cx: int = map.width  >> 1
 	var cy: int = map.height >> 1
@@ -811,6 +812,7 @@ static func _place_village(map, world_seed: int, world_x: int, world_y: int) -> 
 			var npc_type: String     = str(npc_pool[rng.randi_range(0, npc_pool.size() - 1)])
 			var npc_data: Dictionary = NpcDataClass.get_npc(npc_type)
 			var npc := NpcClass.new(npc_pos, npc_type, npc_data)
+			npc.home_chunk = home_chunk
 			# Non-merchant NPCs wander (diurnal — rest at night); merchants stay put.
 			if not npc.is_merchant:
 				npc.ai = DocileAIClass.new(npc, 0.35, true)
@@ -1016,6 +1018,7 @@ static func _place_road_lights(map, rng: RandomNumberGenerator) -> void:
 static func _spawn_wildlife(map, biome: int, world_seed: int, world_x: int, world_y: int, safe_center: bool) -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = world_seed ^ (world_x * 56789013) ^ (world_y * 23456791)
+	var home_chunk := Vector2i(world_x / map.width, world_y / map.height)
 
 	# Per-biome table: [npc_type, allowed_tiles, max_count]
 	var table: Array = []
@@ -1073,6 +1076,7 @@ static func _spawn_wildlife(map, biome: int, world_seed: int, world_x: int, worl
 			if map.get_blocking_entity_at(tx, ty) != null:
 				continue
 			var npc := NpcClass.new(Vector2i(tx, ty), npc_type, npc_data)
+			npc.home_chunk = home_chunk
 			var mc: float = float(npc_data.get("move_chance", 0.35))
 			npc.ai       = DocileAIClass.new(npc, mc, false)  # diurnal=false: active day & night
 			map.add_entity(npc)

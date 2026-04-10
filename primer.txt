@@ -353,10 +353,29 @@ time more slowly than a normal action.
     with species-specific move probabilities. Manual bumping into a
     wildlife tile now opens a confirmation prompt ("Attack X?") instead
     of spending a turn immediately; Enter confirms, Esc cancels, and
-    Shift+move still force-attacks directly. This applies to wildlife
-    only, not to neutral village NPCs or pack animals like the donkey.
+    Shift+move still force-attacks directly. After the first successful
+    attack, the animal is flagged as angered and future bump-attacks no
+    longer prompt. Reactions are template-driven via on_attacked:
+    gazelle/onager/ibex/donkey flee, while hyenas retaliate and enter
+    normal hostile combat. This applies to wildlife only, not to neutral
+    village NPC dialogue bumps.
+    Overworld NPCs and wildlife are now chunk-aware: if a valid step would
+    take them off the edge of the current chunk, they can transition into the
+    adjacent chunk instead of treating the border as a wall. Wander radius is
+    enforced in world space using home_chunk + home_pos, so settled NPCs still
+    stay near where they spawned while fleeing animals can escape naturally.
     To add a species: add an entry to content/npcs.gd with is_wildlife: true
     and spawn_weight: 0, then add it to the table in _spawn_wildlife().
+
+  NPC ATTACK REACTIONS:
+    content/npcs.gd now supports on_attacked = "retaliate" or "flee".
+    GameWorld uses that on first hit to switch the NPC into a persistent
+    anger state:
+      retaliate -> HostileAI, future bump-attacks are immediate
+      flee      -> DocileAI in permanent flee mode, future bump-attacks are immediate
+    Save/load preserves both angered state and flee state, and mount
+    dismount logic restores the correct post-attack AI instead of resetting
+    creatures to peaceful behavior.
 
 
 ── scripts/ascii_map.gd ──────────────────────────────────────────────────────

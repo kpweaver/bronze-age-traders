@@ -9,12 +9,15 @@ var dialogue: Array    = []    # cycling lines shown on interact
 var trade_stock: Array = []    # Array of {item_type, qty, price} — mutable per instance
 var is_merchant: bool  = false
 var is_wildlife: bool  = false  # true for overworld animals — changes bump-message format
+var on_attacked: String = "retaliate"  # retaliate | flee
+var is_angered: bool    = false
 var buy_mult: float    = 0.70  # fraction of item.base_value we pay when buying from player
 var sell_mult: float   = 1.35  # multiplier on item.base_value when selling to player
 var _dialogue_idx: int = 0
 
 # Behaviour / movement state
 var home_pos: Vector2i  = Vector2i.ZERO  # tile where this NPC was spawned
+var home_chunk: Vector2i = Vector2i.ZERO # overworld chunk where this NPC was spawned
 var wander_radius: int  = 8              # max tiles from home_pos willing to wander
 
 
@@ -61,6 +64,7 @@ func _init(p_pos: Vector2i, p_type: String, p_data: Dictionary) -> void:
 	dialogue      = p_data.get("dialogue", ["..."])
 	is_merchant   = bool(p_data.get("is_merchant", false))
 	is_wildlife   = bool(p_data.get("is_wildlife", false))
+	on_attacked   = str(p_data.get("on_attacked", "retaliate"))
 	is_mountable  = bool(p_data.get("is_mountable", false))
 	trade_stock   = p_data.get("trade_stock", []).duplicate(true)
 	buy_mult      = float(p_data.get("buy_mult",  0.70))

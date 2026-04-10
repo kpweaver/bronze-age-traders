@@ -143,6 +143,33 @@ func overworld_fov() -> int:
 		return FOV_NIGHT                                          # full night
 
 
+func cleanup() -> void:
+	_break_ai_refs_in_map(map)
+	for stored_map in floors.values():
+		_break_ai_refs_in_map(stored_map)
+	for stored_chunk in chunks.values():
+		_break_ai_refs_in_map(stored_chunk)
+	map = null
+	player = null
+	party.clear()
+	floors.clear()
+	chunks.clear()
+	messages.clear()
+	nearby_npc = null
+	pending_travel_event.clear()
+
+
+func _break_ai_refs_in_map(target_map) -> void:
+	if target_map == null:
+		return
+	for e in target_map.entities:
+		if e is ActorClass and e.ai != null:
+			e.ai.actor = null
+			e.ai.world = null
+			e.ai = null
+	target_map.entities.clear()
+
+
 # ===========================================================================
 # Initialisation
 # ===========================================================================
@@ -343,31 +370,15 @@ func do_player_turn(dir: Vector2i, force_attack: bool = false) -> void:
 		var target = map.get_blocking_entity_at(next.x, next.y)
 		if target != null:
 			if target is NpcClass and (target as NpcClass).is_alive:
-				if force_attack:
-					# Shift+direction — attack the NPC directly.
-					add_msg(player.attack(target as ActorClass))
-					player.fatigue = mini(player.fatigue + 2, ActorClass.FATIGUE_MAX)
-					if GameState.god_mode and (target as ActorClass).is_alive:
-						(target as ActorClass).take_damage((target as ActorClass).hp)
-					if not (target as ActorClass).is_alive:
-						_award_kill_xp(target as ActorClass)
-						add_msg((target as ActorClass).die())
-						map.refresh_entity(target)
+				var npc: NpcClass = target as NpcClass
+				if force_attack or npc.is_angered:
+					_player_attack_target(npc)
 				else:
 					nearby_npc = target
-					var npc: NpcClass = target as NpcClass
 					if npc.is_wildlife:
 						add_msg(npc.greet())   # observation text in log; no dialogue panel
 			elif target is ActorClass and (target as ActorClass).is_alive:
-				add_msg(player.attack(target as ActorClass))
-				# Combat is exhausting — extra fatigue on top of the base drain.
-				player.fatigue = mini(player.fatigue + 2, ActorClass.FATIGUE_MAX)
-				if GameState.god_mode and (target as ActorClass).is_alive:
-					(target as ActorClass).take_damage((target as ActorClass).hp)
-				if not (target as ActorClass).is_alive:
-					_award_kill_xp(target as ActorClass)
-					add_msg((target as ActorClass).die())
-					map.refresh_entity(target)
+				_player_attack_target(target as ActorClass)
 		elif map.is_walkable(next.x, next.y):
 			map.move_entity(player, next)
 			_sync_mount_position()
@@ -382,13 +393,46 @@ func do_player_turn(dir: Vector2i, force_attack: bool = false) -> void:
 	resolve_action(action_cost)
 
 
+func _player_attack_target(target: ActorClass) -> void:
+	add_msg(player.attack(target))
+	player.fatigue = mini(player.fatigue + 2, ActorClass.FATIGUE_MAX)
+	if GameState.god_mode and target.is_alive:
+		target.take_damage(target.hp)
+	if target is NpcClass and target.is_alive:
+		_on_npc_attacked(target as NpcClass)
+	if not target.is_alive:
+		_award_kill_xp(target)
+		add_msg(target.die())
+		map.refresh_entity(target)
+
+
+func _on_npc_attacked(npc: NpcClass) -> void:
+	if npc == null or not npc.is_alive:
+		return
+	if not npc.is_angered:
+		npc.is_angered = true
+		match npc.on_attacked:
+			"flee":
+				var dai := DocileAIClass.new(npc, float(NpcDataClass.get_npc(npc.npc_type).get("move_chance", 0.35)), not npc.is_wildlife)
+				dai._fleeing = true
+				dai._last_hp = npc.hp
+				npc.ai = dai
+				add_msg("The %s panics and tries to flee!" % npc.name)
+			_:
+				npc.ai = HostileAIClass.new(npc)
+				add_msg("The %s turns hostile!" % npc.name)
+	elif npc.on_attacked == "retaliate" and not (npc.ai is HostileAIClass):
+		npc.ai = HostileAIClass.new(npc)
+
+
 func do_enemy_turns() -> void:
 	var night: bool = is_night
-	for e in map.entities:
+	for e in map.entities.duplicate():
 		if not (e is ActorClass):
 			continue
 		if e == player or not e.is_alive or e.ai == null or e.is_mounted:
 			continue
+		e.ai.world = self
 		# Push current time-of-day so AI can honour diurnal schedules.
 		if e.ai is WanderAIClass:
 			(e.ai as WanderAIClass).world_is_night = night
@@ -499,6 +543,7 @@ func try_skin() -> void:
 	var corpse_type: String     = (corpse as NpcClass).npc_type
 	var npc_data: Dictionary    = NpcDataClass.get_npc(corpse_type)
 	var skin_table: Dictionary  = npc_data.get("skin_table", {})
+	add_msg("You kneel beside the %s and begin skinning." % corpse_type)
 
 	# d20 + WIS modifier; WIS knowledge of anatomy improves yield.
 	var roll: int   = randi_range(1, 20) + player.wis_mod
@@ -513,9 +558,11 @@ func try_skin() -> void:
 	map.remove_entity(corpse)
 
 	var wis_str: String = ("+%d" % player.wis_mod) if player.wis_mod >= 0 else str(player.wis_mod)
+	var result_msg: String = ""
 	if tier == "spoiled" or not skin_table.has(tier):
-		add_msg("You butcher the %s but ruin the yield. [d20%s = %d]" \
-				% [corpse_type, wis_str, roll])
+		result_msg = "You butcher the %s but ruin the yield. [d20%s = %d]" \
+				% [corpse_type, wis_str, roll]
+		add_msg(result_msg)
 	else:
 		var loot: Array             = skin_table[tier]
 		var names: PackedStringArray = []
@@ -527,14 +574,17 @@ func try_skin() -> void:
 				map.add_entity(item)
 			var display: String = str(ItemDataClass.get_item(item_type).get("name", item_type))
 			names.append("%dx %s" % [qty, display] if qty > 1 else display)
-		add_msg("You skin the %s: %s. [d20%s = %d]" \
-				% [corpse_type, ", ".join(names), wis_str, roll])
+		result_msg = "You skin the %s: %s. [d20%s = %d]" \
+				% [corpse_type, ", ".join(names), wis_str, roll]
+		add_msg(result_msg)
 		if GameState.auto_pickup:
 			auto_pickup()
 
 	# Skinning consumes a turn.
 	_resting = false
 	resolve_action(ACTION_COST_STANDARD)
+	if not game_over and not result_msg.is_empty():
+		add_msg(result_msg)
 
 
 func auto_pickup() -> void:
@@ -656,7 +706,14 @@ func _restore_mount_ai(mount: ActorClass) -> void:
 	if mount is NpcClass:
 		var npc := mount as NpcClass
 		var move_chance: float = float(NpcDataClass.get_npc(npc.npc_type).get("move_chance", 0.35))
-		if npc.is_wildlife or npc.npc_type == "merchant" or npc.npc_type == "donkey":
+		if npc.is_angered and npc.on_attacked == "retaliate":
+			npc.ai = HostileAIClass.new(npc)
+		elif npc.is_angered and npc.on_attacked == "flee":
+			var dai := DocileAIClass.new(npc, move_chance, not npc.is_wildlife)
+			dai._fleeing = true
+			dai._last_hp = npc.hp
+			npc.ai = dai
+		elif npc.is_wildlife or npc.npc_type == "merchant" or npc.npc_type == "donkey":
 			npc.ai = DocileAIClass.new(npc, move_chance, not npc.is_wildlife)
 		else:
 			npc.ai = null
@@ -674,6 +731,7 @@ func _place_starting_mount(target_map, origin: Vector2i) -> void:
 		return
 	var donkey_data: Dictionary = NpcDataClass.get_npc("donkey")
 	var donkey := NpcClass.new(spawn_pos, "donkey", donkey_data)
+	donkey.home_chunk = chunk
 	donkey.ai = DocileAIClass.new(donkey, float(donkey_data.get("move_chance", 0.20)), true)
 	target_map.add_entity(donkey)
 
@@ -866,6 +924,90 @@ func add_msg(text: String) -> void:
 		messages = messages.slice(messages.size() - MSG_MAX)
 
 
+func get_overworld_global_pos(local_pos: Vector2i, chunk_pos: Vector2i = chunk) -> Vector2i:
+	return Vector2i(chunk_pos.x * OVERWORLD_W + local_pos.x, chunk_pos.y * OVERWORLD_H + local_pos.y)
+
+
+func get_npc_home_global_pos(npc: NpcClass) -> Vector2i:
+	return Vector2i(npc.home_chunk.x * OVERWORLD_W + npc.home_pos.x, npc.home_chunk.y * OVERWORLD_H + npc.home_pos.y)
+
+
+func _get_or_create_overworld_chunk(chunk_pos: Vector2i):
+	if chunks.has(chunk_pos):
+		return chunks[chunk_pos]
+	var new_map := GameMapClass.new(OVERWORLD_W, OVERWORLD_H)
+	ProcgenClass.generate_overworld(new_map,
+			chunk_pos.x * OVERWORLD_W, chunk_pos.y * OVERWORLD_H,
+			GameState.world_seed, get_chunk_biome(chunk_pos), false,
+			get_road_dirs(chunk_pos), is_village_chunk(chunk_pos.x, chunk_pos.y))
+	chunks[chunk_pos] = new_map
+	return new_map
+
+
+func get_overworld_step_option(actor: ActorClass, dir: Vector2i, respect_home_radius: bool = false) -> Dictionary:
+	if map.map_type != GameMapClass.MAP_OVERWORLD or dir == Vector2i.ZERO:
+		return {}
+	var next: Vector2i = actor.pos + dir
+	var dc := Vector2i.ZERO
+	var new_x: int = next.x
+	var new_y: int = next.y
+	if next.x < 0:
+		dc.x = -1
+		new_x = OVERWORLD_W - 1
+	elif next.x >= OVERWORLD_W:
+		dc.x = 1
+		new_x = 0
+	if next.y < 0:
+		dc.y = -1
+		new_y = OVERWORLD_H - 1
+	elif next.y >= OVERWORLD_H:
+		dc.y = 1
+		new_y = 0
+
+	var dest_chunk: Vector2i = chunk + dc
+	if dest_chunk.x < 0 or dest_chunk.x >= GameState.WORLD_W or dest_chunk.y < 0 or dest_chunk.y >= GameState.WORLD_H:
+		return {}
+
+	var dest_map = map if dest_chunk == chunk else _get_or_create_overworld_chunk(dest_chunk)
+	if not dest_map.is_walkable(new_x, new_y):
+		return {}
+	if dest_map.get_blocking_entity_at(new_x, new_y) != null:
+		return {}
+
+	var global_pos: Vector2i = get_overworld_global_pos(Vector2i(new_x, new_y), dest_chunk)
+	if respect_home_radius and actor is NpcClass:
+		var npc: NpcClass = actor as NpcClass
+		if maxi(absi(global_pos.x - get_npc_home_global_pos(npc).x), absi(global_pos.y - get_npc_home_global_pos(npc).y)) > npc.wander_radius:
+			return {}
+
+	return {
+		"dir": dir,
+		"chunk": dest_chunk,
+		"pos": Vector2i(new_x, new_y),
+		"global_pos": global_pos,
+		"cross_chunk": dest_chunk != chunk,
+	}
+
+
+func move_overworld_actor(actor: ActorClass, dir: Vector2i, respect_home_radius: bool = false) -> bool:
+	var step: Dictionary = get_overworld_step_option(actor, dir, respect_home_radius)
+	if step.is_empty():
+		return false
+	var dest_chunk: Vector2i = step["chunk"]
+	var dest_pos: Vector2i = step["pos"]
+	if dest_chunk == chunk:
+		map.move_entity(actor, dest_pos)
+		return true
+
+	map.remove_entity(actor)
+	chunks[chunk] = map
+	var dest_map = _get_or_create_overworld_chunk(dest_chunk)
+	actor.pos = dest_pos
+	dest_map.add_entity(actor)
+	chunks[dest_chunk] = dest_map
+	return true
+
+
 # ===========================================================================
 # Map transitions
 # ===========================================================================
@@ -878,13 +1020,13 @@ func chunk_transition(dir: Vector2i, action_cost: int = ACTION_COST_STANDARD) ->
 	var new_y: int     = next.y
 
 	if next.x < 0:
-		dc.x  = -1;  new_x = OVERWORLD_W - 2
+		dc.x  = -1;  new_x = OVERWORLD_W - 1
 	elif next.x >= OVERWORLD_W:
-		dc.x  =  1;  new_x = 1
+		dc.x  =  1;  new_x = 0
 	if next.y < 0:
-		dc.y  = -1;  new_y = OVERWORLD_H - 2
+		dc.y  = -1;  new_y = OVERWORLD_H - 1
 	elif next.y >= OVERWORLD_H:
-		dc.y  =  1;  new_y = 1
+		dc.y  =  1;  new_y = 0
 
 	var dest_chunk := chunk + dc
 	if dest_chunk.x < 0 or dest_chunk.x >= GameState.WORLD_W \
@@ -1284,13 +1426,13 @@ func _world_map_entry_pos(entry_dir: Vector2i) -> Vector2i:
 	var px: int = OVERWORLD_W >> 1
 	var py: int = OVERWORLD_H >> 1
 	if entry_dir.x > 0:
-		px = 1
+		px = 0
 	elif entry_dir.x < 0:
-		px = OVERWORLD_W - 2
+		px = OVERWORLD_W - 1
 	if entry_dir.y > 0:
-		py = 1
+		py = 0
 	elif entry_dir.y < 0:
-		py = OVERWORLD_H - 2
+		py = OVERWORLD_H - 1
 	return Vector2i(px, py)
 
 
@@ -1640,6 +1782,7 @@ func _place_merchant_in(target_map, player_entry: Vector2i) -> void:
 		return
 	var npc_data: Dictionary = NpcDataClass.get_npc("merchant")
 	var npc := NpcClass.new(pos, "merchant", npc_data)
+	npc.home_chunk = chunk
 	npc.ai       = DocileAIClass.new(npc, 0.25, false)  # travels day and night; flees if attacked
 	target_map.add_entity(npc)
 

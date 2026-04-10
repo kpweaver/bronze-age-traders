@@ -64,6 +64,12 @@ func _do_wander(game_map) -> String:
 		for dx in range(-1, 2):
 			if dx == 0 and dy == 0:
 				continue
+			var dir := Vector2i(dx, dy)
+			if world != null and game_map.map_type == GameMapClass.MAP_OVERWORLD:
+				var step: Dictionary = world.get_overworld_step_option(actor, dir, true)
+				if not step.is_empty():
+					candidates.append(dir)
+				continue
 			var nx: int = actor.pos.x + dx
 			var ny: int = actor.pos.y + dy
 			if not game_map.is_in_bounds(nx, ny):
@@ -75,12 +81,16 @@ func _do_wander(game_map) -> String:
 			var cheb: int = maxi(absi(nx - actor.home_pos.x), absi(ny - actor.home_pos.y))
 			if cheb > actor.wander_radius:
 				continue
-			candidates.append(Vector2i(nx, ny))
+			candidates.append(dir)
 
 	if candidates.is_empty():
 		return ""
 
-	game_map.move_entity(actor, candidates[randi() % candidates.size()])
+	var chosen: Vector2i = candidates[randi() % candidates.size()]
+	if world != null and game_map.map_type == GameMapClass.MAP_OVERWORLD:
+		world.move_overworld_actor(actor, chosen, true)
+	else:
+		game_map.move_entity(actor, actor.pos + chosen)
 	return ""
 
 
@@ -88,27 +98,43 @@ func _do_wander(game_map) -> String:
 # Flee — move to the adjacent tile that maximises distance from the player.
 # ---------------------------------------------------------------------------
 func _do_flee(player, game_map) -> String:
-	var best_pos: Vector2i = actor.pos
+	var best_dir: Vector2i = Vector2i.ZERO
 	var best_dist := _cheb(actor.pos, player.pos)
+	var player_global: Vector2i = player.pos
+	if world != null and game_map.map_type == GameMapClass.MAP_OVERWORLD:
+		player_global = world.get_overworld_global_pos(player.pos)
 
 	for dy in range(-1, 2):
 		for dx in range(-1, 2):
 			if dx == 0 and dy == 0:
 				continue
-			var nx: int = actor.pos.x + dx
-			var ny: int = actor.pos.y + dy
-			if not game_map.is_in_bounds(nx, ny):
-				continue
-			if not game_map.is_walkable(nx, ny):
-				continue
-			if game_map.get_blocking_entity_at(nx, ny) != null:
-				continue
-			var d: int = _cheb(Vector2i(nx, ny), player.pos)
+			var dir := Vector2i(dx, dy)
+			var d: int = -1
+			if world != null and game_map.map_type == GameMapClass.MAP_OVERWORLD:
+				var step: Dictionary = world.get_overworld_step_option(actor, dir, false)
+				if step.is_empty():
+					continue
+				d = _cheb(step["global_pos"], player_global)
+			else:
+				var nx: int = actor.pos.x + dx
+				var ny: int = actor.pos.y + dy
+				if not game_map.is_in_bounds(nx, ny):
+					continue
+				if not game_map.is_walkable(nx, ny):
+					continue
+				if game_map.get_blocking_entity_at(nx, ny) != null:
+					continue
+				d = _cheb(Vector2i(nx, ny), player.pos)
 			if d > best_dist:
 				best_dist = d
-				best_pos  = Vector2i(nx, ny)
+				best_dir  = dir
 
-	game_map.move_entity(actor, best_pos)
+	if best_dir == Vector2i.ZERO:
+		return ""
+	if world != null and game_map.map_type == GameMapClass.MAP_OVERWORLD:
+		world.move_overworld_actor(actor, best_dir, false)
+	else:
+		game_map.move_entity(actor, actor.pos + best_dir)
 	return ""
 
 

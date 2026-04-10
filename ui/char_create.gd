@@ -32,6 +32,8 @@ var _font: Font
 var _name: String = ""
 var _class_cursor: int = 0
 var _blink: float  = 0.0   # cursor blink timer
+var _hovered_class: int = -1
+var _hovered_confirm: int = -1
 
 enum Phase { NAME, CLASS, CONFIRM }
 var _phase: Phase = Phase.NAME
@@ -62,6 +64,12 @@ func _process(delta: float) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion:
+		_handle_mouse_motion(event)
+		return
+	if event is InputEventMouseButton and event.pressed:
+		_handle_mouse_button(event)
+		return
 	if not event is InputEventKey or not event.pressed:
 		return
 	get_viewport().set_input_as_handled()
@@ -122,6 +130,61 @@ func _start_game() -> void:
 	GameState.player_class = CLASSES[_class_cursor][0]
 	GameState.load_save    = false
 	get_tree().change_scene_to_file("res://main.tscn")
+
+
+func _mouse_row(mouse_pos: Vector2) -> int:
+	return int(floor(mouse_pos.y / CELL_H))
+
+
+func _handle_mouse_motion(event: InputEventMouseMotion) -> void:
+	match _phase:
+		Phase.CLASS:
+			var hovered := -1
+			var row: int = _mouse_row(event.position)
+			for i in range(CLASSES.size()):
+				var option_row: int = 17 + i * 3
+				if row >= option_row and row <= option_row + 1:
+					hovered = i
+					break
+			if hovered != _hovered_class:
+				_hovered_class = hovered
+				if hovered >= 0:
+					_class_cursor = hovered
+				queue_redraw()
+		Phase.CONFIRM:
+			var hovered_confirm := -1
+			var row: int = _mouse_row(event.position)
+			if row == 26:
+				var col: int = int(floor(event.position.x / CELL_W))
+				if col >= 40 and col <= 56:
+					hovered_confirm = 0
+				elif col >= 63 and col <= 79:
+					hovered_confirm = 1
+			if hovered_confirm != _hovered_confirm:
+				_hovered_confirm = hovered_confirm
+				queue_redraw()
+
+
+func _handle_mouse_button(event: InputEventMouseButton) -> void:
+	if event.button_index != MOUSE_BUTTON_LEFT:
+		return
+	get_viewport().set_input_as_handled()
+	match _phase:
+		Phase.NAME:
+			if _name.strip_edges().length() > 0:
+				_phase = Phase.CLASS
+				queue_redraw()
+		Phase.CLASS:
+			if _hovered_class >= 0:
+				_class_cursor = _hovered_class
+				_phase = Phase.CONFIRM
+				queue_redraw()
+		Phase.CONFIRM:
+			if _hovered_confirm == 0:
+				_start_game()
+			elif _hovered_confirm == 1:
+				_phase = Phase.CLASS
+				queue_redraw()
 
 
 func _draw() -> void:
@@ -187,7 +250,7 @@ func _draw_class_phase() -> void:
 
 	for i in range(CLASSES.size()):
 		var cls: Array = CLASSES[i]
-		var is_sel     := i == _class_cursor
+		var is_sel     := i == _class_cursor or i == _hovered_class
 		var color      := C_SELECTED if is_sel else C_NORMAL
 		var prefix     := "> " if is_sel else "  "
 		_puts_centered(17 + i * 3, prefix + cls[1], color)
@@ -214,17 +277,21 @@ func _draw_confirm_phase() -> void:
 	var stat_line2 := "INT: %2d   WIS: %2d   CHA: %2d" % [stats[3], stats[4], stats[5]]
 	_puts_centered(22, stat_line1, C_NORMAL)
 	_puts_centered(23, stat_line2, C_NORMAL)
-	_puts_centered(26, "[ Enter / Y ] to start      [ Esc / N ] to go back", C_HINT)
+	var start_color: Color = C_SELECTED if _hovered_confirm == 0 else C_HINT
+	var back_color: Color = C_SELECTED if _hovered_confirm == 1 else C_HINT
+	_puts_centered(26, "[ Start ]      [ Back ]", C_HINT)
+	_puts(40, 26, "[ Start ]", start_color)
+	_puts(63, 26, "[ Back ]", back_color)
 
 
 func _draw_hint() -> void:
 	match _phase:
 		Phase.NAME:
-			_puts_centered(ROWS - 2, "type your name    enter: next    esc: main menu", C_HINT)
+			_puts_centered(ROWS - 2, "type your name    enter/click: next    esc: main menu", C_HINT)
 		Phase.CLASS:
-			_puts_centered(ROWS - 2, "arrows: choose class    enter: next    esc: back", C_HINT)
+			_puts_centered(ROWS - 2, "arrows/mouse: choose class    enter/click: next    esc: back", C_HINT)
 		Phase.CONFIRM:
-			_puts_centered(ROWS - 2, "enter/Y: start game    esc/N: go back", C_HINT)
+			_puts_centered(ROWS - 2, "enter/Y/click: start    esc/N/click: go back", C_HINT)
 
 
 func _puts_centered(row: int, text: String, color: Color) -> void:

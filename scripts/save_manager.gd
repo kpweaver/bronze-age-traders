@@ -138,6 +138,11 @@ static func _serialize_entities(entities: Array, player) -> Array:
 			entry["hp"]           = e.hp
 			entry["max_hp"]       = e.max_hp
 			entry["is_mounted"]   = e.is_mounted
+			entry["is_angered"]   = (e as NpcClass).is_angered
+			entry["home_x"]       = (e as NpcClass).home_pos.x
+			entry["home_y"]       = (e as NpcClass).home_pos.y
+			entry["home_chunk_x"] = (e as NpcClass).home_chunk.x
+			entry["home_chunk_y"] = (e as NpcClass).home_chunk.y
 			entry["dialogue_idx"] = (e as NpcClass)._dialogue_idx
 			entry["trade_stock"]  = (e as NpcClass).trade_stock.duplicate(true)
 			# Persist flee state so a scared animal stays scared after reload.
@@ -169,9 +174,13 @@ static func _restore_npc_ai(npc: NpcClass, ed: Dictionary) -> void:
 	# Keep restoration rules identical across the active map and stored chunks.
 	# Wildlife and traveling merchants use DocileAI; village merchants stay put.
 	var mc: float = float(NpcDataClass.get_npc(npc.npc_type).get("move_chance", 0.35))
-	if npc.is_wildlife or npc.npc_type == "merchant":
+	npc.is_angered = bool(ed.get("is_angered", false))
+	if npc.is_angered and npc.on_attacked == "retaliate":
+		npc.ai = HostileAIClass.new(npc)
+	elif npc.is_wildlife or npc.npc_type == "merchant" or npc.npc_type == "donkey" or npc.on_attacked == "flee":
 		var dai := DocileAIClass.new(npc, mc, not npc.is_wildlife)
-		dai._fleeing = bool(ed.get("fleeing", false))
+		dai._fleeing = bool(ed.get("fleeing", false)) or (npc.is_angered and npc.on_attacked == "flee")
+		dai._last_hp = npc.hp
 		npc.ai = dai
 	else:
 		npc.ai = null
@@ -251,6 +260,9 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 				var npc = NpcClass.new(pos, npc_type, npc_data)
 				npc.hp             = int(ed.get("hp", npc.max_hp))
 				npc.is_mounted     = bool(ed.get("is_mounted", false))
+				npc.is_angered     = bool(ed.get("is_angered", false))
+				npc.home_pos       = Vector2i(int(ed.get("home_x", npc.home_pos.x)), int(ed.get("home_y", npc.home_pos.y)))
+				npc.home_chunk     = Vector2i(int(ed.get("home_chunk_x", npc.home_chunk.x)), int(ed.get("home_chunk_y", npc.home_chunk.y)))
 				npc.blocks_movement = not npc.is_mounted
 				npc._dialogue_idx  = int(ed.get("dialogue_idx", 0))
 				# Restore per-instance stock (qtys may have changed from purchases).
@@ -307,6 +319,9 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 					var npc = NpcClass.new(pos, npc_type, npc_data)
 					npc.hp            = int(ed.get("hp", npc.max_hp))
 					npc.is_mounted    = bool(ed.get("is_mounted", false))
+					npc.is_angered    = bool(ed.get("is_angered", false))
+					npc.home_pos      = Vector2i(int(ed.get("home_x", npc.home_pos.x)), int(ed.get("home_y", npc.home_pos.y)))
+					npc.home_chunk    = Vector2i(int(ed.get("home_chunk_x", npc.home_chunk.x)), int(ed.get("home_chunk_y", npc.home_chunk.y)))
 					npc.blocks_movement = not npc.is_mounted
 					npc._dialogue_idx = int(ed.get("dialogue_idx", 0))
 					var saved_stock = ed.get("trade_stock", [])
@@ -366,6 +381,9 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 					var npc = NpcClass.new(pos, npc_type, npc_data)
 					npc.hp            = int(ed.get("hp", npc.max_hp))
 					npc.is_mounted    = bool(ed.get("is_mounted", false))
+					npc.is_angered    = bool(ed.get("is_angered", false))
+					npc.home_pos      = Vector2i(int(ed.get("home_x", npc.home_pos.x)), int(ed.get("home_y", npc.home_pos.y)))
+					npc.home_chunk    = Vector2i(int(ed.get("home_chunk_x", npc.home_chunk.x)), int(ed.get("home_chunk_y", npc.home_chunk.y)))
 					npc.blocks_movement = not npc.is_mounted
 					npc._dialogue_idx = int(ed.get("dialogue_idx", 0))
 					var saved_stock = ed.get("trade_stock", [])

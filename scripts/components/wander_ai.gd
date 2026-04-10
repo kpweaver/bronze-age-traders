@@ -46,6 +46,12 @@ func take_turn(player, game_map) -> String:
 		for dx in range(-1, 2):
 			if dx == 0 and dy == 0:
 				continue
+			var dir := Vector2i(dx, dy)
+			if world != null and game_map.map_type == GameMapClass.MAP_OVERWORLD:
+				var step: Dictionary = world.get_overworld_step_option(actor, dir, true)
+				if not step.is_empty():
+					candidates.append(dir)
+				continue
 			var nx: int = actor.pos.x + dx
 			var ny: int = actor.pos.y + dy
 			if not game_map.is_in_bounds(nx, ny):
@@ -58,10 +64,14 @@ func take_turn(player, game_map) -> String:
 			var cheb: int = maxi(absi(nx - actor.home_pos.x), absi(ny - actor.home_pos.y))
 			if cheb > actor.wander_radius:
 				continue
-			candidates.append(Vector2i(nx, ny))
+			candidates.append(dir)
 
 	if candidates.is_empty():
 		return ""
 
-	game_map.move_entity(actor, candidates[randi() % candidates.size()])
+	var chosen: Vector2i = candidates[randi() % candidates.size()]
+	if world != null and game_map.map_type == GameMapClass.MAP_OVERWORLD:
+		world.move_overworld_actor(actor, chosen, true)
+	else:
+		game_map.move_entity(actor, actor.pos + chosen)
 	return ""

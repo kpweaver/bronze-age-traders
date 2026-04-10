@@ -169,6 +169,11 @@ func _ready() -> void:
 	_open_attribute_overlay_if_needed()
 
 
+func _exit_tree() -> void:
+	if _world != null:
+		_world.cleanup()
+
+
 func _process(delta: float) -> void:
 	if _world != null and _world.get_player_mount() != null:
 		var bucket: int = int(Time.get_ticks_msec() / MOUNT_GLYPH_CYCLE_MS)
@@ -239,7 +244,7 @@ func _wildlife_at_bump(dir: Vector2i):
 	var target = _map.get_blocking_entity_at(next.x, next.y)
 	if target is NpcClass:
 		var npc: NpcClass = target as NpcClass
-		if npc.is_alive and npc.is_wildlife:
+		if npc.is_alive and npc.is_wildlife and not npc.is_angered:
 			return npc
 	return null
 
@@ -619,6 +624,11 @@ func _handle_mouse_motion(event: InputEventMouseMotion) -> void:
 		_hover_active = should_highlight and _map.explored[map_pos.y][map_pos.x]
 		if _hover_active:
 			_hover_pos = map_pos
+	elif _screen == Screen.WORLD_MAP:
+		var chunk := _world_map_chunk_at_pos(event.position)
+		if chunk.x >= 0:
+			_world_look_cursor = chunk
+			queue_redraw()
 	elif _screen == Screen.LOOK:
 		_hover_active = false
 		if should_highlight and _map.explored[map_pos.y][map_pos.x]:
@@ -653,9 +663,20 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 			_handle_inventory_mouse_click(event.position)
 		Screen.TRADE:
 			_handle_trade_mouse_click(event.position)
-		Screen.CHARACTER, Screen.HELP, Screen.READER, Screen.DIALOGUE:
-			_screen = Screen.NONE
-			queue_redraw()
+		Screen.CHARACTER:
+			_handle_character_mouse_click(event.position)
+		Screen.HELP:
+			_handle_help_mouse_click(event.position)
+		Screen.READER:
+			_handle_reader_mouse_click(event.position)
+		Screen.DIALOGUE:
+			_handle_dialogue_mouse_click(event.position)
+		Screen.ATTRIBUTE_PICK:
+			_handle_attribute_pick_mouse_click(event.position)
+		Screen.DISAMBIGUATE:
+			_handle_disambig_mouse_click(event.position)
+		Screen.WORLD_MAP:
+			_handle_world_map_mouse_click(event.position)
 
 
 func _mouse_cell(mouse_pos: Vector2) -> Vector2i:
@@ -746,6 +767,79 @@ func _handle_escape_mouse_click(mouse_pos: Vector2) -> void:
 	if idx >= 0 and idx < ESCAPE_OPTIONS.size():
 		_escape_cursor = idx
 		_confirm_escape()
+
+
+func _handle_character_mouse_click(mouse_pos: Vector2) -> void:
+	const BOX_X := 35
+	const BOX_Y := 4
+	const BOX_W := 50
+	const BOX_H := 24
+	var cell := _mouse_cell(mouse_pos)
+	if cell.x >= BOX_X and cell.x < BOX_X + BOX_W and cell.y == BOX_Y + BOX_H - 2:
+		_screen = Screen.NONE
+		queue_redraw()
+
+
+func _handle_help_mouse_click(mouse_pos: Vector2) -> void:
+	const BOX_X := 4
+	const BOX_Y := 1
+	const BOX_W := 112
+	const BOX_H := 33
+	var cell := _mouse_cell(mouse_pos)
+	if cell.x >= BOX_X and cell.x < BOX_X + BOX_W and cell.y >= BOX_Y and cell.y < BOX_Y + BOX_H:
+		_screen = Screen.NONE
+		queue_redraw()
+
+
+func _handle_reader_mouse_click(mouse_pos: Vector2) -> void:
+	if _reader_item == null:
+		return
+	const BOX_X := 6
+	const BOX_Y := 3
+	const BOX_W := 108
+	const BOX_H := 24
+	const VISIBLE_LINES := 18
+	var cell := _mouse_cell(mouse_pos)
+	if cell.x < BOX_X or cell.x >= BOX_X + BOX_W or cell.y < BOX_Y or cell.y >= BOX_Y + BOX_H:
+		return
+	if cell.y == BOX_Y + BOX_H - 2:
+		_screen = Screen.NONE
+		_reader_item = null
+		queue_redraw()
+		return
+	if cell.x >= BOX_X + BOX_W - 4 and cell.y <= BOX_Y + 2 and _reader_scroll > 0:
+		_reader_scroll = maxi(0, _reader_scroll - 1)
+		queue_redraw()
+		return
+	var max_scroll: int = maxi(0, _reader_lines.size() - VISIBLE_LINES)
+	if cell.x >= BOX_X + BOX_W - 4 and cell.y >= BOX_Y + BOX_H - 3 and _reader_scroll < max_scroll:
+		_reader_scroll = mini(_reader_scroll + 1, max_scroll)
+		queue_redraw()
+		return
+
+
+func _handle_dialogue_mouse_click(mouse_pos: Vector2) -> void:
+	if _dialogue_npc == null:
+		return
+	const BOX_X := 2
+	const BOX_Y := 30
+	const BOX_W := 116
+	const BOX_H := 9
+	var cell := _mouse_cell(mouse_pos)
+	if cell.x < BOX_X or cell.x >= BOX_X + BOX_W or cell.y < BOX_Y or cell.y >= BOX_Y + BOX_H:
+		return
+	if cell.y == BOX_Y + BOX_H - 2:
+		var npc: NpcClass = _dialogue_npc as NpcClass
+		if npc.is_merchant and cell.x >= BOX_X + 48 and cell.x <= BOX_X + 58:
+			_open_trade(_dialogue_npc)
+			return
+		if cell.x >= BOX_X + 84 and cell.x <= BOX_X + 96:
+			_screen = Screen.NONE
+			_dialogue_npc = null
+			queue_redraw()
+			return
+	_dialogue_line = (_dialogue_npc as NpcClass).greet()
+	queue_redraw()
 
 
 func _activate_inventory_item(item) -> void:
@@ -906,18 +1000,16 @@ func _open_dialogue(npc) -> void:
 
 func _handle_dialogue_input(event: InputEvent) -> void:
 	get_viewport().set_input_as_handled()
-	match event.physical_keycode:
-		KEY_ESCAPE:
-			_screen = Screen.NONE
-			_dialogue_npc = null
-			queue_redraw()
-		KEY_SPACE, KEY_ENTER, KEY_KP_ENTER:
-			# Advance to the next dialogue line.
-			_dialogue_line = (_dialogue_npc as NpcClass).greet()
-			queue_redraw()
-		KEY_T:
-			if (_dialogue_npc as NpcClass).is_merchant:
-				_open_trade(_dialogue_npc)
+	if _dialogue_npc == null:
+		_screen = Screen.NONE
+		queue_redraw()
+		return
+	if event.physical_keycode == KEY_T and (_dialogue_npc as NpcClass).is_merchant:
+		_open_trade(_dialogue_npc)
+		return
+	_screen = Screen.NONE
+	_dialogue_npc = null
+	queue_redraw()
 
 
 func _handle_character_input(event: InputEvent) -> void:
@@ -964,6 +1056,23 @@ func _handle_settings_mouse_click(mouse_pos: Vector2) -> void:
 		_:
 			return
 	queue_redraw()
+
+
+func _handle_attribute_pick_mouse_click(mouse_pos: Vector2) -> void:
+	const BOX_X := 34
+	const BOX_Y := 13
+	const BOX_W := 52
+	const BOX_H := 14
+	var cell := _mouse_cell(mouse_pos)
+	if cell.x < BOX_X or cell.x >= BOX_X + BOX_W or cell.y < BOX_Y or cell.y >= BOX_Y + BOX_H:
+		return
+	for i in range(ATTRIBUTE_OPTIONS.size()):
+		if cell.y == BOX_Y + 5 + i:
+			var opt: Dictionary = ATTRIBUTE_OPTIONS[i]
+			if _world.apply_attribute_increase(str(opt.code)):
+				_open_attribute_overlay_if_needed()
+				queue_redraw()
+			return
 
 
 func _handle_look_input(event: InputEvent) -> void:
@@ -1130,6 +1239,29 @@ func _handle_disambig_input(event: InputEvent) -> void:
 		if event.physical_keycode == int(opt.key):
 			(opt.callback as Callable).call()
 			return
+
+
+func _handle_disambig_mouse_click(mouse_pos: Vector2) -> void:
+	const PAD := 3
+	var box_w: int = 44
+	for opt: Dictionary in _disambig_options:
+		var w: int = (opt.label as String).length() + 10
+		if w > box_w:
+			box_w = w
+	var box_h: int = _disambig_options.size() + 6
+	var box_x: int = (COLS - box_w) >> 1
+	var box_y: int = (MAP_ROWS - box_h) >> 1
+	var cell := _mouse_cell(mouse_pos)
+	if cell.x < box_x or cell.x >= box_x + box_w or cell.y < box_y or cell.y >= box_y + box_h:
+		return
+	for i in range(_disambig_options.size()):
+		if cell.y == box_y + 3 + i:
+			_disambig_cursor = i
+			var selected: Dictionary = _disambig_options[i]
+			(selected.callback as Callable).call()
+			return
+	if cell.y == box_y + box_h - 2:
+		_close_disambig_overlay()
 
 
 func _handle_travel_event_input(event: InputEvent) -> void:
@@ -1805,7 +1937,9 @@ func _draw_dialogue_screen() -> void:
 
 	var hint := "[Space] Next   [T] Trade   [Esc] Close"
 	if not npc.is_merchant:
-		hint = "[Space] Next   [Esc] Close"
+		hint = "[Any key] Close"
+	else:
+		hint = "[T] Trade   [Any other key] Close"
 	_puts(BOX_X + ((BOX_W - hint.length()) >> 1), BOX_Y + BOX_H - 2, hint, C_DIVIDER)
 
 
@@ -2139,6 +2273,40 @@ func _draw_world_map() -> void:
 			var baseline_y: float = py + cell_h * 0.60
 			draw_string(_font, Vector2(px, baseline_y), ch,
 					HORIZONTAL_ALIGNMENT_CENTER, cell_w, UI_FONT_SIZE, color)
+
+
+func _world_map_chunk_at_pos(mouse_pos: Vector2) -> Vector2i:
+	var map_px_w: float = COLS * CELL_W
+	var map_px_y: float = CELL_H * 2.0
+	var map_px_h: float = MAP_ROWS * CELL_H - map_px_y
+	if mouse_pos.y < map_px_y or mouse_pos.y >= map_px_y + map_px_h:
+		return Vector2i(-1, -1)
+	var cx: int = clampi(int(floor(mouse_pos.x / (map_px_w / float(GameState.WORLD_W)))), 0, GameState.WORLD_W - 1)
+	var cy: int = clampi(int(floor((mouse_pos.y - map_px_y) / (map_px_h / float(GameState.WORLD_H)))), 0, GameState.WORLD_H - 1)
+	return Vector2i(cx, cy)
+
+
+func _handle_world_map_mouse_click(mouse_pos: Vector2) -> void:
+	var chunk := _world_map_chunk_at_pos(mouse_pos)
+	if chunk.x < 0:
+		return
+	_world_look_cursor = chunk
+	if _world_look_mode:
+		queue_redraw()
+		return
+	var delta: Vector2i = chunk - _chunk
+	if delta == Vector2i.ZERO:
+		_screen = Screen.NONE
+		_update_camera()
+		_map.compute_fov(_player.pos.x, _player.pos.y, GameWorldClass.FOV_OVERWORLD)
+		queue_redraw()
+		return
+	delta.x = clampi(delta.x, -1, 1)
+	delta.y = clampi(delta.y, -1, 1)
+	_world.world_map_navigate(delta)
+	if _world.has_pending_travel_event():
+		_screen = Screen.TRAVEL_EVENT
+	queue_redraw()
 
 
 

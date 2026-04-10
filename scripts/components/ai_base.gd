@@ -9,6 +9,7 @@ extends RefCounted
 #   ScheduleAI — (future) follow a time-of-day routine
 
 var actor  # the Actor this AI drives
+var world = null  # GameWorld reference, injected before take_turn when needed
 
 func _init(p_actor) -> void:
 	actor = p_actor
