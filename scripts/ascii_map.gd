@@ -288,6 +288,32 @@ func _make_ui_theme() -> Theme:
 	return theme
 
 
+func _bb_escape(text: String) -> String:
+	return text.replace("[", "[lb]").replace("]", "[rb]")
+
+
+func _bb_color(text: String, color: Color) -> String:
+	return "[color=#%s]%s[/color]" % [color.to_html(false), _bb_escape(text)]
+
+
+func _set_rich_text_plain(label: RichTextLabel, text: String) -> void:
+	label.clear()
+	label.add_text(text)
+
+
+func _set_rich_text_with_highlight(label: RichTextLabel, lines: Array[String], highlight_idx: int) -> void:
+	label.clear()
+	for i in range(lines.size()):
+		if i == highlight_idx:
+			label.push_color(C_STATUS)
+			label.add_text(lines[i])
+			label.pop()
+		else:
+			label.add_text(lines[i])
+		if i < lines.size() - 1:
+			label.add_text("\n")
+
+
 func _make_panel_style(border_color: Color, content_margin: int, border_width: int = 2) -> StyleBoxFlat:
 	var panel_style := StyleBoxFlat.new()
 	panel_style.bg_color = Color(0.05, 0.04, 0.03, 0.97)
@@ -355,8 +381,8 @@ func _build_hud_ui() -> void:
 
 	for i in range(MSG_LINES):
 		var msg := Label.new()
-		msg.position = Vector2(0, (MSG_START_ROW + i) * CELL_H - 4)
-		msg.custom_minimum_size = Vector2(COLS * CELL_W, CELL_H + 4)
+		msg.position = Vector2(0, (MSG_START_ROW + i) * CELL_H - 6)
+		msg.custom_minimum_size = Vector2(COLS * CELL_W, CELL_H + 8)
 		msg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_hud_ui_root.add_child(msg)
 		_hud_message_labels.append(msg)
@@ -779,6 +805,7 @@ func _build_trade_ui() -> void:
 	v.add_child(split)
 
 	_trade_buy_text = RichTextLabel.new()
+	_trade_buy_text.bbcode_enabled = false
 	_trade_buy_text.fit_content = false
 	_trade_buy_text.scroll_active = true
 	_trade_buy_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -787,6 +814,7 @@ func _build_trade_ui() -> void:
 	split.add_child(_trade_buy_text)
 
 	_trade_sell_text = RichTextLabel.new()
+	_trade_sell_text.bbcode_enabled = false
 	_trade_sell_text.fit_content = false
 	_trade_sell_text.scroll_active = true
 	_trade_sell_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -883,18 +911,18 @@ func _refresh_menu_ui() -> void:
 	match _screen:
 		Screen.ESCAPE:
 			_menu_title_label.text = "-=[ PAUSED ]=-"
-			var body := ""
+			var lines: Array[String] = []
 			for i in range(ESCAPE_OPTIONS.size()):
-				body += ("%s %s\n" % [">" if i == _escape_cursor else " ", ESCAPE_OPTIONS[i]])
-			_menu_body_text.text = body
+				lines.append("%s %s" % [">" if i == _escape_cursor else " ", ESCAPE_OPTIONS[i]])
+			_set_rich_text_with_highlight(_menu_body_text, lines, _escape_cursor)
 			_menu_footer_label.text = "Enter: select    Esc: resume"
 		Screen.SETTINGS:
 			_menu_title_label.text = "-=[ SETTINGS ]=-"
-			_menu_body_text.text = "a) Auto-pickup items:  %s\nd) Debug tools:        %s\ng) God mode:           %s" % [
+			_set_rich_text_plain(_menu_body_text, "a) Auto-pickup items:  %s\nd) Debug tools:        %s\ng) God mode:           %s" % [
 				"ON" if GameState.auto_pickup else "OFF",
 				"ON" if GameState.debug_tools_enabled else "OFF",
 				"ON" if GameState.god_mode else "OFF",
-			]
+			])
 			_menu_footer_label.text = "Esc: back"
 		Screen.CHARACTER:
 			_menu_title_label.text = "-=[ CHARACTER ]=-"
@@ -906,7 +934,7 @@ func _refresh_menu_ui() -> void:
 				ranged_str = (ranged_weapon as ItemClass).name
 				if ammo != null:
 					ranged_str += " [%d]" % (ammo as ItemClass).stack_count()
-			_menu_body_text.text = "Name       %s\nClass      %s\nLevel      %d\nXP         %d / %d\nMount      %s\n\nHP         %d / %d\nAttack     1d6+%d\nRanged     %s\nAC         %d\nGold       %d\nCarry      %s / %s\nSTR Carry  %+d lbs.\n\nSTR        %d (%+d)\nDEX        %d (%+d)\nCON        %d (%+d)\nINT        %d (%+d)\nWIS        %d (%+d)\nCHA        %d (%+d)" % [
+			_set_rich_text_plain(_menu_body_text, "Name       %s\nClass      %s\nLevel      %d\nXP         %d / %d\nMount      %s\n\nHP         %d / %d\nAttack     1d6+%d\nRanged     %s\nAC         %d\nGold       %d\nCarry      %s / %s\nSTR Carry  %+d lbs.\n\nSTR        %d (%+d)\nDEX        %d (%+d)\nCON        %d (%+d)\nINT        %d (%+d)\nWIS        %d (%+d)\nCHA        %d (%+d)" % [
 				GameState.player_name,
 				GameState.player_class.capitalize(),
 				_player.level,
@@ -925,7 +953,7 @@ func _refresh_menu_ui() -> void:
 				_player.int_score, _player.int_mod,
 				_player.wis_score, _player.wis_mod,
 				_player.cha_score, _player.cha_mod,
-			]
+			])
 			_menu_footer_label.text = "Esc: close"
 		Screen.ATTRIBUTE_PICK:
 			_menu_title_label.text = "-=[ ATTRIBUTE INCREASE ]=-"
@@ -933,7 +961,7 @@ func _refresh_menu_ui() -> void:
 			for opt in ATTRIBUTE_OPTIONS:
 				var score: int = int(_player.get("%s_score" % str(opt.code)))
 				attr_body += "[%s] %-12s %2d -> %2d\n" % [char(int(opt.key)), str(opt.label), score, score + 1]
-			_menu_body_text.text = attr_body
+			_set_rich_text_plain(_menu_body_text, attr_body)
 			_menu_footer_label.text = "Press the matching key"
 		Screen.DISAMBIGUATE:
 			_menu_title_label.text = _disambig_prompt
@@ -945,21 +973,31 @@ func _refresh_menu_ui() -> void:
 					char(int(opt.key)) if int(opt.key) >= KEY_A and int(opt.key) <= KEY_Z else "•",
 					str(opt.label)
 				]
-			_menu_body_text.text = disambig_body
+			var disambig_lines: Array[String] = []
+			for i in range(_disambig_options.size()):
+				var opt_line: Dictionary = _disambig_options[i]
+				var opt_key: int = int(opt_line.get("key", KEY_NONE))
+				var key_label := char(opt_key) if opt_key >= KEY_A and opt_key <= KEY_Z else "*"
+				disambig_lines.append("%s [%s] %s" % [
+					">" if i == _disambig_cursor else " ",
+					key_label,
+					str(opt_line.get("label", ""))
+				])
+			_set_rich_text_with_highlight(_menu_body_text, disambig_lines, _disambig_cursor)
 			_menu_footer_label.text = "Enter: confirm    Esc: cancel"
 		Screen.HELP:
 			_menu_title_label.text = "-=[ KEYBINDS ]=-"
-			_menu_body_text.text = "MOVEMENT\narrows / numpad  move\nnumpad 7/9/1/3   diagonal move\nnumpad 5 / .     wait one turn\n\nACTIONS\nm  mount / dismount\ng  pick up items\ns  skin/butcher carcass\nt  trade (near merchant)\nf  fire ranged weapon\nShift+dir  force attack\n>  descend / enter\n<  ascend / world map\n\nMENUS\ni  inventory\nc  character sheet\nl  look mode\n?  this help screen\nEsc  pause menu\n\nINVENTORY\n[a-z] use / equip item\n[w/r/b/f/h/u] unequip slot\n\nTRADE\n[a-z] buy item\n[Tab + A-Z] sell item\n\nWORLD MAP\narrows  travel between chunks\nl  toggle look cursor\n>  enter chunk view"
+			_set_rich_text_plain(_menu_body_text, "MOVEMENT\narrows / numpad  move\nnumpad 7/9/1/3   diagonal move\nnumpad 5 / .     wait one turn\n\nACTIONS\nm  mount / dismount\ng  pick up items\ns  skin/butcher carcass\nt  trade (near merchant)\nf  fire ranged weapon\nShift+dir  force attack\n>  descend / enter\n<  ascend / world map\n\nMENUS\ni  inventory\nc  character sheet\nl  look mode\n?  this help screen\nEsc  pause menu\n\nINVENTORY\n[a-z] use / equip item\n[w/r/b/f/h/u] unequip slot\n\nTRADE\n[a-z] buy item\n[Tab + A-Z] sell item\n\nWORLD MAP\narrows  travel between chunks\nl  toggle look cursor\n>  enter chunk view")
 			_menu_footer_label.text = "Any key to close"
 		Screen.READER:
 			_menu_title_label.text = "-=[ %s ]=-" % (_reader_item.name.to_upper() if _reader_item != null else "READER")
 			var visible := _reader_lines.slice(_reader_scroll, _reader_scroll + 18)
-			_menu_body_text.text = "\n".join(visible)
+			_set_rich_text_plain(_menu_body_text, "\n".join(visible))
 			_menu_footer_label.text = "Esc / Space close    Up / Down scroll"
 		Screen.DIALOGUE:
 			var npc: NpcClass = _dialogue_npc as NpcClass
 			_menu_title_label.text = "-=[ %s ]=-" % npc.name.to_upper()
-			_menu_body_text.text = _dialogue_line
+			_set_rich_text_plain(_menu_body_text, _dialogue_line)
 			_menu_footer_label.text = "[T] Trade    [Any other key] Close" if npc.is_merchant else "[Any key] Close"
 		Screen.TRAVEL_EVENT:
 			var event_data: Dictionary = _world.pending_travel_event
@@ -969,7 +1007,7 @@ func _refresh_menu_ui() -> void:
 				options.append("[I] Ignore and continue")
 			if bool(event_data.get("can_flee", false)):
 				options.append("[F] Attempt to flee")
-			_menu_body_text.text = "%s\n\n%s" % [str(event_data.get("desc", "")), "\n".join(options)]
+			_set_rich_text_plain(_menu_body_text, "%s\n\n%s" % [str(event_data.get("desc", "")), "\n".join(options)])
 			_menu_footer_label.text = "Choose an option"
 
 
@@ -978,9 +1016,9 @@ func _refresh_trade_ui() -> void:
 		return
 	var npc: NpcClass = _trade_npc as NpcClass
 	_trade_title_label.text = "-=[ TRADE: %s ]=-" % npc.name.capitalize()
-	var buy_text := "MERCHANT SELLS\n\n"
+	var buy_lines: Array[String] = ["MERCHANT SELLS", ""]
 	if npc.trade_stock.is_empty():
-		buy_text += "Nothing for sale."
+		buy_lines.append("Nothing for sale.")
 	else:
 		for i in range(npc.trade_stock.size()):
 			var entry: Dictionary = npc.trade_stock[i]
@@ -989,22 +1027,23 @@ func _refresh_trade_ui() -> void:
 			var qty := int(entry.get("qty", 0))
 			var price := int(entry.get("price", 0))
 			var marker := ">" if _trade_panel == 0 and i == _trade_buy_cursor else " "
-			buy_text += "%s %s) %-18s %3dg  %8s  x%d\n" % [marker, sl, itype.replace("_", " "), price, _format_lbs(_item_weight_for_type(itype)), qty]
-	buy_text += "\nGold: %d" % _player.gold
-	_trade_buy_text.text = buy_text
+			buy_lines.append("%s %s) %-18s %3dg  %8s  x%d" % [marker, sl, itype.replace("_", " "), price, _format_lbs(_item_weight_for_type(itype)), qty])
+	buy_lines.append("")
+	buy_lines.append("Gold: %d" % _player.gold)
+	_set_rich_text_with_highlight(_trade_buy_text, buy_lines, _trade_buy_cursor + 2 if _trade_panel == 0 and not npc.trade_stock.is_empty() else -1)
 
-	var sell_text := "YOUR PACK\n\n"
+	var sell_lines: Array[String] = ["YOUR PACK", ""]
 	var sellable: Array = _build_sellable()
 	if sellable.is_empty():
-		sell_text += "Nothing to sell."
+		sell_lines.append("Nothing to sell.")
 	else:
 		for i in range(sellable.size()):
 			var item = sellable[i]
 			var sl := char(ord("A") + i)
 			var offer: int = npc.buy_price(item)
 			var marker := ">" if _trade_panel == 1 and i == _trade_sell_cursor else " "
-			sell_text += "%s %s) %-18s %3dg  %8s\n" % [marker, sl, (item as ItemClass).name, offer, _format_lbs(int((item as ItemClass).total_weight()))]
-	_trade_sell_text.text = sell_text
+			sell_lines.append("%s %s) %-18s %3dg  %8s" % [marker, sl, (item as ItemClass).name, offer, _format_lbs(int((item as ItemClass).total_weight()))])
+	_set_rich_text_with_highlight(_trade_sell_text, sell_lines, _trade_sell_cursor + 2 if _trade_panel == 1 and not sellable.is_empty() else -1)
 
 	var hint: String = "[a-z] buy   [Tab] sell panel   [Esc] leave" if _trade_panel == 0 else "[A-Z] sell   [Tab] buy panel   [Esc] leave"
 	_trade_footer_label.text = hint
@@ -1425,6 +1464,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event.shift_pressed and event.physical_keycode == KEY_COMMA:
 		get_viewport().set_input_as_handled()
 		if _floor == 0:
+			if not _world.can_enter_world_map():
+				_world.add_msg("Hostiles are too close. You need to get clear before checking the world map.")
+				queue_redraw()
+				return
 			_world_look_mode   = false
 			_world_look_cursor = _chunk
 			_world_entry_chunk = _chunk
@@ -1529,12 +1572,28 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 			_handle_attribute_pick_mouse_click(event.position)
 		Screen.DISAMBIGUATE:
 			_handle_disambig_mouse_click(event.position)
+		Screen.TRAVEL_EVENT:
+			_handle_travel_event_mouse_click(event.position)
 		Screen.WORLD_MAP:
 			_handle_world_map_mouse_click(event.position)
 
 
 func _mouse_cell(mouse_pos: Vector2) -> Vector2i:
 	return Vector2i(int(floor(mouse_pos.x / CELL_W)), int(floor(mouse_pos.y / CELL_H)))
+
+
+func _mouse_cell_in_control(mouse_pos: Vector2, control: Control) -> Vector2i:
+	if control == null:
+		return Vector2i(-1, -1)
+	var rect: Rect2 = control.get_global_rect()
+	if not rect.has_point(mouse_pos):
+		return Vector2i(-1, -1)
+	var local: Vector2 = mouse_pos - rect.position
+	return Vector2i(int(floor(local.x / CELL_W)), int(floor(local.y / CELL_H)))
+
+
+func _mouse_in_control(mouse_pos: Vector2, control: Control) -> bool:
+	return control != null and control.get_global_rect().has_point(mouse_pos)
 
 
 func _screen_to_map(cell: Vector2i) -> Vector2i:
@@ -1713,37 +1772,26 @@ func _confirm_escape() -> void:
 
 
 func _handle_escape_mouse_click(mouse_pos: Vector2) -> void:
-	const BOX_W := 52
-	const BOX_H := 12
-	const BOX_X := (COLS - BOX_W) >> 1
-	const BOX_Y := (MAP_ROWS - BOX_H) >> 1
-	var cell := _mouse_cell(mouse_pos)
-	if cell.x < BOX_X or cell.x >= BOX_X + BOX_W or cell.y < BOX_Y or cell.y >= BOX_Y + BOX_H:
+	var cell := _mouse_cell_in_control(mouse_pos, _menu_shell)
+	if cell.x < 0:
 		return
-	var idx: int = cell.y - (BOX_Y + 3)
+	var idx: int = cell.y - 3
 	if idx >= 0 and idx < ESCAPE_OPTIONS.size():
 		_escape_cursor = idx
 		_confirm_escape()
 
 
 func _handle_character_mouse_click(mouse_pos: Vector2) -> void:
-	const BOX_X := 35
-	const BOX_Y := 4
-	const BOX_W := 50
-	const BOX_H := 24
-	var cell := _mouse_cell(mouse_pos)
-	if cell.x >= BOX_X and cell.x < BOX_X + BOX_W and cell.y == BOX_Y + BOX_H - 2:
+	var cell := _mouse_cell_in_control(mouse_pos, _menu_shell)
+	if cell.x < 0:
+		return
+	if cell.y >= int(floor(_menu_shell.size.y / CELL_H)) - 3:
 		_screen = Screen.NONE
 		queue_redraw()
 
 
 func _handle_help_mouse_click(mouse_pos: Vector2) -> void:
-	const BOX_X := 4
-	const BOX_Y := 1
-	const BOX_W := 112
-	const BOX_H := 33
-	var cell := _mouse_cell(mouse_pos)
-	if cell.x >= BOX_X and cell.x < BOX_X + BOX_W and cell.y >= BOX_Y and cell.y < BOX_Y + BOX_H:
+	if _mouse_in_control(mouse_pos, _menu_shell):
 		_screen = Screen.NONE
 		queue_redraw()
 
@@ -1751,25 +1799,22 @@ func _handle_help_mouse_click(mouse_pos: Vector2) -> void:
 func _handle_reader_mouse_click(mouse_pos: Vector2) -> void:
 	if _reader_item == null:
 		return
-	const BOX_X := 6
-	const BOX_Y := 3
-	const BOX_W := 108
-	const BOX_H := 24
 	const VISIBLE_LINES := 18
-	var cell := _mouse_cell(mouse_pos)
-	if cell.x < BOX_X or cell.x >= BOX_X + BOX_W or cell.y < BOX_Y or cell.y >= BOX_Y + BOX_H:
+	if not _mouse_in_control(mouse_pos, _menu_shell):
 		return
-	if cell.y == BOX_Y + BOX_H - 2:
+	var body_rect: Rect2 = _menu_body_text.get_global_rect()
+	var footer_rect: Rect2 = _menu_footer_label.get_global_rect()
+	if footer_rect.has_point(mouse_pos):
 		_screen = Screen.NONE
 		_reader_item = null
 		queue_redraw()
 		return
-	if cell.x >= BOX_X + BOX_W - 4 and cell.y <= BOX_Y + 2 and _reader_scroll > 0:
+	if body_rect.has_point(mouse_pos) and mouse_pos.x >= body_rect.end.x - 48 and mouse_pos.y <= body_rect.position.y + 48 and _reader_scroll > 0:
 		_reader_scroll = maxi(0, _reader_scroll - 1)
 		queue_redraw()
 		return
 	var max_scroll: int = maxi(0, _reader_lines.size() - VISIBLE_LINES)
-	if cell.x >= BOX_X + BOX_W - 4 and cell.y >= BOX_Y + BOX_H - 3 and _reader_scroll < max_scroll:
+	if body_rect.has_point(mouse_pos) and mouse_pos.x >= body_rect.end.x - 48 and mouse_pos.y >= body_rect.end.y - 48 and _reader_scroll < max_scroll:
 		_reader_scroll = mini(_reader_scroll + 1, max_scroll)
 		queue_redraw()
 		return
@@ -1778,24 +1823,17 @@ func _handle_reader_mouse_click(mouse_pos: Vector2) -> void:
 func _handle_dialogue_mouse_click(mouse_pos: Vector2) -> void:
 	if _dialogue_npc == null:
 		return
-	const BOX_X := 2
-	const BOX_Y := 30
-	const BOX_W := 116
-	const BOX_H := 9
-	var cell := _mouse_cell(mouse_pos)
-	if cell.x < BOX_X or cell.x >= BOX_X + BOX_W or cell.y < BOX_Y or cell.y >= BOX_Y + BOX_H:
+	if not _mouse_in_control(mouse_pos, _menu_shell):
 		return
-	if cell.y == BOX_Y + BOX_H - 2:
-		var npc: NpcClass = _dialogue_npc as NpcClass
-		if npc.is_merchant and cell.x >= BOX_X + 48 and cell.x <= BOX_X + 58:
+	var npc: NpcClass = _dialogue_npc as NpcClass
+	var footer_rect: Rect2 = _menu_footer_label.get_global_rect()
+	if npc.is_merchant and footer_rect.has_point(mouse_pos):
+		var footer_mid: float = footer_rect.position.x + footer_rect.size.x * 0.5
+		if mouse_pos.x <= footer_mid:
 			_open_trade(_dialogue_npc)
 			return
-		if cell.x >= BOX_X + 84 and cell.x <= BOX_X + 96:
-			_screen = Screen.NONE
-			_dialogue_npc = null
-			queue_redraw()
-			return
-	_dialogue_line = (_dialogue_npc as NpcClass).greet()
+	_screen = Screen.NONE
+	_dialogue_npc = null
 	queue_redraw()
 
 
@@ -1843,24 +1881,17 @@ func _inventory_item_at_row(row: int):
 
 
 func _handle_inventory_mouse_click(mouse_pos: Vector2) -> void:
-	const BOX_X := 2
-	const BOX_Y := 1
-	const BOX_W := 116
-	const BOX_H := 32
-	const LEFT_X := BOX_X + 2
-	const RIGHT_X := BOX_X + 77
-	const RIGHT_W := 35
-	var cell := _mouse_cell(mouse_pos)
-	if cell.x < BOX_X or cell.x >= BOX_X + BOX_W or cell.y < BOX_Y or cell.y >= BOX_Y + BOX_H:
+	var cell := _mouse_cell_in_control(mouse_pos, _inventory_shell)
+	if cell.x < 0:
 		return
-	if cell.x >= LEFT_X and cell.x < 73:
+	if cell.x >= 4 and cell.x < 75:
 		var item = _inventory_item_at_row(cell.y)
 		if item != null:
 			_activate_inventory_item(item)
 			return
 	for si in range(6):
-		var label_row: int = BOX_Y + 6 + si * 2
-		if cell.x >= RIGHT_X and cell.x < RIGHT_X + RIGHT_W and cell.y >= label_row and cell.y <= label_row + 2:
+		var label_row: int = 6 + si * 2
+		if cell.x >= 80 and cell.x < 115 and cell.y >= label_row and cell.y <= label_row + 2:
 			var slot_key: String = [ItemClass.SLOT_WEAPON, ItemClass.SLOT_RANGED, ItemClass.SLOT_BODY, ItemClass.SLOT_FEET, ItemClass.SLOT_HEAD, ItemClass.SLOT_LIGHT][si]
 			var msg: String = _player.unequip(slot_key)
 			if msg != "":
@@ -2002,19 +2033,15 @@ func _handle_settings_input(event: InputEvent) -> void:
 
 
 func _handle_settings_mouse_click(mouse_pos: Vector2) -> void:
-	const BOX_W := 54
-	const BOX_H := 13
-	const BOX_X := (COLS - BOX_W) >> 1
-	const BOX_Y := (MAP_ROWS - BOX_H) >> 1
-	var cell := _mouse_cell(mouse_pos)
-	if cell.x < BOX_X or cell.x >= BOX_X + BOX_W or cell.y < BOX_Y or cell.y >= BOX_Y + BOX_H:
+	var cell := _mouse_cell_in_control(mouse_pos, _menu_shell)
+	if cell.x < 0:
 		return
 	match cell.y:
-		BOX_Y + 3:
+		3:
 			GameState.auto_pickup = not GameState.auto_pickup
-		BOX_Y + 4:
+		4:
 			GameState.debug_tools_enabled = not GameState.debug_tools_enabled
-		BOX_Y + 5:
+		5:
 			GameState.god_mode = not GameState.god_mode
 		_:
 			return
@@ -2022,15 +2049,11 @@ func _handle_settings_mouse_click(mouse_pos: Vector2) -> void:
 
 
 func _handle_attribute_pick_mouse_click(mouse_pos: Vector2) -> void:
-	const BOX_X := 34
-	const BOX_Y := 13
-	const BOX_W := 52
-	const BOX_H := 14
-	var cell := _mouse_cell(mouse_pos)
-	if cell.x < BOX_X or cell.x >= BOX_X + BOX_W or cell.y < BOX_Y or cell.y >= BOX_Y + BOX_H:
+	var cell := _mouse_cell_in_control(mouse_pos, _menu_shell)
+	if cell.x < 0:
 		return
 	for i in range(ATTRIBUTE_OPTIONS.size()):
-		if cell.y == BOX_Y + 5 + i:
+		if cell.y == 6 + i:
 			var opt: Dictionary = ATTRIBUTE_OPTIONS[i]
 			if _world.apply_attribute_increase(str(opt.code)):
 				_open_attribute_overlay_if_needed()
@@ -2205,25 +2228,16 @@ func _handle_disambig_input(event: InputEvent) -> void:
 
 
 func _handle_disambig_mouse_click(mouse_pos: Vector2) -> void:
-	const PAD := 3
-	var box_w: int = 44
-	for opt: Dictionary in _disambig_options:
-		var w: int = (opt.label as String).length() + 10
-		if w > box_w:
-			box_w = w
-	var box_h: int = _disambig_options.size() + 6
-	var box_x: int = (COLS - box_w) >> 1
-	var box_y: int = (MAP_ROWS - box_h) >> 1
-	var cell := _mouse_cell(mouse_pos)
-	if cell.x < box_x or cell.x >= box_x + box_w or cell.y < box_y or cell.y >= box_y + box_h:
+	var cell := _mouse_cell_in_control(mouse_pos, _menu_shell)
+	if cell.x < 0:
 		return
 	for i in range(_disambig_options.size()):
-		if cell.y == box_y + 3 + i:
+		if cell.y == 3 + i:
 			_disambig_cursor = i
 			var selected: Dictionary = _disambig_options[i]
 			(selected.callback as Callable).call()
 			return
-	if cell.y == box_y + box_h - 2:
+	if cell.y >= int(floor(_menu_shell.size.y / CELL_H)) - 3:
 		_close_disambig_overlay()
 
 
@@ -2260,6 +2274,37 @@ func _handle_attribute_pick_input(event: InputEvent) -> void:
 				_open_attribute_overlay_if_needed()
 				queue_redraw()
 			return
+
+
+func _handle_travel_event_mouse_click(mouse_pos: Vector2) -> void:
+	if not _mouse_in_control(mouse_pos, _menu_shell) or not _world.has_pending_travel_event():
+		return
+	var event_data: Dictionary = _world.pending_travel_event
+	var body_rect: Rect2 = _menu_body_text.get_global_rect()
+	if not body_rect.has_point(mouse_pos):
+		return
+	var actions: Array[String] = ["enter"]
+	if bool(event_data.get("can_ignore", false)):
+		actions.append("ignore")
+	if bool(event_data.get("can_flee", false)):
+		actions.append("flee")
+	var option_band_top: float = body_rect.end.y - float(actions.size()) * (CELL_H + 2) - 8.0
+	if mouse_pos.y < option_band_top:
+		return
+	var idx: int = int(floor((mouse_pos.y - option_band_top) / float(CELL_H + 2)))
+	if idx < 0 or idx >= actions.size():
+		return
+	match actions[idx]:
+		"enter":
+			_world.enter_pending_travel_event()
+			_screen = Screen.NONE
+		"ignore":
+			_world.ignore_pending_travel_event()
+			_screen = Screen.WORLD_MAP
+		"flee":
+			var result: Dictionary = _world.attempt_pending_travel_flee()
+			_screen = Screen.NONE if bool(result.get("entered", false)) else Screen.WORLD_MAP
+	queue_redraw()
 
 
 # ===========================================================================
@@ -3103,24 +3148,20 @@ func _trade_sell(idx: int) -> void:
 
 
 func _handle_trade_mouse_click(mouse_pos: Vector2) -> void:
-	const BOX_X := 2
-	const BOX_Y := 1
-	const BOX_W := 116
-	const BOX_H := 32
-	const BUY_X := BOX_X + 2
-	const SELL_X := BOX_X + 60
-	var cell := _mouse_cell(mouse_pos)
-	if cell.x < BOX_X or cell.x >= BOX_X + BOX_W or cell.y < BOX_Y or cell.y >= BOX_Y + BOX_H:
+	if not _mouse_in_control(mouse_pos, _trade_shell):
 		return
-	if cell.x < BOX_X + 57:
-		var buy_idx: int = cell.y - (BOX_Y + 4)
+	var buy_rect: Rect2 = _trade_buy_text.get_global_rect()
+	var sell_rect: Rect2 = _trade_sell_text.get_global_rect()
+	var line_height: float = float(CELL_H + 2)
+	if buy_rect.has_point(mouse_pos):
+		var buy_idx: int = int(floor((mouse_pos.y - buy_rect.position.y) / line_height)) - 2
 		if buy_idx >= 0:
 			_trade_panel = 0
 			_trade_buy_cursor = buy_idx
 			_trade_buy(buy_idx)
 			return
-	elif cell.x >= SELL_X:
-		var sell_idx: int = cell.y - (BOX_Y + 4)
+	elif sell_rect.has_point(mouse_pos):
+		var sell_idx: int = int(floor((mouse_pos.y - sell_rect.position.y) / line_height)) - 2
 		if sell_idx >= 0:
 			_trade_panel = 1
 			_trade_sell_cursor = sell_idx
@@ -3136,6 +3177,9 @@ func _handle_trade_input(event: InputEvent) -> void:
 		return
 	var npc: NpcClass = _trade_npc as NpcClass
 	var key: int = event.physical_keycode
+	var sellable: Array = _build_sellable()
+	var buy_count: int = npc.trade_stock.size()
+	var sell_count: int = sellable.size()
 
 	if key == KEY_ESCAPE:
 		_screen = Screen.NONE
@@ -3144,8 +3188,46 @@ func _handle_trade_input(event: InputEvent) -> void:
 
 	if key == KEY_TAB:
 		_trade_panel = 1 - _trade_panel
+		if _trade_panel == 0 and buy_count > 0:
+			_trade_buy_cursor = clampi(_trade_buy_cursor, 0, buy_count - 1)
+		elif _trade_panel == 1 and sell_count > 0:
+			_trade_sell_cursor = clampi(_trade_sell_cursor, 0, sell_count - 1)
 		queue_redraw()
 		return
+
+	match key:
+		KEY_UP, KEY_KP_8:
+			if _trade_panel == 0 and buy_count > 0:
+				_trade_buy_cursor = wrapi(_trade_buy_cursor - 1, 0, buy_count)
+			elif _trade_panel == 1 and sell_count > 0:
+				_trade_sell_cursor = wrapi(_trade_sell_cursor - 1, 0, sell_count)
+			queue_redraw()
+			return
+		KEY_DOWN, KEY_KP_2:
+			if _trade_panel == 0 and buy_count > 0:
+				_trade_buy_cursor = wrapi(_trade_buy_cursor + 1, 0, buy_count)
+			elif _trade_panel == 1 and sell_count > 0:
+				_trade_sell_cursor = wrapi(_trade_sell_cursor + 1, 0, sell_count)
+			queue_redraw()
+			return
+		KEY_LEFT, KEY_KP_4:
+			_trade_panel = 0
+			if buy_count > 0:
+				_trade_buy_cursor = clampi(_trade_buy_cursor, 0, buy_count - 1)
+			queue_redraw()
+			return
+		KEY_RIGHT, KEY_KP_6:
+			_trade_panel = 1
+			if sell_count > 0:
+				_trade_sell_cursor = clampi(_trade_sell_cursor, 0, sell_count - 1)
+			queue_redraw()
+			return
+		KEY_ENTER, KEY_KP_ENTER:
+			if _trade_panel == 0 and buy_count > 0:
+				_trade_buy(_trade_buy_cursor)
+			elif _trade_panel == 1 and sell_count > 0:
+				_trade_sell(_trade_sell_cursor)
+			return
 
 	# Buy panel: lowercase a-z
 	if _trade_panel == 0 and key >= KEY_A and key <= KEY_Z:

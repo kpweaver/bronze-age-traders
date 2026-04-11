@@ -279,7 +279,6 @@ func _draw_confirm_phase() -> void:
 	_puts_centered(23, stat_line2, C_NORMAL)
 	var start_color: Color = C_SELECTED if _hovered_confirm == 0 else C_HINT
 	var back_color: Color = C_SELECTED if _hovered_confirm == 1 else C_HINT
-	_puts_centered(26, "[ Start ]      [ Back ]", C_HINT)
 	_puts(40, 26, "[ Start ]", start_color)
 	_puts(63, 26, "[ Back ]", back_color)
 

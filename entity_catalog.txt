@@ -1,0 +1,1129 @@
+BRONZE AGE TRADERS
+ENTITY CATALOG
+
+Purpose:
+- Human-editable design catalog for items, NPCs, and related world entities.
+- Not loaded automatically by the game yet.
+- Intended workflow: edit this file in plain text, then ask Codex to sync the changes into code.
+
+Suggested future workflow:
+- Add or modify entries here.
+- Keep the entry format and field names readable rather than code-perfect.
+- Ask Codex something like: "Load the new entries from entity_catalog.txt into the game."
+
+
+============================================================
+FIELD GUIDE
+============================================================
+
+Item fields:
+- id: internal item id
+- name: display name
+- category: gold | usable | trade | equipment | readable | ammo
+- slot: none | weapon | ranged | body | feet | head | light
+- glyph: map character
+- color: rgb floats
+- weight_lbs: item weight in pounds
+- base_value_g: canonical price in gold
+- material: flavor material
+- atk_bonus: attack bonus if equipment/ammo
+- def_bonus: defense bonus if equipment
+- heal: healing dice for usable items
+- ammo_type: ammo id consumed by ranged weapon
+- range: ranged range in tiles
+- stack_size: default ammo stack size
+- light_fov: light radius when equipped and lit
+- burn_turns: remaining/max fuel lifetime for light sources
+- text: readable text body
+
+NPC fields:
+- id: internal npc id
+- name: display name
+- glyph: map character
+- color: rgb floats
+- str/dex/con/int/wis/cha: ability scores
+- base_hp: HP before CON modifier
+- defense: base defense
+- power: base melee damage bonus
+- level: current creature level
+- attack_speed: current attack speed scalar
+- merchant: yes | no
+- wildlife: yes | no
+- mountable: yes | no
+- on_attacked: flee | retaliate
+- buy_mult: merchant buy multiplier
+- sell_mult: merchant sell multiplier
+- spawn_weight: village spawn weighting
+- wander_radius: tile radius around home
+- move_chance: wildlife/docile move chance
+- dialogue: bump/interaction lines
+- trade_stock: merchant inventory
+- skin_table: butchering/skinning yields by quality
+
+
+============================================================
+ITEMS
+============================================================
+
+[ITEM]
+id: gold
+name: gold coins
+category: gold
+slot: none
+glyph: $
+color: 0.90, 0.78, 0.15
+weight_lbs: 0
+notes: Currency only.
+
+[ITEM]
+id: health_potion
+name: health potion
+category: usable
+slot: none
+glyph: !
+color: 0.40, 0.85, 0.35
+weight_lbs: 1
+base_value_g: 8
+material: ceramic
+heal: 1d6
+
+[ITEM]
+id: healing_draught
+name: healing draught
+category: usable
+slot: none
+glyph: !
+color: 0.25, 0.65, 0.90
+weight_lbs: 1
+base_value_g: 16
+material: ceramic
+heal: 2d6
+
+[ITEM]
+id: pottery
+name: pottery
+category: trade
+slot: none
+glyph: ,
+color: 0.72, 0.40, 0.22
+weight_lbs: 5
+base_value_g: 3
+material: clay
+
+[ITEM]
+id: linen_cloth
+name: linen cloth
+category: trade
+slot: none
+glyph: "
+color: 0.90, 0.88, 0.75
+weight_lbs: 2
+base_value_g: 4
+material: linen
+
+[ITEM]
+id: cedar_wood
+name: cedar wood
+category: trade
+slot: none
+glyph: /
+color: 0.55, 0.35, 0.18
+weight_lbs: 8
+base_value_g: 6
+material: wood
+
+[ITEM]
+id: tin_ingot
+name: tin ingot
+category: trade
+slot: none
+glyph: *
+color: 0.82, 0.84, 0.86
+weight_lbs: 12
+base_value_g: 12
+material: tin
+
+[ITEM]
+id: copper_ingot
+name: copper ingot
+category: trade
+slot: none
+glyph: *
+color: 0.72, 0.45, 0.25
+weight_lbs: 12
+base_value_g: 8
+material: copper
+
+[ITEM]
+id: bronze_ingot
+name: bronze ingot
+category: trade
+slot: none
+glyph: *
+color: 0.80, 0.50, 0.20
+weight_lbs: 13
+base_value_g: 22
+material: bronze
+
+[ITEM]
+id: olive_oil
+name: olive oil
+category: trade
+slot: none
+glyph: ~
+color: 0.70, 0.75, 0.30
+weight_lbs: 4
+base_value_g: 6
+material: oil
+
+[ITEM]
+id: wine
+name: wine
+category: trade
+slot: none
+glyph: ~
+color: 0.55, 0.18, 0.35
+weight_lbs: 4
+base_value_g: 7
+material: wine
+
+[ITEM]
+id: ivory
+name: ivory
+category: trade
+slot: none
+glyph: -
+color: 0.96, 0.94, 0.88
+weight_lbs: 6
+base_value_g: 30
+material: ivory
+
+[ITEM]
+id: lapis_lazuli
+name: lapis lazuli
+category: trade
+slot: none
+glyph: *
+color: 0.18, 0.28, 0.82
+weight_lbs: 3
+base_value_g: 40
+material: stone
+
+[ITEM]
+id: silver_ingot
+name: silver ingot
+category: trade
+slot: none
+glyph: *
+color: 0.85, 0.87, 0.90
+weight_lbs: 12
+base_value_g: 35
+material: silver
+
+[ITEM]
+id: purple_dye
+name: purple dye
+category: trade
+slot: none
+glyph: ~
+color: 0.55, 0.12, 0.68
+weight_lbs: 1
+base_value_g: 50
+material: dye
+
+[ITEM]
+id: wheat
+name: wheat
+category: trade
+slot: none
+glyph: ,
+color: 0.88, 0.78, 0.38
+weight_lbs: 4
+base_value_g: 2
+material: grain
+
+[ITEM]
+id: clay_tablet
+name: clay tablet
+category: trade
+slot: none
+glyph: -
+color: 0.75, 0.62, 0.42
+weight_lbs: 2
+base_value_g: 15
+material: clay
+
+[ITEM]
+id: tablet_traders_ledger
+name: trader's ledger
+category: readable
+slot: none
+glyph: =
+color: 0.82, 0.70, 0.48
+weight_lbs: 2
+base_value_g: 12
+material: clay
+text:
+Third month. Harrani, son of Kabti, records:
+
+Six talents of tin received from the mountain pass caravan. Copper: twenty-two ingots, of which ten are promised to the palace.
+
+Outstanding debt from Imgur-Enlil: four shekels of silver, now three months late. Send no more goods until settled.
+
+The road south is closed. Send no wagons until Nisanu.
+
+[ITEM]
+id: tablet_hymn_shamash
+name: hymn to Shamash
+category: readable
+slot: none
+glyph: =
+color: 0.82, 0.70, 0.48
+weight_lbs: 2
+base_value_g: 18
+material: clay
+text:
+O Shamash, you rise upon the mountain of heaven and earth.
+You open the bolt of the shining sky.
+
+The great gods kneel before you. The Anunnaki bow low.
+Your fierce light covers the land like a net.
+
+You set the prisoner free, you lift the bowed-down.
+You cross the sea, its depths and its breadth.
+
+[ITEM]
+id: tablet_law_fragment
+name: law tablet
+category: readable
+slot: none
+glyph: =
+color: 0.82, 0.70, 0.48
+weight_lbs: 2
+base_value_g: 20
+material: clay
+text:
+If a man's ox gores another man's ox to death — both men shall share the loss. They shall sell the dead ox and divide the price between them.
+
+If the ox was known to gore and the owner had warning — the owner shall pay ox for ox.
+
+If a man strikes a free man without cause, he shall pay ten shekels of silver.
+
+[ITEM]
+id: tablet_caravan_letter
+name: caravan letter
+category: readable
+slot: none
+glyph: =
+color: 0.82, 0.70, 0.48
+weight_lbs: 2
+base_value_g: 8
+material: clay
+text:
+To Puzur-Ashur, merchant of the lower road —
+
+I have heard the badlands road is watched by men who are not toll collectors. Three wagons lost near the second waystation this season.
+
+Send your goods north by Anat's road, or wait until the rains. Trust no one who offers to guide you through the passes.
+
+Your brother in trade, Iqisham-Adad.
+
+[ITEM]
+id: tablet_mythic_fragment
+name: mythic fragment
+category: readable
+slot: none
+glyph: =
+color: 0.82, 0.70, 0.48
+weight_lbs: 2
+base_value_g: 25
+material: clay
+text:
+He who saw the deep — the land's foundation —
+who knew the ways, was wise in all things:
+
+Gilgamesh, who built the walls of great Uruk, who cut cedar in the mountains, who killed the Bull of Heaven. He walked the long road, was weary, found rest at last.
+
+He carved his story into lapis lazuli stone, that those who come after might read it.
+
+[ITEM]
+id: game_meat
+name: game meat
+category: usable
+slot: none
+glyph: :
+color: 0.78, 0.28, 0.22
+weight_lbs: 3
+base_value_g: 5
+material: raw meat
+heal: 1d6
+
+[ITEM]
+id: tough_meat
+name: tough meat
+category: usable
+slot: none
+glyph: :
+color: 0.52, 0.22, 0.18
+weight_lbs: 3
+base_value_g: 2
+material: raw meat
+heal: 1d3
+
+[ITEM]
+id: light_hide
+name: light hide
+category: trade
+slot: none
+glyph: ~
+color: 0.75, 0.62, 0.40
+weight_lbs: 5
+base_value_g: 8
+material: hide
+
+[ITEM]
+id: heavy_hide
+name: heavy hide
+category: trade
+slot: none
+glyph: ~
+color: 0.55, 0.42, 0.28
+weight_lbs: 8
+base_value_g: 13
+material: hide
+
+[ITEM]
+id: coarse_hide
+name: coarse hide
+category: trade
+slot: none
+glyph: ~
+color: 0.42, 0.38, 0.28
+weight_lbs: 5
+base_value_g: 4
+material: hide
+
+[ITEM]
+id: gazelle_horn
+name: gazelle horn
+category: trade
+slot: none
+glyph: \
+color: 0.90, 0.84, 0.65
+weight_lbs: 2
+base_value_g: 10
+material: horn
+
+[ITEM]
+id: ibex_horn
+name: ibex horn
+category: trade
+slot: none
+glyph: \
+color: 0.78, 0.70, 0.48
+weight_lbs: 3
+base_value_g: 22
+material: horn
+
+[ITEM]
+id: torch
+name: torch
+category: equipment
+slot: light
+glyph: f
+color: 1.00, 0.65, 0.15
+weight_lbs: 2
+base_value_g: 4
+material: reed
+light_fov: 5
+burn_turns: 5000
+
+[ITEM]
+id: dagger
+name: dagger
+category: equipment
+slot: weapon
+glyph: )
+color: 0.78, 0.72, 0.55
+weight_lbs: 3
+base_value_g: 15
+material: copper
+atk_bonus: 1
+
+[ITEM]
+id: short_sword
+name: short sword
+category: equipment
+slot: weapon
+glyph: )
+color: 0.85, 0.82, 0.60
+weight_lbs: 5
+base_value_g: 28
+material: bronze
+atk_bonus: 2
+
+[ITEM]
+id: spear
+name: spear
+category: equipment
+slot: weapon
+glyph: /
+color: 0.72, 0.65, 0.42
+weight_lbs: 6
+base_value_g: 20
+material: wood
+atk_bonus: 3
+
+[ITEM]
+id: club
+name: club
+category: equipment
+slot: weapon
+glyph: )
+color: 0.55, 0.38, 0.22
+weight_lbs: 5
+base_value_g: 8
+material: wood
+atk_bonus: 1
+
+[ITEM]
+id: sling
+name: sling
+category: equipment
+slot: ranged
+glyph: )
+color: 0.65, 0.55, 0.38
+weight_lbs: 1
+base_value_g: 5
+material: leather
+atk_bonus: 0
+ammo_type: sling_stone
+range: 8
+
+[ITEM]
+id: short_bow
+name: short bow
+category: equipment
+slot: ranged
+glyph: )
+color: 0.74, 0.62, 0.35
+weight_lbs: 2
+base_value_g: 18
+material: wood
+atk_bonus: 1
+ammo_type: reed_arrow
+range: 10
+
+[ITEM]
+id: sling_stone
+name: sling stones
+category: ammo
+slot: none
+glyph: *
+color: 0.70, 0.70, 0.70
+weight_lbs: 1
+base_value_g: 2
+material: stone
+atk_bonus: 0
+stack_size: 10
+
+[ITEM]
+id: reed_arrow
+name: reed arrows
+category: ammo
+slot: none
+glyph: /
+color: 0.78, 0.70, 0.48
+weight_lbs: 1
+base_value_g: 4
+material: reed
+atk_bonus: 1
+stack_size: 8
+
+[ITEM]
+id: linen_tunic
+name: linen tunic
+category: equipment
+slot: body
+glyph: [
+color: 0.90, 0.88, 0.75
+weight_lbs: 3
+base_value_g: 6
+material: linen
+def_bonus: 1
+
+[ITEM]
+id: wool_cloak
+name: wool cloak
+category: equipment
+slot: body
+glyph: [
+color: 0.68, 0.58, 0.42
+weight_lbs: 4
+base_value_g: 10
+material: wool
+def_bonus: 1
+
+[ITEM]
+id: leather_vest
+name: leather vest
+category: equipment
+slot: body
+glyph: [
+color: 0.60, 0.42, 0.25
+weight_lbs: 7
+base_value_g: 18
+material: leather
+def_bonus: 2
+
+[ITEM]
+id: sandals
+name: sandals
+category: equipment
+slot: feet
+glyph: [
+color: 0.78, 0.65, 0.42
+weight_lbs: 1
+base_value_g: 4
+material: leather
+def_bonus: 0
+
+[ITEM]
+id: leather_boots
+name: leather boots
+category: equipment
+slot: feet
+glyph: [
+color: 0.55, 0.40, 0.25
+weight_lbs: 3
+base_value_g: 12
+material: leather
+def_bonus: 1
+
+[ITEM]
+id: linen_headband
+name: linen headband
+category: equipment
+slot: head
+glyph: [
+color: 0.90, 0.88, 0.75
+weight_lbs: 1
+base_value_g: 3
+material: linen
+def_bonus: 0
+
+[ITEM]
+id: leather_cap
+name: leather cap
+category: equipment
+slot: head
+glyph: [
+color: 0.60, 0.42, 0.25
+weight_lbs: 2
+base_value_g: 10
+material: leather
+def_bonus: 1
+
+[ITEM]
+id: bronze_helmet
+name: bronze helmet
+category: equipment
+slot: head
+glyph: [
+color: 0.80, 0.50, 0.20
+weight_lbs: 6
+base_value_g: 35
+material: bronze
+def_bonus: 2
+
+
+============================================================
+NPCS
+============================================================
+
+[NPC]
+id: merchant
+name: merchant
+glyph: t
+color: 0.90, 0.72, 0.28
+stats: STR 10 DEX 11 CON 10 INT 12 WIS 11 CHA 13
+base_hp: 12
+defense: 0
+power: 1
+level: 1
+attack_speed: 1.0
+merchant: yes
+wildlife: no
+mountable: no
+on_attacked: flee
+buy_mult: 0.65
+sell_mult: 1.40
+spawn_weight: 3
+dialogue:
+- Well met, traveller. What brings you to these roads?
+- Bronze is the lifeblood of trade. Have you any to offer?
+- I have goods from the coast — lapis, cedar, fine dyed cloth.
+- The road west is treacherous. Bandits. But the profit is worth it.
+trade_stock:
+- copper_ingot x3 @ 9g
+- tin_ingot x2 @ 14g
+- linen_cloth x5 @ 5g
+- olive_oil x3 @ 7g
+- pottery x4 @ 4g
+- wheat x6 @ 3g
+- torch x4 @ 5g
+
+[NPC]
+id: village_elder
+name: village elder
+glyph: e
+color: 0.82, 0.68, 0.55
+stats: STR 8 DEX 8 CON 9 INT 12 WIS 14 CHA 12
+base_hp: 11
+defense: 0
+power: 1
+level: 1
+attack_speed: 1.0
+merchant: no
+wildlife: no
+mountable: no
+on_attacked: flee
+spawn_weight: 1
+dialogue:
+- This village has stood for seven generations. I hope for seven more.
+- The caravans come less often now. I fear what that means.
+- Our well has never run dry — the gods still smile on us.
+- A stranger in the village is either a merchant or trouble. Which are you?
+
+[NPC]
+id: smith
+name: smith
+glyph: m
+color: 0.70, 0.45, 0.25
+stats: STR 15 DEX 10 CON 14 INT 9 WIS 10 CHA 8
+base_hp: 16
+defense: 1
+power: 3
+level: 1
+attack_speed: 1.0
+merchant: yes
+wildlife: no
+mountable: no
+on_attacked: retaliate
+buy_mult: 0.50
+sell_mult: 1.60
+spawn_weight: 1
+dialogue:
+- Copper I have. Tin is what I need — bring me tin, I'll make you bronze.
+- A good blade is worth a hundred prayers to the sun god.
+- Stand back from the forge — I've burned better men than you.
+- These village commissions keep me fed. But I dream of palace work.
+trade_stock:
+- dagger x2 @ 18g
+- club x2 @ 9g
+- spear x1 @ 24g
+- copper_ingot x4 @ 10g
+- bronze_ingot x1 @ 26g
+
+[NPC]
+id: scribe
+name: scribe
+glyph: s
+color: 0.72, 0.82, 0.72
+stats: STR 8 DEX 12 CON 9 INT 15 WIS 12 CHA 10
+base_hp: 9
+defense: 0
+power: 1
+level: 1
+attack_speed: 1.0
+merchant: no
+wildlife: no
+mountable: no
+on_attacked: flee
+spawn_weight: 1
+dialogue:
+- I keep the records of this village. Every debt, every birth, every death.
+- Can you read cuneiform? No? Most cannot.
+- Word from the coast — a fleet was lost. Expect tin shortages.
+- The palace at Ebla keeps better records. But we manage.
+
+[NPC]
+id: weaver
+name: weaver
+glyph: w
+color: 0.75, 0.78, 0.62
+stats: STR 9 DEX 13 CON 10 INT 10 WIS 12 CHA 11
+base_hp: 8
+defense: 0
+power: 1
+level: 1
+attack_speed: 1.0
+merchant: yes
+wildlife: no
+mountable: no
+on_attacked: flee
+buy_mult: 0.55
+sell_mult: 1.45
+spawn_weight: 1
+dialogue:
+- Linen, wool, and a patient hand — that is all one needs.
+- The dyers charge too much for purple. I use madder root instead.
+- A good cloak is worth more than a weapon in the desert cold.
+trade_stock:
+- linen_cloth x6 @ 5g
+- linen_tunic x3 @ 7g
+- wool_cloak x2 @ 12g
+- linen_headband x4 @ 4g
+- sandals x3 @ 5g
+
+[NPC]
+id: priest
+name: priest
+glyph: p
+color: 0.88, 0.78, 0.45
+stats: STR 9 DEX 9 CON 10 INT 12 WIS 14 CHA 13
+base_hp: 9
+defense: 0
+power: 1
+level: 1
+attack_speed: 1.0
+merchant: no
+wildlife: no
+mountable: no
+on_attacked: retaliate
+spawn_weight: 1
+dialogue:
+- The grain goddess demands the first harvest. Always the first.
+- We burn cedar at dawn. The smoke carries our words to the storm god.
+- You carry weapons in the sight of the temple. Tread carefully.
+- The omen tablets were read at new moon. I do not share their contents.
+- Give what you can to the offering bowl. The god remembers.
+
+[NPC]
+id: dyer
+name: dyer
+glyph: d
+color: 0.65, 0.45, 0.70
+stats: STR 11 DEX 10 CON 10 INT 10 WIS 10 CHA 11
+base_hp: 8
+defense: 0
+power: 1
+level: 1
+attack_speed: 1.0
+merchant: yes
+wildlife: no
+mountable: no
+on_attacked: flee
+buy_mult: 0.50
+sell_mult: 1.55
+spawn_weight: 1
+dialogue:
+- Purple from the murex — there is nothing like it in all the world.
+- Do you know how many shells it takes to dye a single bolt? Neither do the nobles.
+- I have sold cloth to the palace at Ugarit. They paid without complaint.
+- The smell never leaves you. My wife has long since accepted this.
+trade_stock:
+- purple_dye x3 @ 22g
+- linen_cloth x4 @ 6g
+- wool_cloak x2 @ 15g
+
+[NPC]
+id: foreign_trader
+name: foreign trader
+glyph: f
+color: 0.80, 0.62, 0.38
+stats: STR 9 DEX 12 CON 10 INT 13 WIS 11 CHA 14
+base_hp: 11
+defense: 0
+power: 1
+level: 1
+attack_speed: 1.0
+merchant: yes
+wildlife: no
+mountable: no
+on_attacked: flee
+buy_mult: 0.60
+sell_mult: 1.50
+spawn_weight: 2
+dialogue:
+- I have come from the Aegean coast — far longer a road than it sounds.
+- Ivory from the south, lapis from the east. I trade the length of the world.
+- I carry letters for four city-states. My loyalty is to profit, not allegiance.
+- The sea was kind this season. The land roads are another matter.
+- Ask me no questions about where I have been. Ask only what I carry.
+trade_stock:
+- lapis_lazuli x2 @ 35g
+- ivory x1 @ 45g
+- cedar_wood x3 @ 12g
+- wine x4 @ 8g
+- silver_ingot x2 @ 28g
+
+[NPC]
+id: caravan_guard
+name: caravan guard
+glyph: g
+color: 0.65, 0.50, 0.30
+stats: STR 14 DEX 12 CON 13 INT 9 WIS 10 CHA 9
+base_hp: 19
+defense: 2
+power: 3
+level: 1
+attack_speed: 1.0
+merchant: yes
+wildlife: no
+mountable: no
+on_attacked: retaliate
+buy_mult: 0.45
+sell_mult: 1.55
+spawn_weight: 2
+dialogue:
+- I walk the road so merchants do not have to worry about it.
+- Three caravans this season. One ambush. We lost two men and a donkey.
+- I sell the gear I have taken off men who no longer need it.
+- A spear is only as good as the arm behind it. Mine is reliable.
+trade_stock:
+- spear x1 @ 20g
+- sling x2 @ 8g
+- sling_stone x8 @ 2g
+- short_bow x1 @ 20g
+- reed_arrow x6 @ 4g
+- leather_vest x1 @ 18g
+- leather_boots x2 @ 9g
+- leather_cap x1 @ 7g
+- torch x3 @ 5g
+
+[NPC]
+id: herbalist
+name: herbalist
+glyph: h
+color: 0.58, 0.72, 0.45
+stats: STR 9 DEX 13 CON 10 INT 13 WIS 14 CHA 11
+base_hp: 8
+defense: 0
+power: 1
+level: 1
+attack_speed: 1.0
+merchant: yes
+wildlife: no
+mountable: no
+on_attacked: flee
+buy_mult: 0.55
+sell_mult: 1.45
+spawn_weight: 1
+dialogue:
+- Cedar bark for fever. Olive oil for wounds. The rest is patience.
+- I learned my trade from a woman in Jericho. She knew things no scribe recorded.
+- Most ailments pass on their own. I sell comfort while they do.
+- The palace physicians use the same remedies — they just charge more.
+- Drink water before you think you need it. That is all the medicine most men lack.
+trade_stock:
+- olive_oil x4 @ 8g
+- cedar_wood x3 @ 11g
+- pottery x5 @ 4g
+
+[NPC]
+id: water_carrier
+name: water carrier
+glyph: c
+color: 0.60, 0.68, 0.78
+stats: STR 13 DEX 11 CON 12 INT 8 WIS 10 CHA 9
+base_hp: 9
+defense: 0
+power: 1
+level: 1
+attack_speed: 1.0
+merchant: no
+wildlife: no
+mountable: no
+on_attacked: flee
+spawn_weight: 2
+dialogue:
+- Water from the cistern. Fresh as of this morning.
+- I carry sixty jars before the sun reaches midday. Ask me something useful.
+- The well runs deep here. In the south I have seen men die for a cupful.
+- Do not take water for granted. The desert will teach you otherwise.
+
+[NPC]
+id: gazelle
+name: gazelle
+glyph: g
+color: 0.85, 0.73, 0.38
+stats: STR 8 DEX 16 CON 10 INT 2 WIS 12 CHA 6
+base_hp: 6
+defense: 0
+power: 1
+level: 1
+attack_speed: 1.0
+merchant: no
+wildlife: yes
+mountable: no
+on_attacked: flee
+wander_radius: 30
+move_chance: 0.55
+dialogue:
+- The gazelle watches you with dark eyes, poised to bolt.
+- The gazelle flicks its ears and takes a few skittish steps away.
+- A pair of slender horns catch the light as the gazelle turns.
+skin_table:
+- poor: tough_meat x1
+- good: game_meat x1, light_hide x1
+- great: game_meat x2, light_hide x1
+- crit: game_meat x2, light_hide x1, gazelle_horn x1
+
+[NPC]
+id: onager
+name: onager
+glyph: q
+color: 0.72, 0.60, 0.42
+stats: STR 13 DEX 12 CON 13 INT 2 WIS 10 CHA 5
+base_hp: 13
+defense: 0
+power: 2
+level: 1
+attack_speed: 1.0
+merchant: no
+wildlife: yes
+mountable: yes
+on_attacked: flee
+wander_radius: 25
+move_chance: 0.40
+dialogue:
+- The wild ass regards you with flat, suspicious eyes.
+- The onager stamps a hoof and sidesteps away.
+- A braying call rises from the onager and fades into the hot air.
+skin_table:
+- poor: tough_meat x2
+- good: game_meat x2, heavy_hide x1
+- great: game_meat x3, heavy_hide x1
+- crit: game_meat x3, heavy_hide x2
+
+[NPC]
+id: donkey
+name: donkey
+glyph: d
+color: 0.66, 0.56, 0.40
+stats: STR 12 DEX 10 CON 12 INT 2 WIS 10 CHA 7
+base_hp: 11
+defense: 0
+power: 1
+level: 1
+attack_speed: 1.0
+merchant: no
+wildlife: no
+mountable: yes
+on_attacked: flee
+wander_radius: 8
+move_chance: 0.20
+dialogue:
+- The donkey flicks its ears and waits with practiced patience.
+- The donkey snorts softly and shifts its weight.
+- The donkey gives you a long, appraising look.
+
+[NPC]
+id: ibex
+name: ibex
+glyph: i
+color: 0.50, 0.40, 0.28
+stats: STR 11 DEX 14 CON 11 INT 2 WIS 12 CHA 5
+base_hp: 10
+defense: 1
+power: 2
+level: 1
+attack_speed: 1.0
+merchant: no
+wildlife: yes
+mountable: no
+on_attacked: flee
+wander_radius: 20
+move_chance: 0.25
+dialogue:
+- The ibex picks its way across the rock with unhurried grace.
+- Curved horns sweep back as the ibex turns to study you.
+- The ibex stands motionless for a long moment, then moves on.
+skin_table:
+- poor: tough_meat x1
+- good: game_meat x1, light_hide x1
+- great: game_meat x2, light_hide x1
+- crit: game_meat x2, light_hide x1, ibex_horn x1
+
+[NPC]
+id: hyena
+name: hyena
+glyph: h
+color: 0.62, 0.54, 0.38
+stats: STR 13 DEX 13 CON 13 INT 3 WIS 12 CHA 4
+base_hp: 15
+defense: 1
+power: 3
+level: 1
+attack_speed: 1.0
+merchant: no
+wildlife: yes
+mountable: no
+on_attacked: retaliate
+wander_radius: 35
+move_chance: 0.35
+dialogue:
+- The hyena circles at a distance, watching.
+- A low, rising whoop from the hyena carries through the still air.
+- The hyena's spotted flanks heave as it trots a slow perimeter.
+skin_table:
+- poor: coarse_hide x1
+- good: tough_meat x1, coarse_hide x1
+- great: tough_meat x2, coarse_hide x1
+- crit: tough_meat x2, coarse_hide x2
+
+
+============================================================
+FUTURE ENTRY TEMPLATES
+============================================================
+
+[ITEM]
+id:
+name:
+category:
+slot:
+glyph:
+color:
+weight_lbs:
+base_value_g:
+material:
+atk_bonus:
+def_bonus:
+heal:
+ammo_type:
+range:
+stack_size:
+light_fov:
+burn_turns:
+text:
+
+[NPC]
+id:
+name:
+glyph:
+color:
+stats: STR  DEX  CON  INT  WIS  CHA
+base_hp:
+defense:
+power:
+level:
+attack_speed:
+merchant:
+wildlife:
+mountable:
+on_attacked:
+buy_mult:
+sell_mult:
+spawn_weight:
+wander_radius:
+move_chance:
+dialogue:
+- 
+trade_stock:
+- 
+skin_table:
+- poor:
+- good:
+- great:
+- crit:

@@ -1,3 +1,9 @@
+  2026-04 rebalance note:
+    Night overworld FOV is now 3 in code.
+    Fatigue now uses fatigue_rate as a fractional clock instead of a flat +1
+    every move. Base fatigue pressure is 0.75 per movement turn, modified by
+    CON, while night overworld travel applies that rate twice.
+
 ================================================================================
   BRONZE AGE TRADERS — CODEBASE PRIMER
   For developers with amateur experience, no formal training required.
@@ -241,7 +247,7 @@ time more slowly than a normal action.
 
   LIGHT SOURCES:
     Players start with one torch in their inventory. Equipping it (slot: light)
-    grants FOV_RADIUS=3 and overrides the base sight to max(base_fov, 3).
+    grants FOV_RADIUS=5 and overrides the base sight to max(base_fov, 5).
     Torches burn for 5000 turns; when exhausted the slot empties with a message.
     The inventory screen shows remaining turns: u) LIGHT: torch  (4823t left).
     Press u in the inventory screen to unequip the light slot.

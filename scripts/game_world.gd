@@ -35,7 +35,7 @@ const DEBUG_HUB_W: int   = 120
 const DEBUG_HUB_H: int   = 44
 const FOV_RADIUS: int    = 6
 const FOV_OVERWORLD: int = 24   # daytime overworld sight range
-const FOV_NIGHT: int     = 1    # night-time overworld sight range — near-zero, pre-industrial darkness
+const FOV_NIGHT: int     = 3    # night-time overworld sight range — dangerous, but not blind
 const MSG_MAX: int       = 3
 const ACTION_COST_BASE: int = 100
 const MOVE_COST_FOOT: int = 100
@@ -43,6 +43,7 @@ const MOVE_COST_MOUNTED: int = 70
 const ACTION_COST_STANDARD: int = 100
 const WORLD_MAP_TRAVEL_COST_BASE: int = 200
 const WORLD_MAP_TRAVEL_COST_MIN: int = 120
+const WORLD_MAP_THREAT_RANGE: int = 8
 
 # Turns of thirst/fatigue drain applied per chunk moved on the world map.
 # One chunk = 20 miles; at 3 mph that is ~6.7 hours = ~200 turns.
@@ -89,6 +90,7 @@ var nearby_npc                       # last bumped NPC, cleared when player move
 var turn: int           = 0          # global turn counter — increments every resolved action
 var _resting: bool      = false      # true when the player waited this turn (affects fatigue)
 var _thirst_acc: float  = 0.0        # fractional thirst accumulator for rate < 1.0
+var _fatigue_acc: float = 0.0        # fractional fatigue accumulator for rate < 1.0
 var _turn_progress_accum: int = 0
 var _enemy_turn_accum: int = 0
 var pending_travel_event: Dictionary = {}
@@ -184,6 +186,7 @@ func new_game() -> void:
 	turn       = 0
 	_turn_progress_accum = 0
 	_enemy_turn_accum = 0
+	_fatigue_acc = 0.0
 	pending_travel_event.clear()
 	debug_hub_active = false
 	debug_return_depth = 0
@@ -253,6 +256,7 @@ func load_from_save() -> void:
 	turn   = result[6]
 	_turn_progress_accum = 0
 	_enemy_turn_accum = 0
+	_fatigue_acc = 0.0
 	var debug_data: Dictionary = result[7]
 	debug_hub_active = bool(debug_data.get("active", false))
 	debug_return_depth = int(debug_data.get("return_depth", 0))
@@ -344,7 +348,7 @@ func enter_pending_travel_event() -> void:
 	pending_travel_event.clear()
 
 	var entry_dir: Vector2i = event_data.get("entry_dir", Vector2i.ZERO)
-	player.pos = _world_map_entry_pos(entry_dir)
+	player.pos = _nearest_walkable_overworld_pos(map, _world_map_entry_pos(entry_dir))
 	_place_travel_event_in_map(map, event_data, player.pos)
 	_recompute_fov()
 	if event_data.get("type", TRAVEL_EVENT_NONE) == TRAVEL_EVENT_MERCHANT:
@@ -1026,6 +1030,23 @@ func _visible_hostile_exists() -> bool:
 	return false
 
 
+func hostile_within_world_map_range() -> bool:
+	for e in map.entities:
+		if e == player or not (e is ActorClass) or not e.is_alive:
+			continue
+		if not (e.ai is HostileAIClass):
+			continue
+		if not map.visible[e.pos.y][e.pos.x]:
+			continue
+		if maxi(absi(e.pos.x - player.pos.x), absi(e.pos.y - player.pos.y)) <= WORLD_MAP_THREAT_RANGE:
+			return true
+	return false
+
+
+func can_enter_world_map() -> bool:
+	return depth == 0 and not hostile_within_world_map_range()
+
+
 func _player_on_stairs() -> bool:
 	for e in map.get_entities_at(player.pos.x, player.pos.y):
 		if e is ActorClass:
@@ -1175,7 +1196,7 @@ func chunk_transition(dir: Vector2i, action_cost: int = ACTION_COST_STANDARD) ->
 		_place_chunk_encounter(new_map, chunk, Vector2i(new_x, new_y))
 		map = new_map
 
-	player.pos      = Vector2i(new_x, new_y)
+	player.pos      = _nearest_walkable_overworld_pos(map, Vector2i(new_x, new_y))
 	map.add_entity(player)
 	if current_mount != null:
 		current_mount.pos = player.pos
@@ -1219,7 +1240,7 @@ func world_map_navigate(dir: Vector2i) -> void:
 				get_road_dirs(chunk), is_village_chunk(chunk.x, chunk.y))
 		map = new_map
 
-	player.pos      = Vector2i(OVERWORLD_W >> 1, OVERWORLD_H >> 1)
+	player.pos      = _nearest_walkable_overworld_pos(map, Vector2i(OVERWORLD_W >> 1, OVERWORLD_H >> 1))
 	map.add_entity(player)
 	if current_mount != null:
 		current_mount.pos = player.pos
@@ -1254,6 +1275,9 @@ func try_ascend() -> void:
 		return
 	if debug_hub_active:
 		exit_debug_hub()
+		return
+	if depth == 0 and not can_enter_world_map():
+		add_msg("Hostiles are too close. You need to get clear before checking the world map.")
 		return
 	for e in map.get_entities_at(player.pos.x, player.pos.y):
 		if not (e is ActorClass) and e.char == "<":
@@ -1469,12 +1493,15 @@ func _check_debug_fixture() -> void:
 				player.thirst = 0
 				player.fatigue = maxi(0, player.fatigue - 120)
 				_thirst_acc = 0.0
+				_fatigue_acc = 0.0
 				add_msg("You refresh yourself at the healing spring.")
 				return
 			"trial brazier":
 				player.hp = maxi(1, player.hp - 10)
 				player.thirst = mini(ActorClass.THIRST_MAX - 1, ActorClass.THIRST_MAX * 7 / 10)
 				player.fatigue = mini(ActorClass.FATIGUE_MAX - 1, ActorClass.FATIGUE_MAX * 7 / 10)
+				_thirst_acc = 0.0
+				_fatigue_acc = 0.0
 				add_msg("Heat and strain wash over you.")
 				return
 			"speed marker":
@@ -1560,6 +1587,32 @@ func _world_map_entry_pos(entry_dir: Vector2i) -> Vector2i:
 	return Vector2i(px, py)
 
 
+func _nearest_walkable_overworld_pos(target_map, preferred: Vector2i) -> Vector2i:
+	if target_map == null:
+		return preferred
+	var clamped := Vector2i(
+		clampi(preferred.x, 0, OVERWORLD_W - 1),
+		clampi(preferred.y, 0, OVERWORLD_H - 1)
+	)
+	if target_map.is_walkable(clamped.x, clamped.y) and target_map.get_blocking_entity_at(clamped.x, clamped.y) == null:
+		return clamped
+	for radius in range(1, 24):
+		for dy in range(-radius, radius + 1):
+			for dx in range(-radius, radius + 1):
+				if maxi(absi(dx), absi(dy)) != radius:
+					continue
+				var nx: int = clamped.x + dx
+				var ny: int = clamped.y + dy
+				if nx < 0 or nx >= OVERWORLD_W or ny < 0 or ny >= OVERWORLD_H:
+					continue
+				if not target_map.is_walkable(nx, ny):
+					continue
+				if target_map.get_blocking_entity_at(nx, ny) != null:
+					continue
+				return Vector2i(nx, ny)
+	return _walk_toward_center(target_map, clamped, 24)
+
+
 # ===========================================================================
 # Thirst / hydration (overworld only) and Fatigue (everywhere)
 # Both iterate `party` so future followers are automatically covered.
@@ -1585,7 +1638,8 @@ func _apply_archetype(actor, class_id: String) -> void:
 	actor.power       += actor.str_mod           # STR  → melee damage bonus
 	actor.max_hp      += actor.con_mod * 3       # CON  → bonus hit points
 	actor.hp           = actor.max_hp
-	actor.thirst_rate  = maxf(0.1, 1.0 - actor.con_mod * 0.1)  # CON → slower dehydration
+	actor.thirst_rate  = maxf(0.1, 1.0 - actor.con_mod * 0.1)   # CON → slower dehydration
+	actor.fatigue_rate = maxf(0.4, 0.75 - actor.con_mod * 0.05) # softer baseline fatigue pressure
 
 
 func _xp_threshold_for_level(level_value: int) -> int:
@@ -1652,6 +1706,7 @@ func apply_attribute_increase(stat_name: String) -> bool:
 			player.con_score += 1
 			attr_value = player.con_score
 			player.thirst_rate = maxf(0.1, 1.0 - player.con_mod * 0.1)
+			player.fatigue_rate = maxf(0.4, 0.75 - player.con_mod * 0.05)
 		"int":
 			player.int_score += 1
 			attr_value = player.int_score
@@ -1704,7 +1759,10 @@ func _drain_travel(n: int) -> void:
 	player.thirst         = mini(player.thirst + thirst_int, ActorClass.THIRST_MAX)
 	# Fatigue — night travel costs more.
 	var fat_per_turn: float = 1.5 if is_night else 1.0
-	player.fatigue = mini(player.fatigue + int(fat_per_turn * n), ActorClass.FATIGUE_MAX)
+	var fatigue_add: float = player.fatigue_rate * fat_per_turn * n + _fatigue_acc
+	var fatigue_int: int = int(fatigue_add)
+	_fatigue_acc = fatigue_add - fatigue_int
+	player.fatigue = mini(player.fatigue + fatigue_int, ActorClass.FATIGUE_MAX)
 	# Single threshold message after the journey.
 	var t: int    = player.thirst
 	var f: int    = player.fatigue
@@ -1774,12 +1832,16 @@ func _drain_fatigue() -> void:
 	if _resting:
 		# CON modifier improves rest recovery (min 1 point even with CON penalty).
 		player.fatigue = maxi(0, player.fatigue - maxi(1, 3 + player.con_mod))
+		_fatigue_acc = 0.0
 		return
 
 	var drain: int = 1
 	if depth == 0 and is_night:
 		drain += 1  # night travel is more disorienting and tiring
-	player.fatigue = mini(player.fatigue + drain, ActorClass.FATIGUE_MAX)
+	var fatigue_add: float = player.fatigue_rate * drain + _fatigue_acc
+	var fatigue_int: int = int(fatigue_add)
+	_fatigue_acc = fatigue_add - fatigue_int
+	player.fatigue = mini(player.fatigue + fatigue_int, ActorClass.FATIGUE_MAX)
 
 	var f: int    = player.fatigue
 	var fmax: int = ActorClass.FATIGUE_MAX
@@ -1880,8 +1942,10 @@ func _place_chunk_encounter(target_map, target_chunk: Vector2i, player_entry: Ve
 
 # Returns a random walkable position at least min_dist tiles from player_entry,
 # or Vector2i(-1,-1) if no suitable tile is found after max_attempts tries.
-func _find_encounter_pos(target_map, player_entry: Vector2i, min_dist: int = 20) -> Vector2i:
-	for _attempt in range(60):
+func _find_encounter_pos(target_map, player_entry: Vector2i, min_dist: int = 20, max_dist: int = -1) -> Vector2i:
+	var fallback: Vector2i = Vector2i(-1, -1)
+	var fallback_dist: float = 999999.0
+	for _attempt in range(80):
 		var tx: int = randi_range(5, OVERWORLD_W - 6)
 		var ty: int = randi_range(5, OVERWORLD_H - 6)
 		if not target_map.is_walkable(tx, ty):
@@ -1891,26 +1955,35 @@ func _find_encounter_pos(target_map, player_entry: Vector2i, min_dist: int = 20)
 		var d: float = Vector2(tx, ty).distance_to(Vector2(player_entry))
 		if d < min_dist:
 			continue
+		if max_dist > 0 and d > max_dist:
+			if d < fallback_dist:
+				fallback = Vector2i(tx, ty)
+				fallback_dist = d
+			continue
 		return Vector2i(tx, ty)
-	return Vector2i(-1, -1)
+	return fallback
 
 
 # Places 1–2 desert bandits in target_map, away from the player entry point.
 func _place_bandits_in(target_map, player_entry: Vector2i) -> void:
 	var count: int = randi_range(1, 2)
+	var anchor: Vector2i = _find_encounter_pos(target_map, player_entry, 5, 9)
+	if anchor.x == -1:
+		return
 	for _i in range(count):
-		var pos: Vector2i = _find_encounter_pos(target_map, player_entry)
+		var pos: Vector2i = anchor if _i == 0 else _find_nearby_open_tile(target_map, anchor, 3)
 		if pos.x == -1:
 			return
 		var bandit := ActorClass.new(pos, "B", Color(0.72, 0.32, 0.20),
 				"desert bandit", 12, 1, 3)
 		bandit.ai       = HostileAIClass.new(bandit)
 		target_map.add_entity(bandit)
+		anchor = pos
 
 
 # Places a lone traveling merchant in target_map, away from the player entry point.
 func _place_merchant_in(target_map, player_entry: Vector2i) -> void:
-	var pos: Vector2i = _find_encounter_pos(target_map, player_entry)
+	var pos: Vector2i = _find_encounter_pos(target_map, player_entry, 6, 10)
 	if pos.x == -1:
 		return
 	var npc_data: Dictionary = NpcDataClass.get_npc("merchant")
@@ -1918,6 +1991,18 @@ func _place_merchant_in(target_map, player_entry: Vector2i) -> void:
 	npc.home_chunk = chunk
 	npc.ai       = DocileAIClass.new(npc, 0.25, false)  # travels day and night; flees if attacked
 	target_map.add_entity(npc)
+
+
+func _find_nearby_open_tile(target_map, origin: Vector2i, radius: int) -> Vector2i:
+	for _attempt in range(24):
+		var tx: int = clampi(origin.x + randi_range(-radius, radius), 1, OVERWORLD_W - 2)
+		var ty: int = clampi(origin.y + randi_range(-radius, radius), 1, OVERWORLD_H - 2)
+		if not target_map.is_walkable(tx, ty):
+			continue
+		if target_map.get_blocking_entity_at(tx, ty) != null:
+			continue
+		return Vector2i(tx, ty)
+	return Vector2i(-1, -1)
 
 
 # Biome labels for in-game log messages.

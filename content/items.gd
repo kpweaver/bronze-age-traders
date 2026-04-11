@@ -195,7 +195,7 @@ const DATA: Dictionary = {
 		"char": "f", "cr": 1.0, "cg": 0.65, "cb": 0.15,
 		"name": "torch", "category": 3, "slot": "light",
 		"base_value": 4, "weight": 2, "material": "reed",
-		"light_fov": 3, "burn_turns": 5000,
+		"light_fov": 5, "burn_turns": 5000,
 	},
 
 	# ── Weapons  (slot: "weapon") ─────────────────────────────────────────────
