@@ -441,6 +441,18 @@ static func generate_debug_hub(map) -> void:
 	_add_debug_fixture(map, Vector2i(55, 26), "!", Color(0.78, 0.32, 0.16), "trial brazier")
 	_add_debug_fixture(map, Vector2i(63, 22), "<", Color(0.90, 0.85, 0.60), "return waystone")
 	_add_debug_fixture(map, Vector2i(47, 18), "=", Color(0.88, 0.78, 0.42), "speed marker")
+	_add_debug_glyph_row(map, Vector2i(45, 7),
+		["☺", "☻", "♪", "♫", "☼"],
+		Color(0.86, 0.78, 0.52),
+		"glyph sample")
+	_add_debug_glyph_row(map, Vector2i(45, 9),
+		["α", "Γ", "π", "Σ", "σ", "τ", "Φ", "Θ", "Ω", "δ"],
+		Color(0.66, 0.78, 0.92),
+		"glyph sample")
+	_add_debug_glyph_row(map, Vector2i(45, 11),
+		["∞", "≈", "√", "±", "≥", "≤", "÷"],
+		Color(0.90, 0.84, 0.62),
+		"glyph sample")
 	var debug_mount_data: Dictionary = NpcDataClass.get_npc("donkey")
 	var debug_mount := NpcClass.new(Vector2i(47, 22), "donkey", debug_mount_data)
 	debug_mount.ai = null
@@ -457,6 +469,13 @@ static func generate_debug_hub(map) -> void:
 static func _add_debug_fixture(map, pos: Vector2i, ch: String, col: Color, nm: String) -> void:
 	var fixture = EntityClass.new(pos, ch, col, nm, false)
 	map.add_entity(fixture)
+
+
+static func _add_debug_glyph_row(map, start: Vector2i, glyphs: Array, col: Color, nm: String) -> void:
+	for i in range(glyphs.size()):
+		var glyph: String = str(glyphs[i])
+		var fixture = EntityClass.new(Vector2i(start.x + i * 2, start.y), glyph, col, "%s %s" % [nm, glyph], false)
+		map.add_entity(fixture)
 
 
 static func _debug_quartermaster_stock() -> Array:
@@ -682,6 +701,30 @@ const _BT_HOME       := 0   # small dwelling
 const _BT_ADMIN      := 1   # civic / temple / administrative
 const _BT_COMMERCIAL := 2   # market stall, smithy, workshop
 
+const _GLYPH_WALL_H  := "═"
+const _GLYPH_WALL_V  := "║"
+const _GLYPH_CORNER_TL := "╔"
+const _GLYPH_CORNER_TR := "╗"
+const _GLYPH_CORNER_BL := "╚"
+const _GLYPH_CORNER_BR := "╝"
+
+const _VILLAGE_TEMPLATES := {
+	_BT_HOME: [
+		{"id": "family_home", "w": 9,  "h": 7},
+		{"id": "courtyard_home", "w": 11, "h": 8},
+		{"id": "long_home", "w": 10, "h": 7},
+	],
+	_BT_COMMERCIAL: [
+		{"id": "merchant_store", "w": 13, "h": 8},
+		{"id": "smithy", "w": 12, "h": 9},
+		{"id": "workshop", "w": 14, "h": 8},
+	],
+	_BT_ADMIN: [
+		{"id": "temple", "w": 17, "h": 10},
+		{"id": "assembly_hall", "w": 16, "h": 9},
+	],
+}
+
 
 static func _place_village(map, world_seed: int, world_x: int, world_y: int) -> void:
 	var rng := RandomNumberGenerator.new()
@@ -709,6 +752,7 @@ static func _place_village(map, world_seed: int, world_x: int, world_y: int) -> 
 
 	var placed_rects: Array      = []   # [{bx, by, bw, bh}]
 	var all_interior_tiles: Array = []
+	var building_specs: Array = []
 
 	for _attempt in range(target_buildings * 20):
 		if placed_rects.size() >= target_buildings:
@@ -716,20 +760,21 @@ static func _place_village(map, world_seed: int, world_x: int, world_y: int) -> 
 
 		var bidx: int   = placed_rects.size()
 		var btype: int  = btype_seq[bidx] if bidx < btype_seq.size() else _BT_HOME
+		var template: Dictionary = _pick_village_template(rng, btype)
 		var angle: float = TAU * float(bidx) / float(target_buildings) \
 				+ rng.randf_range(-0.4, 0.4)
 
-		# Size and ring radius vary by type.
-		var bw: int
-		var bh: int
+		# Size and ring radius vary by type, but footprints now come from intentional templates.
+		var bw: int = int(template.get("w", 9))
+		var bh: int = int(template.get("h", 7))
 		var ring_r: float
 		match btype:
 			_BT_ADMIN:
-				bw = rng.randi_range(10, 16); bh = rng.randi_range(7, 10); ring_r = 15.0
+				ring_r = 16.0
 			_BT_COMMERCIAL:
-				bw = rng.randi_range(7, 12);  bh = rng.randi_range(5, 8);  ring_r = 13.0
+				ring_r = 14.0
 			_:  # HOME
-				bw = rng.randi_range(5, 8);   bh = rng.randi_range(4, 6);  ring_r = 12.0
+				ring_r = 13.0
 
 		var dist: float = ring_r + rng.randf_range(-2.0, 4.0)
 		var bx: int  = cx + int(cos(angle) * dist) - (bw >> 1)
@@ -791,7 +836,18 @@ static func _place_village(map, world_seed: int, world_x: int, world_y: int) -> 
 			_:              _furnish_home(map, rng, bx, by_, bw, bh)
 
 		placed_rects.append({bx = bx, by = by_, bw = bw + 1, bh = bh + 1})
+		building_specs.append({
+			"bx": bx,
+			"by": by_,
+			"bw": bw,
+			"bh": bh,
+			"door_x": door_x,
+			"door_y": door_y,
+			"id": str(template.get("id", "building")),
+		})
 		all_interior_tiles.append_array(interior_tiles)
+
+	_apply_village_wall_glyphs(map, building_specs)
 
 	# Spawn 2–4 NPCs at unoccupied interior floor positions.
 	if all_interior_tiles.size() > 0:
@@ -824,6 +880,50 @@ static func _place_village(map, world_seed: int, world_x: int, world_y: int) -> 
 				npc.ai = DocileAIClass.new(npc, 0.35, true)
 			map.add_entity(npc)
 			spawned_npc += 1
+
+
+static func _pick_village_template(rng: RandomNumberGenerator, btype: int) -> Dictionary:
+	var variants: Array = _VILLAGE_TEMPLATES.get(btype, _VILLAGE_TEMPLATES[_BT_HOME])
+	return variants[rng.randi_range(0, variants.size() - 1)]
+
+
+static func _apply_village_wall_glyphs(map, building_specs: Array) -> void:
+	for spec in building_specs:
+		var bx: int = int(spec.bx)
+		var by_: int = int(spec.by)
+		var bw: int = int(spec.bw)
+		var bh: int = int(spec.bh)
+		var door_x: int = int(spec.door_x)
+		var door_y: int = int(spec.door_y)
+		for dy in range(bh):
+			for dx in range(bw):
+				var px: int = bx + dx
+				var py: int = by_ + dy
+				if not map.is_in_bounds(px, py):
+					continue
+				if map.tiles[py][px] != GameMapClass.TILE_WALL:
+					map.clear_glyph_override(px, py)
+					continue
+				var glyph: String = _GLYPH_WALL_H
+				var is_left: bool = dx == 0
+				var is_right: bool = dx == bw - 1
+				var is_top: bool = dy == 0
+				var is_bottom: bool = dy == bh - 1
+				if is_top and is_left:
+					glyph = _GLYPH_CORNER_TL
+				elif is_top and is_right:
+					glyph = _GLYPH_CORNER_TR
+				elif is_bottom and is_left:
+					glyph = _GLYPH_CORNER_BL
+				elif is_bottom and is_right:
+					glyph = _GLYPH_CORNER_BR
+				elif is_left or is_right:
+					glyph = _GLYPH_WALL_V
+				elif is_top or is_bottom:
+					glyph = _GLYPH_WALL_H
+				map.set_glyph_override(px, py, glyph)
+		if map.is_in_bounds(door_x, door_y):
+			map.clear_glyph_override(door_x, door_y)
 
 
 # ---------------------------------------------------------------------------

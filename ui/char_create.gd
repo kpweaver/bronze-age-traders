@@ -46,7 +46,7 @@ func _ready() -> void:
 
 
 func _load_font() -> Font:
-	var path := "res://assets/fonts/Px437_IBM_VGA_9x16.ttf"
+	var path := GameState.current_font_path()
 	if FileAccess.file_exists(path):
 		var ff := FontFile.new()
 		ff.data = FileAccess.get_file_as_bytes(path)
@@ -133,7 +133,7 @@ func _start_game() -> void:
 
 
 func _mouse_row(mouse_pos: Vector2) -> int:
-	return int(floor(mouse_pos.y / CELL_H))
+	return int(floor(mouse_pos.y / _cell_h()))
 
 
 func _handle_mouse_motion(event: InputEventMouseMotion) -> void:
@@ -142,8 +142,8 @@ func _handle_mouse_motion(event: InputEventMouseMotion) -> void:
 			var hovered := -1
 			var row: int = _mouse_row(event.position)
 			for i in range(CLASSES.size()):
-				var option_row: int = 17 + i * 3
-				if row >= option_row and row <= option_row + 1:
+				var option_row: int = _scaled_row(17 + i * 3)
+				if abs(row - option_row) <= 1:
 					hovered = i
 					break
 			if hovered != _hovered_class:
@@ -154,11 +154,11 @@ func _handle_mouse_motion(event: InputEventMouseMotion) -> void:
 		Phase.CONFIRM:
 			var hovered_confirm := -1
 			var row: int = _mouse_row(event.position)
-			if row == 26:
-				var col: int = int(floor(event.position.x / CELL_W))
-				if col >= 40 and col <= 56:
+			if abs(row - _scaled_row(26)) <= 1:
+				var col: int = int(floor(event.position.x / _cell_w()))
+				if col >= _confirm_start_x() and col <= _confirm_start_x() + 16:
 					hovered_confirm = 0
-				elif col >= 63 and col <= 79:
+				elif col >= _confirm_back_x() and col <= _confirm_back_x() + 16:
 					hovered_confirm = 1
 			if hovered_confirm != _hovered_confirm:
 				_hovered_confirm = hovered_confirm
@@ -188,7 +188,7 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 
 
 func _draw() -> void:
-	draw_rect(Rect2(Vector2.ZERO, Vector2(COLS * CELL_W, ROWS * CELL_H)), C_BG)
+	draw_rect(Rect2(Vector2.ZERO, get_viewport_rect().size), C_BG)
 	_draw_border()
 	_draw_title()
 	match _phase:
@@ -199,109 +199,141 @@ func _draw() -> void:
 
 
 func _draw_border() -> void:
-	for x in range(COLS):
+	for x in range(_view_cols()):
 		_put(x, 0,        "-", C_BORDER)
-		_put(x, ROWS - 1, "-", C_BORDER)
-	for y in range(1, ROWS - 1):
+		_put(x, _view_rows() - 1, "-", C_BORDER)
+	for y in range(1, _view_rows() - 1):
 		_put(0,        y, "|", C_BORDER)
-		_put(COLS - 1, y, "|", C_BORDER)
+		_put(_view_cols() - 1, y, "|", C_BORDER)
 	_put(0,        0,        "+", C_BORDER)
-	_put(COLS - 1, 0,        "+", C_BORDER)
-	_put(0,        ROWS - 1, "+", C_BORDER)
-	_put(COLS - 1, ROWS - 1, "+", C_BORDER)
+	_put(_view_cols() - 1, 0,        "+", C_BORDER)
+	_put(0,        _view_rows() - 1, "+", C_BORDER)
+	_put(_view_cols() - 1, _view_rows() - 1, "+", C_BORDER)
 
 
 func _draw_title() -> void:
-	_puts_centered(6,  "B R O N Z E  A G E  T R A D E R S", C_TITLE)
-	_puts_centered(8,  "Character Creation", C_LABEL)
-	_puts_centered(9,  "- - - - - - - - - - - - - - - - -", C_BORDER)
+	_puts_centered(_scaled_row(6),  "B R O N Z E  A G E  T R A D E R S", C_TITLE)
+	_puts_centered(_scaled_row(8),  "Character Creation", C_LABEL)
+	_puts_centered(_scaled_row(9),  "- - - - - - - - - - - - - - - - -", C_BORDER)
 
 
 func _draw_name_phase() -> void:
-	_puts_centered(14, "What is your name, traveller?", C_LABEL)
+	_puts_centered(_scaled_row(14), "What is your name, traveller?", C_LABEL)
 
 	# Name input box
 	const BOX_W := 32
-	const BOX_X := (COLS - BOX_W) >> 1
+	var box_x := (_view_cols() - BOX_W) >> 1
 	var display := _name
 	var show_cursor := _blink < 0.28
 	if show_cursor:
 		display += "_"
 	else:
 		display += " "
-	var display_x := BOX_X + ((BOX_W - display.length()) >> 1)
-	_puts(display_x, 17, display, C_INPUT)
+	var display_x := box_x + ((BOX_W - display.length()) >> 1)
+	_puts(display_x, _scaled_row(17), display, C_INPUT)
 
 	# Underline
 	var ul := ""
 	for _i in range(BOX_W):
 		ul += "-"
-	_puts(BOX_X, 18, ul, C_BORDER)
+	_puts(box_x, _scaled_row(18), ul, C_BORDER)
 
 	if _name.strip_edges().length() == 0:
-		_puts_centered(21, "enter a name to continue", C_DISABLED)
+		_puts_centered(_scaled_row(21), "enter a name to continue", C_DISABLED)
 
 
 func _draw_class_phase() -> void:
-	_puts_centered(12, "Choose your calling:", C_LABEL)
+	_puts_centered(_scaled_row(12), "Choose your calling:", C_LABEL)
 
 	var name_display := "Name: " + _name.strip_edges()
-	_puts_centered(14, name_display, C_INPUT)
+	_puts_centered(_scaled_row(14), name_display, C_INPUT)
 
 	for i in range(CLASSES.size()):
 		var cls: Array = CLASSES[i]
 		var is_sel     := i == _class_cursor or i == _hovered_class
 		var color      := C_SELECTED if is_sel else C_NORMAL
 		var prefix     := "> " if is_sel else "  "
-		_puts_centered(17 + i * 3, prefix + cls[1], color)
+		_puts_centered(_scaled_row(17 + i * 3), prefix + cls[1], color)
 		if is_sel:
-			_puts_centered(18 + i * 3, cls[2], C_LABEL)
+			_puts_centered(_scaled_row(18 + i * 3), cls[2], C_LABEL)
 
 	# Stat scores for the highlighted class.
 	var stats: Array = CLASSES[_class_cursor][3]
 	var stat_line1 := "STR: %2d   DEX: %2d   CON: %2d" % [stats[0], stats[1], stats[2]]
 	var stat_line2 := "INT: %2d   WIS: %2d   CHA: %2d" % [stats[3], stats[4], stats[5]]
-	_puts_centered(30, stat_line1, C_NORMAL)
-	_puts_centered(31, stat_line2, C_NORMAL)
+	_puts_centered(_scaled_row(30), stat_line1, C_NORMAL)
+	_puts_centered(_scaled_row(31), stat_line2, C_NORMAL)
 
-	_puts_centered(33, "arrows: choose    enter: confirm    esc: back", C_HINT)
+	_puts_centered(_scaled_row(33), "arrows: choose    enter: confirm    esc: back", C_HINT)
 
 
 func _draw_confirm_phase() -> void:
 	var cls: Array   = CLASSES[_class_cursor]
 	var stats: Array = cls[3]
-	_puts_centered(14, "Ready to begin?", C_LABEL)
-	_puts_centered(17, "Name:  " + _name.strip_edges(), C_INPUT)
-	_puts_centered(19, "Class: " + cls[1], C_INPUT)
+	_puts_centered(_scaled_row(14), "Ready to begin?", C_LABEL)
+	_puts_centered(_scaled_row(17), "Name:  " + _name.strip_edges(), C_INPUT)
+	_puts_centered(_scaled_row(19), "Class: " + cls[1], C_INPUT)
 	var stat_line1 := "STR: %2d   DEX: %2d   CON: %2d" % [stats[0], stats[1], stats[2]]
 	var stat_line2 := "INT: %2d   WIS: %2d   CHA: %2d" % [stats[3], stats[4], stats[5]]
-	_puts_centered(22, stat_line1, C_NORMAL)
-	_puts_centered(23, stat_line2, C_NORMAL)
+	_puts_centered(_scaled_row(22), stat_line1, C_NORMAL)
+	_puts_centered(_scaled_row(23), stat_line2, C_NORMAL)
 	var start_color: Color = C_SELECTED if _hovered_confirm == 0 else C_HINT
 	var back_color: Color = C_SELECTED if _hovered_confirm == 1 else C_HINT
-	_puts(40, 26, "[ Start ]", start_color)
-	_puts(63, 26, "[ Back ]", back_color)
+	_puts(_confirm_start_x(), _scaled_row(26), "[ Start ]", start_color)
+	_puts(_confirm_back_x(), _scaled_row(26), "[ Back ]", back_color)
 
 
 func _draw_hint() -> void:
 	match _phase:
 		Phase.NAME:
-			_puts_centered(ROWS - 2, "type your name    enter/click: next    esc: main menu", C_HINT)
+			_puts_centered(_view_rows() - 2, "type your name    enter/click: next    esc: main menu", C_HINT)
 		Phase.CLASS:
-			_puts_centered(ROWS - 2, "arrows/mouse: choose class    enter/click: next    esc: back", C_HINT)
+			_puts_centered(_view_rows() - 2, "arrows/mouse: choose class    enter/click: next    esc: back", C_HINT)
 		Phase.CONFIRM:
-			_puts_centered(ROWS - 2, "enter/Y/click: start    esc/N/click: go back", C_HINT)
+			_puts_centered(_view_rows() - 2, "enter/Y/click: start    esc/N/click: go back", C_HINT)
 
 
 func _puts_centered(row: int, text: String, color: Color) -> void:
-	_puts((COLS - text.length()) >> 1, row, text, color)
+	_puts((_view_cols() - text.length()) >> 1, row, text, color)
+
+
+func _view_cols() -> int:
+	return maxi(40, int(floor(get_viewport_rect().size.x / _cell_w())))
+
+
+func _view_rows() -> int:
+	return maxi(20, int(floor(get_viewport_rect().size.y / _cell_h())))
+
+
+func _cell_w() -> float:
+	if _font == null:
+		return CELL_W
+	return maxf(1.0, ceil(_font.get_string_size("M", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE).x))
+
+
+func _cell_h() -> float:
+	if _font == null:
+		return CELL_H
+	return maxf(1.0, ceil(_font.get_height(FONT_SIZE)))
+
+
+func _scaled_row(base_row: int) -> int:
+	return clampi(int(round(float(base_row) * float(_view_rows()) / float(ROWS))), 1, _view_rows() - 2)
+
+
+func _confirm_start_x() -> int:
+	return ((_view_cols() - 24) >> 1) - 6
+
+
+func _confirm_back_x() -> int:
+	return _confirm_start_x() + 23
 
 
 func _put(x: int, y: int, ch: String, color: Color) -> void:
-	draw_string(_font, Vector2(x * CELL_W, y * CELL_H + FONT_SIZE),
+	draw_string(_font, Vector2(x * _cell_w(), y * _cell_h() + FONT_SIZE),
 			ch, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE, color)
 
 
 func _puts(x: int, y: int, text: String, color: Color) -> void:
-	draw_string(_font, Vector2(x * CELL_W, y * CELL_H + FONT_SIZE),
+	draw_string(_font, Vector2(x * _cell_w(), y * _cell_h() + FONT_SIZE),
 			text, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE, color)

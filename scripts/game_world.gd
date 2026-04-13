@@ -29,8 +29,8 @@ const DocileAIClass    = preload("res://scripts/components/docile_ai.gd")
 # ---------------------------------------------------------------------------
 const DUNGEON_W: int     = 160
 const DUNGEON_H: int     = 70
-const OVERWORLD_W: int   = 200
-const OVERWORLD_H: int   = 200
+const OVERWORLD_W: int   = 100
+const OVERWORLD_H: int   = 100
 const DEBUG_HUB_W: int   = 120
 const DEBUG_HUB_H: int   = 44
 const FOV_RADIUS: int    = 6
@@ -41,13 +41,13 @@ const ACTION_COST_BASE: int = 100
 const MOVE_COST_FOOT: int = 100
 const MOVE_COST_MOUNTED: int = 70
 const ACTION_COST_STANDARD: int = 100
-const WORLD_MAP_TRAVEL_COST_BASE: int = 200
-const WORLD_MAP_TRAVEL_COST_MIN: int = 120
+const WORLD_MAP_TRAVEL_COST_BASE: int = 100
+const WORLD_MAP_TRAVEL_COST_MIN: int = 60
 const WORLD_MAP_THREAT_RANGE: int = 8
 
 # Turns of thirst/fatigue drain applied per chunk moved on the world map.
-# One chunk = 20 miles; at 3 mph that is ~6.7 hours = ~200 turns.
-const TURNS_PER_CHUNK_TRAVEL: int = 200
+# One chunk = 10 miles; at 3 mph that is ~3.3 hours = ~100 turns.
+const TURNS_PER_CHUNK_TRAVEL: int = 100
 const XP_FLOOR_DISCOVERY: int = 25
 const XP_KILL_WEAK: int = 10
 const XP_KILL_DANGEROUS: int = 20
@@ -57,7 +57,7 @@ const TRAVEL_EVENT_BANDITS: String = "bandit_ambush"
 
 # Day/night — one in-game day = TURNS_PER_DAY player actions.
 # Tile: 0.1 miles (528 ft).  Walking pace: 3 mph → 2 min/tile → 720 turns/day.
-# Chunk: 200×100 tiles = 20×10 miles (≈ one Bronze Age city-state territory).
+# Chunk: 100×100 tiles = 10×10 miles (≈ a tighter local territory scale).
 const TURNS_PER_DAY: int = 720
 
 # Game starts at dawn (turn 0 → 06:00).  Stored as a turn offset so that
@@ -400,7 +400,8 @@ func do_player_turn(dir: Vector2i, force_attack: bool = false) -> void:
 
 func _player_attack_target(target: ActorClass) -> void:
 	add_msg(player.attack(target))
-	player.fatigue = mini(player.fatigue + 2, ActorClass.FATIGUE_MAX)
+	if not GameState.god_mode:
+		player.fatigue = mini(player.fatigue + 2, ActorClass.FATIGUE_MAX)
 	if GameState.god_mode and target.is_alive:
 		target.take_damage(target.hp)
 	if target is NpcClass and target.is_alive:
@@ -458,7 +459,7 @@ func get_ranged_targets() -> Array:
 			continue
 		if not map.visible[e.pos.y][e.pos.x]:
 			continue
-		if _cheb(player.pos, e.pos) > int((weapon as ItemClass).ranged_range):
+		if _cheb(player.pos, e.pos) > int((weapon as ItemClass).weapon_range):
 			continue
 		if _first_actor_on_line(player.pos, e.pos) == e:
 			result.append(e)
@@ -478,7 +479,7 @@ func fire_ranged_at(target_pos: Vector2i) -> void:
 	if not map.is_in_bounds(target_pos.x, target_pos.y):
 		add_msg("You cannot fire there.")
 		return
-	if _cheb(player.pos, target_pos) > int((weapon as ItemClass).ranged_range):
+	if _cheb(player.pos, target_pos) > int((weapon as ItemClass).weapon_range):
 		add_msg("That is beyond the reach of your %s." % (weapon as ItemClass).name)
 		return
 
@@ -490,7 +491,8 @@ func fire_ranged_at(target_pos: Vector2i) -> void:
 		return
 
 	add_msg(player.ranged_attack(hit_actor, weapon as ItemClass, ammo as ItemClass))
-	player.fatigue = mini(player.fatigue + 1, ActorClass.FATIGUE_MAX)
+	if not GameState.god_mode:
+		player.fatigue = mini(player.fatigue + 1, ActorClass.FATIGUE_MAX)
 	if GameState.god_mode and hit_actor.is_alive:
 		hit_actor.take_damage(hit_actor.hp)
 	if hit_actor is NpcClass and hit_actor.is_alive:
@@ -711,8 +713,6 @@ func try_skin() -> void:
 	# Skinning consumes a turn.
 	_resting = false
 	resolve_action(ACTION_COST_STANDARD)
-	if not game_over and not result_msg.is_empty():
-		add_msg(result_msg)
 
 
 func auto_pickup() -> void:
@@ -751,7 +751,8 @@ func get_move_action_cost(_dir: Vector2i = Vector2i.ZERO) -> int:
 
 
 func get_move_cost_label() -> String:
-	return "%d%%" % get_move_action_cost()
+	var speed_mult: float = float(ACTION_COST_BASE) / float(get_move_action_cost())
+	return "%.1fx" % speed_mult
 
 
 func get_world_map_travel_cost(target_chunk: Vector2i) -> int:
@@ -1505,7 +1506,7 @@ func _check_debug_fixture() -> void:
 				add_msg("Heat and strain wash over you.")
 				return
 			"speed marker":
-				add_msg("Current move cost: %s. Mounted travel should advance time and enemy turns more slowly." % get_move_cost_label())
+				add_msg("Current movement speed: %s. Mounted travel should advance time and enemy turns more slowly." % get_move_cost_label())
 				return
 			"return waystone":
 				exit_debug_hub()
@@ -1783,7 +1784,11 @@ func _drain_travel(n: int) -> void:
 
 
 func _drain_thirst() -> void:
-	if game_over or GameState.god_mode:
+	if GameState.god_mode:
+		player.thirst = 0
+		_thirst_acc = 0.0
+		return
+	if game_over:
 		return
 	# Thirst is shared across the whole party — one bar represents everyone.
 	# Check adjacency using the player's position as the party's reference point.
@@ -1826,7 +1831,11 @@ func _drain_thirst() -> void:
 
 
 func _drain_fatigue() -> void:
-	if game_over or GameState.god_mode:
+	if GameState.god_mode:
+		player.fatigue = 0
+		_fatigue_acc = 0.0
+		return
+	if game_over:
 		return
 	# Fatigue is shared across the whole party — one bar represents everyone.
 	if _resting:

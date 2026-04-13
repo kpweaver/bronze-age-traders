@@ -3,7 +3,8 @@
 #
 # Schema for each entry:
 #   name          String   — display name shown in-game
-#   char          String   — single CP437 glyph
+#   char          String   — ASCII fallback glyph used in font mode
+#   tileset_char  String   — optional CP437 tileset glyph override
 #   cr/cg/cb      float    — RGB colour (0.0–1.0)
 #   str/dex/con   int      — ability scores (3–18 range; modifier = (score-10)/2)
 #   int/wis/cha   int      — ability scores (int = Intelligence, not GDScript type)
@@ -24,7 +25,7 @@
 
 const DATA: Dictionary = {
 	"merchant": {
-		"name": "merchant", "char": "t",
+		"name": "merchant", "char": "☺", "tileset_char": "☺",
 		"cr": 0.90, "cg": 0.72, "cb": 0.28,
 		"str": 10, "dex": 11, "con": 10, "int": 12, "wis": 11, "cha": 13,
 		"base_hp": 12, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
@@ -47,7 +48,7 @@ const DATA: Dictionary = {
 		"spawn_weight": 3,
 	},
 	"village_elder": {
-		"name": "village elder", "char": "e",
+		"name": "village elder", "char": "☺", "tileset_char": "☺",
 		"cr": 0.82, "cg": 0.68, "cb": 0.55,
 		"str": 8, "dex": 8, "con": 9, "int": 12, "wis": 14, "cha": 12,
 		"base_hp": 11, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
@@ -61,7 +62,7 @@ const DATA: Dictionary = {
 		"spawn_weight": 1,
 	},
 	"smith": {
-		"name": "smith", "char": "m",
+		"name": "smith", "char": "☻", "tileset_char": "☻",
 		"cr": 0.70, "cg": 0.45, "cb": 0.25,
 		"str": 15, "dex": 10, "con": 14, "int": 9, "wis": 10, "cha": 8,
 		"base_hp": 16, "defense": 1, "power": 3, "level": 1, "attack_speed": 1.0,
@@ -82,7 +83,7 @@ const DATA: Dictionary = {
 		"spawn_weight": 1,
 	},
 	"scribe": {
-		"name": "scribe", "char": "s",
+		"name": "scribe", "char": "☺", "tileset_char": "☺",
 		"cr": 0.72, "cg": 0.82, "cb": 0.72,
 		"str": 8, "dex": 12, "con": 9, "int": 15, "wis": 12, "cha": 10,
 		"base_hp": 9, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
@@ -96,7 +97,7 @@ const DATA: Dictionary = {
 		"spawn_weight": 1,
 	},
 	"weaver": {
-		"name": "weaver", "char": "w",
+		"name": "weaver", "char": "☺", "tileset_char": "☺",
 		"cr": 0.75, "cg": 0.78, "cb": 0.62,
 		"str": 9, "dex": 13, "con": 10, "int": 10, "wis": 12, "cha": 11,
 		"base_hp": 8, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
@@ -116,7 +117,7 @@ const DATA: Dictionary = {
 		"spawn_weight": 1,
 	},
 	"priest": {
-		"name": "priest", "char": "p",
+		"name": "priest", "char": "☻", "tileset_char": "☻",
 		"cr": 0.88, "cg": 0.78, "cb": 0.45,
 		"str": 9, "dex": 9, "con": 10, "int": 12, "wis": 14, "cha": 13,
 		"base_hp": 9, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
@@ -131,7 +132,7 @@ const DATA: Dictionary = {
 		"spawn_weight": 1,
 	},
 	"dyer": {
-		"name": "dyer", "char": "d",
+		"name": "dyer", "char": "☺", "tileset_char": "☺",
 		"cr": 0.65, "cg": 0.45, "cb": 0.70,
 		"str": 11, "dex": 10, "con": 10, "int": 10, "wis": 10, "cha": 11,
 		"base_hp": 8, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
@@ -150,7 +151,7 @@ const DATA: Dictionary = {
 		"spawn_weight": 1,
 	},
 	"foreign_trader": {
-		"name": "foreign trader", "char": "f",
+		"name": "foreign trader", "char": "☺", "tileset_char": "☺",
 		"cr": 0.80, "cg": 0.62, "cb": 0.38,
 		"str": 9, "dex": 12, "con": 10, "int": 13, "wis": 11, "cha": 14,
 		"base_hp": 11, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
@@ -172,7 +173,7 @@ const DATA: Dictionary = {
 		"spawn_weight": 2,
 	},
 	"caravan_guard": {
-		"name": "caravan guard", "char": "g",
+		"name": "caravan guard", "char": "☻", "tileset_char": "☻",
 		"cr": 0.65, "cg": 0.50, "cb": 0.30,
 		"str": 14, "dex": 12, "con": 13, "int": 9, "wis": 10, "cha": 9,
 		"base_hp": 19, "defense": 2, "power": 3, "level": 1, "attack_speed": 1.0,
@@ -197,7 +198,7 @@ const DATA: Dictionary = {
 		"spawn_weight": 2,
 	},
 	"herbalist": {
-		"name": "herbalist", "char": "h",
+		"name": "herbalist", "char": "☺", "tileset_char": "☺",
 		"cr": 0.58, "cg": 0.72, "cb": 0.45,
 		"str": 9, "dex": 13, "con": 10, "int": 13, "wis": 14, "cha": 11,
 		"base_hp": 8, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
@@ -222,7 +223,7 @@ const DATA: Dictionary = {
 	# wander_radius is larger than village NPCs so they roam freely.
 	# -----------------------------------------------------------------------
 	"gazelle": {
-		"name": "gazelle", "char": "g",
+		"name": "gazelle", "char": "δ", "tileset_char": "δ",
 		"cr": 0.85, "cg": 0.73, "cb": 0.38,
 		"str": 8, "dex": 16, "con": 10, "int": 2, "wis": 12, "cha": 6,
 		"base_hp": 6, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
@@ -242,7 +243,7 @@ const DATA: Dictionary = {
 		"spawn_weight": 0,  # spawned by procgen, not village pools
 	},
 	"onager": {
-		"name": "onager", "char": "q",
+		"name": "onager", "char": "σ", "tileset_char": "σ",
 		"cr": 0.72, "cg": 0.60, "cb": 0.42,
 		"str": 13, "dex": 12, "con": 13, "int": 2, "wis": 10, "cha": 5,
 		"base_hp": 13, "defense": 0, "power": 2, "level": 1, "attack_speed": 1.0,
@@ -262,7 +263,7 @@ const DATA: Dictionary = {
 		"spawn_weight": 0,
 	},
 	"donkey": {
-		"name": "donkey", "char": "d",
+		"name": "donkey", "char": "τ", "tileset_char": "τ",
 		"cr": 0.66, "cg": 0.56, "cb": 0.40,
 		"str": 12, "dex": 10, "con": 12, "int": 2, "wis": 10, "cha": 7,
 		"base_hp": 11, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
@@ -276,7 +277,7 @@ const DATA: Dictionary = {
 		"spawn_weight": 0,
 	},
 	"ibex": {
-		"name": "ibex", "char": "i",
+		"name": "ibex", "char": "π", "tileset_char": "π",
 		"cr": 0.50, "cg": 0.40, "cb": 0.28,
 		"str": 11, "dex": 14, "con": 11, "int": 2, "wis": 12, "cha": 5,
 		"base_hp": 10, "defense": 1, "power": 2, "level": 1, "attack_speed": 1.0,
@@ -296,7 +297,7 @@ const DATA: Dictionary = {
 		"spawn_weight": 0,
 	},
 	"hyena": {
-		"name": "hyena", "char": "h",
+		"name": "hyena", "char": "Φ", "tileset_char": "Φ",
 		"cr": 0.62, "cg": 0.54, "cb": 0.38,
 		"str": 13, "dex": 13, "con": 13, "int": 3, "wis": 12, "cha": 4,
 		"base_hp": 15, "defense": 1, "power": 3, "level": 1, "attack_speed": 1.0,
@@ -316,7 +317,7 @@ const DATA: Dictionary = {
 		"spawn_weight": 0,
 	},
 	"water_carrier": {
-		"name": "water carrier", "char": "c",
+		"name": "water carrier", "char": "☺", "tileset_char": "☺",
 		"cr": 0.60, "cg": 0.68, "cb": 0.78,
 		"str": 13, "dex": 11, "con": 12, "int": 8, "wis": 10, "cha": 9,
 		"base_hp": 9, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,

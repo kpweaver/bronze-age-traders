@@ -50,6 +50,7 @@ func _init(p_pos: Vector2i, p_type: String, p_data: Dictionary) -> void:
 		int(p_data.get("defense", 0)),
 		int(p_data.get("power", 1))
 	)
+	tileset_char = str(p_data.get("tileset_char", char))
 	# Apply ability scores computed above.
 	str_score    = p_str
 	dex_score    = p_dex

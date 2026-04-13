@@ -21,12 +21,14 @@ Item fields:
 - name: display name
 - category: gold | usable | trade | equipment | readable | ammo
 - slot: none | weapon | ranged | body | feet | head | light
-- glyph: map character
+- char: ASCII fallback map character
+- tileset_char: optional CP437 / tileset glyph override
 - color: rgb floats
 - weight_lbs: item weight in pounds
 - base_value_g: canonical price in gold
 - material: flavor material
-- atk_bonus: attack bonus if equipment/ammo
+- damage: weapon damage dice (for weapons)
+- enhancement_bonus: flat damage bonus on weapons/ammo
 - def_bonus: defense bonus if equipment
 - heal: healing dice for usable items
 - ammo_type: ammo id consumed by ranged weapon
@@ -39,7 +41,8 @@ Item fields:
 NPC fields:
 - id: internal npc id
 - name: display name
-- glyph: map character
+- char: ASCII fallback map character
+- tileset_char: optional CP437 / tileset glyph override
 - color: rgb floats
 - str/dex/con/int/wis/cha: ability scores
 - base_hp: HP before CON modifier
@@ -70,7 +73,8 @@ id: gold
 name: gold coins
 category: gold
 slot: none
-glyph: $
+char: $
+tileset_char: $
 color: 0.90, 0.78, 0.15
 weight_lbs: 0
 notes: Currency only.
@@ -80,7 +84,8 @@ id: health_potion
 name: health potion
 category: usable
 slot: none
-glyph: !
+char: !
+tileset_char: !
 color: 0.40, 0.85, 0.35
 weight_lbs: 1
 base_value_g: 8
@@ -92,7 +97,8 @@ id: healing_draught
 name: healing draught
 category: usable
 slot: none
-glyph: !
+char: !
+tileset_char: !
 color: 0.25, 0.65, 0.90
 weight_lbs: 1
 base_value_g: 16
@@ -104,7 +110,8 @@ id: pottery
 name: pottery
 category: trade
 slot: none
-glyph: ,
+char: ,
+tileset_char: ,
 color: 0.72, 0.40, 0.22
 weight_lbs: 5
 base_value_g: 3
@@ -115,7 +122,8 @@ id: linen_cloth
 name: linen cloth
 category: trade
 slot: none
-glyph: "
+char: "
+tileset_char: "
 color: 0.90, 0.88, 0.75
 weight_lbs: 2
 base_value_g: 4
@@ -126,7 +134,8 @@ id: cedar_wood
 name: cedar wood
 category: trade
 slot: none
-glyph: /
+char: /
+tileset_char: /
 color: 0.55, 0.35, 0.18
 weight_lbs: 8
 base_value_g: 6
@@ -137,7 +146,8 @@ id: tin_ingot
 name: tin ingot
 category: trade
 slot: none
-glyph: *
+char: *
+tileset_char: *
 color: 0.82, 0.84, 0.86
 weight_lbs: 12
 base_value_g: 12
@@ -148,7 +158,8 @@ id: copper_ingot
 name: copper ingot
 category: trade
 slot: none
-glyph: *
+char: *
+tileset_char: *
 color: 0.72, 0.45, 0.25
 weight_lbs: 12
 base_value_g: 8
@@ -159,7 +170,8 @@ id: bronze_ingot
 name: bronze ingot
 category: trade
 slot: none
-glyph: *
+char: *
+tileset_char: *
 color: 0.80, 0.50, 0.20
 weight_lbs: 13
 base_value_g: 22
@@ -170,7 +182,8 @@ id: olive_oil
 name: olive oil
 category: trade
 slot: none
-glyph: ~
+char: ~
+tileset_char: ~
 color: 0.70, 0.75, 0.30
 weight_lbs: 4
 base_value_g: 6
@@ -181,7 +194,8 @@ id: wine
 name: wine
 category: trade
 slot: none
-glyph: ~
+char: ~
+tileset_char: ~
 color: 0.55, 0.18, 0.35
 weight_lbs: 4
 base_value_g: 7
@@ -192,7 +206,8 @@ id: ivory
 name: ivory
 category: trade
 slot: none
-glyph: -
+char: -
+tileset_char: -
 color: 0.96, 0.94, 0.88
 weight_lbs: 6
 base_value_g: 30
@@ -203,7 +218,8 @@ id: lapis_lazuli
 name: lapis lazuli
 category: trade
 slot: none
-glyph: *
+char: *
+tileset_char: *
 color: 0.18, 0.28, 0.82
 weight_lbs: 3
 base_value_g: 40
@@ -214,7 +230,8 @@ id: silver_ingot
 name: silver ingot
 category: trade
 slot: none
-glyph: *
+char: *
+tileset_char: *
 color: 0.85, 0.87, 0.90
 weight_lbs: 12
 base_value_g: 35
@@ -225,7 +242,8 @@ id: purple_dye
 name: purple dye
 category: trade
 slot: none
-glyph: ~
+char: ~
+tileset_char: ~
 color: 0.55, 0.12, 0.68
 weight_lbs: 1
 base_value_g: 50
@@ -236,7 +254,8 @@ id: wheat
 name: wheat
 category: trade
 slot: none
-glyph: ,
+char: ,
+tileset_char: ,
 color: 0.88, 0.78, 0.38
 weight_lbs: 4
 base_value_g: 2
@@ -247,7 +266,8 @@ id: clay_tablet
 name: clay tablet
 category: trade
 slot: none
-glyph: -
+char: -
+tileset_char: -
 color: 0.75, 0.62, 0.42
 weight_lbs: 2
 base_value_g: 15
@@ -258,7 +278,8 @@ id: tablet_traders_ledger
 name: trader's ledger
 category: readable
 slot: none
-glyph: =
+char: =
+tileset_char: =
 color: 0.82, 0.70, 0.48
 weight_lbs: 2
 base_value_g: 12
@@ -277,7 +298,8 @@ id: tablet_hymn_shamash
 name: hymn to Shamash
 category: readable
 slot: none
-glyph: =
+char: =
+tileset_char: =
 color: 0.82, 0.70, 0.48
 weight_lbs: 2
 base_value_g: 18
@@ -297,7 +319,8 @@ id: tablet_law_fragment
 name: law tablet
 category: readable
 slot: none
-glyph: =
+char: =
+tileset_char: =
 color: 0.82, 0.70, 0.48
 weight_lbs: 2
 base_value_g: 20
@@ -314,7 +337,8 @@ id: tablet_caravan_letter
 name: caravan letter
 category: readable
 slot: none
-glyph: =
+char: =
+tileset_char: =
 color: 0.82, 0.70, 0.48
 weight_lbs: 2
 base_value_g: 8
@@ -333,7 +357,8 @@ id: tablet_mythic_fragment
 name: mythic fragment
 category: readable
 slot: none
-glyph: =
+char: =
+tileset_char: =
 color: 0.82, 0.70, 0.48
 weight_lbs: 2
 base_value_g: 25
@@ -351,7 +376,8 @@ id: game_meat
 name: game meat
 category: usable
 slot: none
-glyph: :
+char: :
+tileset_char: :
 color: 0.78, 0.28, 0.22
 weight_lbs: 3
 base_value_g: 5
@@ -363,7 +389,8 @@ id: tough_meat
 name: tough meat
 category: usable
 slot: none
-glyph: :
+char: :
+tileset_char: :
 color: 0.52, 0.22, 0.18
 weight_lbs: 3
 base_value_g: 2
@@ -375,7 +402,8 @@ id: light_hide
 name: light hide
 category: trade
 slot: none
-glyph: ~
+char: ~
+tileset_char: ~
 color: 0.75, 0.62, 0.40
 weight_lbs: 5
 base_value_g: 8
@@ -386,7 +414,8 @@ id: heavy_hide
 name: heavy hide
 category: trade
 slot: none
-glyph: ~
+char: ~
+tileset_char: ~
 color: 0.55, 0.42, 0.28
 weight_lbs: 8
 base_value_g: 13
@@ -397,7 +426,8 @@ id: coarse_hide
 name: coarse hide
 category: trade
 slot: none
-glyph: ~
+char: ~
+tileset_char: ~
 color: 0.42, 0.38, 0.28
 weight_lbs: 5
 base_value_g: 4
@@ -408,7 +438,8 @@ id: gazelle_horn
 name: gazelle horn
 category: trade
 slot: none
-glyph: \
+char: \
+tileset_char: \
 color: 0.90, 0.84, 0.65
 weight_lbs: 2
 base_value_g: 10
@@ -419,7 +450,8 @@ id: ibex_horn
 name: ibex horn
 category: trade
 slot: none
-glyph: \
+char: \
+tileset_char: \
 color: 0.78, 0.70, 0.48
 weight_lbs: 3
 base_value_g: 22
@@ -430,7 +462,8 @@ id: torch
 name: torch
 category: equipment
 slot: light
-glyph: f
+char: f
+tileset_char: f
 color: 1.00, 0.65, 0.15
 weight_lbs: 2
 base_value_g: 4
@@ -443,60 +476,74 @@ id: dagger
 name: dagger
 category: equipment
 slot: weapon
-glyph: )
+char: )
+tileset_char: )
 color: 0.78, 0.72, 0.55
 weight_lbs: 3
 base_value_g: 15
 material: copper
-atk_bonus: 1
+damage: 1d4
+enhancement_bonus: +0
+range: 1
 
 [ITEM]
 id: short_sword
 name: short sword
 category: equipment
 slot: weapon
-glyph: )
+char: )
+tileset_char: )
 color: 0.85, 0.82, 0.60
 weight_lbs: 5
 base_value_g: 28
 material: bronze
-atk_bonus: 2
+damage: 1d6
+enhancement_bonus: +0
+range: 1
 
 [ITEM]
 id: spear
 name: spear
 category: equipment
 slot: weapon
-glyph: /
+char: /
+tileset_char: /
 color: 0.72, 0.65, 0.42
 weight_lbs: 6
 base_value_g: 20
 material: wood
-atk_bonus: 3
+damage: 1d8
+enhancement_bonus: +0
+range: 1
 
 [ITEM]
 id: club
 name: club
 category: equipment
 slot: weapon
-glyph: )
+char: )
+tileset_char: )
 color: 0.55, 0.38, 0.22
 weight_lbs: 5
 base_value_g: 8
 material: wood
-atk_bonus: 1
+damage: 1d6
+enhancement_bonus: +0
+range: 1
 
 [ITEM]
 id: sling
 name: sling
 category: equipment
 slot: ranged
-glyph: )
+char: )
+tileset_char: )
 color: 0.65, 0.55, 0.38
 weight_lbs: 1
 base_value_g: 5
 material: leather
-atk_bonus: 0
+damage: 1d4
+enhancement_bonus: +0
 ammo_type: sling_stone
 range: 8
 
@@ -505,12 +552,14 @@ id: short_bow
 name: short bow
 category: equipment
 slot: ranged
-glyph: )
+char: )
+tileset_char: )
 color: 0.74, 0.62, 0.35
 weight_lbs: 2
 base_value_g: 18
 material: wood
-atk_bonus: 1
+damage: 1d6
+enhancement_bonus: +0
 ammo_type: reed_arrow
 range: 10
 
@@ -519,12 +568,13 @@ id: sling_stone
 name: sling stones
 category: ammo
 slot: none
-glyph: *
+char: *
+tileset_char: *
 color: 0.70, 0.70, 0.70
 weight_lbs: 1
 base_value_g: 2
 material: stone
-atk_bonus: 0
+enhancement_bonus: +0
 stack_size: 10
 
 [ITEM]
@@ -532,12 +582,13 @@ id: reed_arrow
 name: reed arrows
 category: ammo
 slot: none
-glyph: /
+char: /
+tileset_char: /
 color: 0.78, 0.70, 0.48
 weight_lbs: 1
 base_value_g: 4
 material: reed
-atk_bonus: 1
+enhancement_bonus: +0
 stack_size: 8
 
 [ITEM]
@@ -545,7 +596,8 @@ id: linen_tunic
 name: linen tunic
 category: equipment
 slot: body
-glyph: [
+char: [
+tileset_char: [
 color: 0.90, 0.88, 0.75
 weight_lbs: 3
 base_value_g: 6
@@ -557,7 +609,8 @@ id: wool_cloak
 name: wool cloak
 category: equipment
 slot: body
-glyph: [
+char: [
+tileset_char: [
 color: 0.68, 0.58, 0.42
 weight_lbs: 4
 base_value_g: 10
@@ -569,7 +622,8 @@ id: leather_vest
 name: leather vest
 category: equipment
 slot: body
-glyph: [
+char: [
+tileset_char: [
 color: 0.60, 0.42, 0.25
 weight_lbs: 7
 base_value_g: 18
@@ -581,7 +635,8 @@ id: sandals
 name: sandals
 category: equipment
 slot: feet
-glyph: [
+char: [
+tileset_char: [
 color: 0.78, 0.65, 0.42
 weight_lbs: 1
 base_value_g: 4
@@ -593,7 +648,8 @@ id: leather_boots
 name: leather boots
 category: equipment
 slot: feet
-glyph: [
+char: [
+tileset_char: [
 color: 0.55, 0.40, 0.25
 weight_lbs: 3
 base_value_g: 12
@@ -605,7 +661,8 @@ id: linen_headband
 name: linen headband
 category: equipment
 slot: head
-glyph: [
+char: [
+tileset_char: [
 color: 0.90, 0.88, 0.75
 weight_lbs: 1
 base_value_g: 3
@@ -617,7 +674,8 @@ id: leather_cap
 name: leather cap
 category: equipment
 slot: head
-glyph: [
+char: [
+tileset_char: [
 color: 0.60, 0.42, 0.25
 weight_lbs: 2
 base_value_g: 10
@@ -629,7 +687,8 @@ id: bronze_helmet
 name: bronze helmet
 category: equipment
 slot: head
-glyph: [
+char: [
+tileset_char: [
 color: 0.80, 0.50, 0.20
 weight_lbs: 6
 base_value_g: 35
@@ -644,7 +703,8 @@ NPCS
 [NPC]
 id: merchant
 name: merchant
-glyph: t
+char: ☺
+tileset_char: ☺
 color: 0.90, 0.72, 0.28
 stats: STR 10 DEX 11 CON 10 INT 12 WIS 11 CHA 13
 base_hp: 12
@@ -676,7 +736,8 @@ trade_stock:
 [NPC]
 id: village_elder
 name: village elder
-glyph: e
+char: ☺
+tileset_char: ☺
 color: 0.82, 0.68, 0.55
 stats: STR 8 DEX 8 CON 9 INT 12 WIS 14 CHA 12
 base_hp: 11
@@ -698,7 +759,8 @@ dialogue:
 [NPC]
 id: smith
 name: smith
-glyph: m
+char: ☻
+tileset_char: ☻
 color: 0.70, 0.45, 0.25
 stats: STR 15 DEX 10 CON 14 INT 9 WIS 10 CHA 8
 base_hp: 16
@@ -728,7 +790,8 @@ trade_stock:
 [NPC]
 id: scribe
 name: scribe
-glyph: s
+char: ☺
+tileset_char: ☺
 color: 0.72, 0.82, 0.72
 stats: STR 8 DEX 12 CON 9 INT 15 WIS 12 CHA 10
 base_hp: 9
@@ -750,7 +813,8 @@ dialogue:
 [NPC]
 id: weaver
 name: weaver
-glyph: w
+char: ☺
+tileset_char: ☺
 color: 0.75, 0.78, 0.62
 stats: STR 9 DEX 13 CON 10 INT 10 WIS 12 CHA 11
 base_hp: 8
@@ -779,7 +843,8 @@ trade_stock:
 [NPC]
 id: priest
 name: priest
-glyph: p
+char: ☻
+tileset_char: ☻
 color: 0.88, 0.78, 0.45
 stats: STR 9 DEX 9 CON 10 INT 12 WIS 14 CHA 13
 base_hp: 9
@@ -802,7 +867,8 @@ dialogue:
 [NPC]
 id: dyer
 name: dyer
-glyph: d
+char: ☺
+tileset_char: ☺
 color: 0.65, 0.45, 0.70
 stats: STR 11 DEX 10 CON 10 INT 10 WIS 10 CHA 11
 base_hp: 8
@@ -830,7 +896,8 @@ trade_stock:
 [NPC]
 id: foreign_trader
 name: foreign trader
-glyph: f
+char: ☺
+tileset_char: ☺
 color: 0.80, 0.62, 0.38
 stats: STR 9 DEX 12 CON 10 INT 13 WIS 11 CHA 14
 base_hp: 11
@@ -861,7 +928,8 @@ trade_stock:
 [NPC]
 id: caravan_guard
 name: caravan guard
-glyph: g
+char: ☻
+tileset_char: ☻
 color: 0.65, 0.50, 0.30
 stats: STR 14 DEX 12 CON 13 INT 9 WIS 10 CHA 9
 base_hp: 19
@@ -895,7 +963,8 @@ trade_stock:
 [NPC]
 id: herbalist
 name: herbalist
-glyph: h
+char: ☺
+tileset_char: ☺
 color: 0.58, 0.72, 0.45
 stats: STR 9 DEX 13 CON 10 INT 13 WIS 14 CHA 11
 base_hp: 8
@@ -924,7 +993,8 @@ trade_stock:
 [NPC]
 id: water_carrier
 name: water carrier
-glyph: c
+char: ☺
+tileset_char: ☺
 color: 0.60, 0.68, 0.78
 stats: STR 13 DEX 11 CON 12 INT 8 WIS 10 CHA 9
 base_hp: 9
@@ -946,7 +1016,8 @@ dialogue:
 [NPC]
 id: gazelle
 name: gazelle
-glyph: g
+char: δ
+tileset_char: δ
 color: 0.85, 0.73, 0.38
 stats: STR 8 DEX 16 CON 10 INT 2 WIS 12 CHA 6
 base_hp: 6
@@ -973,7 +1044,8 @@ skin_table:
 [NPC]
 id: onager
 name: onager
-glyph: q
+char: σ
+tileset_char: σ
 color: 0.72, 0.60, 0.42
 stats: STR 13 DEX 12 CON 13 INT 2 WIS 10 CHA 5
 base_hp: 13
@@ -1000,7 +1072,8 @@ skin_table:
 [NPC]
 id: donkey
 name: donkey
-glyph: d
+char: τ
+tileset_char: τ
 color: 0.66, 0.56, 0.40
 stats: STR 12 DEX 10 CON 12 INT 2 WIS 10 CHA 7
 base_hp: 11
@@ -1022,7 +1095,8 @@ dialogue:
 [NPC]
 id: ibex
 name: ibex
-glyph: i
+char: π
+tileset_char: π
 color: 0.50, 0.40, 0.28
 stats: STR 11 DEX 14 CON 11 INT 2 WIS 12 CHA 5
 base_hp: 10
@@ -1049,7 +1123,8 @@ skin_table:
 [NPC]
 id: hyena
 name: hyena
-glyph: h
+char: Φ
+tileset_char: Φ
 color: 0.62, 0.54, 0.38
 stats: STR 13 DEX 13 CON 13 INT 3 WIS 12 CHA 4
 base_hp: 15
@@ -1083,12 +1158,14 @@ id:
 name:
 category:
 slot:
-glyph:
+char:
+tileset_char:
 color:
 weight_lbs:
 base_value_g:
 material:
-atk_bonus:
+damage:
+enhancement_bonus:
 def_bonus:
 heal:
 ammo_type:
@@ -1101,7 +1178,8 @@ text:
 [NPC]
 id:
 name:
-glyph:
+char:
+tileset_char:
 color:
 stats: STR  DEX  CON  INT  WIS  CHA
 base_hp:

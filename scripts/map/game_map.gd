@@ -29,6 +29,7 @@ var tiles: Array    # Array[Array[int]]  — tiles[y][x]
 var visible: Array  # Array[Array[bool]] — currently in FOV
 var explored: Array # Array[Array[bool]] — ever seen
 var permanent_light: Array # Array[Array[bool]] — permanently lit tiles (Angband-style rooms)
+var glyph_overrides: Array # Array[Array[String]] — optional per-cell display glyphs
 var entities: Array # Array[Entity]
 var _entities_by_cell: Dictionary
 var _blocking_by_cell: Dictionary
@@ -52,6 +53,7 @@ func _init(p_width: int, p_height: int) -> void:
 	visible = []
 	explored = []
 	permanent_light = []
+	glyph_overrides = []
 	entities = []
 	_entities_by_cell = {}
 	_blocking_by_cell = {}
@@ -60,11 +62,13 @@ func _init(p_width: int, p_height: int) -> void:
 		visible.append([])
 		explored.append([])
 		permanent_light.append([])
+		glyph_overrides.append([])
 		for x in range(width):
 			tiles[y].append(TILE_WALL)
 			visible[y].append(false)
 			explored[y].append(false)
 			permanent_light[y].append(false)
+			glyph_overrides[y].append("")
 
 
 func is_in_bounds(x: int, y: int) -> bool:
@@ -164,6 +168,24 @@ func is_transparent(x: int, y: int) -> bool:
 # Returns the first blocking entity at (x, y), or null.
 func get_blocking_entity_at(x: int, y: int):
 	return _blocking_by_cell.get(_cell_key(x, y), null)
+
+
+func set_glyph_override(x: int, y: int, glyph: String) -> void:
+	if not is_in_bounds(x, y):
+		return
+	glyph_overrides[y][x] = glyph
+
+
+func clear_glyph_override(x: int, y: int) -> void:
+	if not is_in_bounds(x, y):
+		return
+	glyph_overrides[y][x] = ""
+
+
+func get_glyph_override(x: int, y: int) -> String:
+	if not is_in_bounds(x, y):
+		return ""
+	return str(glyph_overrides[y][x])
 
 
 func reveal_all() -> void:

@@ -70,21 +70,21 @@ var total_defense_bonus: int:
 				bonus += int(equipped[slot_key].defense_bonus)
 		return bonus
 
-var total_attack_bonus: int:
+var total_melee_enhancement_bonus: int:
 	get:
 		var bonus: int = 0
 		for slot_key: String in equipped:
 			if equipped[slot_key] != null:
 				if slot_key != ItemClass.SLOT_RANGED:
-					bonus += int(equipped[slot_key].attack_bonus)
+					bonus += int(equipped[slot_key].enhancement_bonus)
 		return bonus
 
-var total_ranged_bonus: int:
+var total_ranged_enhancement_bonus: int:
 	get:
 		var ranged_item = equipped.get(ItemClass.SLOT_RANGED)
 		if ranged_item == null:
 			return 0
-		return int((ranged_item as ItemClass).attack_bonus)
+		return int((ranged_item as ItemClass).enhancement_bonus)
 
 var ac: int:
 	get: return 10 + defense + dex_mod + total_defense_bonus
@@ -137,11 +137,17 @@ func attack(target: Actor) -> String:
 	if roll < target.ac:
 		return "%s %s %s but %s. [to hit: %d vs AC %d]" % \
 			[_subj(), v_attack, target._obj(), v_miss, roll, target.ac]
-	var bonus: int = power + total_attack_bonus + str_mod
-	var dmg: int = randi_range(1, 6) + bonus
+	var dice_count: int = 1
+	var dice_sides: int = 6
+	var weapon = equipped.get(ItemClass.SLOT_WEAPON)
+	if weapon != null:
+		dice_count = maxi(1, int((weapon as ItemClass).damage_dice_count))
+		dice_sides = maxi(1, int((weapon as ItemClass).damage_dice_sides))
+	var bonus: int = power + total_melee_enhancement_bonus
+	var dmg: int = _roll_damage(dice_count, dice_sides) + bonus
 	target.take_damage(dmg)
-	return "%s %s %s for %d damage. [to hit: %d vs AC %d, 1d6+%d = %d]" % \
-		[_subj(), v_hit, target._obj(), dmg, roll, target.ac, bonus, dmg]
+	return "%s %s %s for %d damage. [to hit: %d vs AC %d, %dd%d%+d = %d]" % \
+		[_subj(), v_hit, target._obj(), dmg, roll, target.ac, dice_count, dice_sides, bonus, dmg]
 
 
 func ranged_attack(target: Actor, weapon: ItemClass, ammo: ItemClass) -> String:
@@ -153,11 +159,42 @@ func ranged_attack(target: Actor, weapon: ItemClass, ammo: ItemClass) -> String:
 	if roll < target.ac:
 		return "%s %s %s but %s. [ranged: %d vs AC %d]" % \
 			[_subj(), v_attack, target._obj(), v_miss, roll, target.ac]
-	var bonus: int = dex_mod + int(weapon.attack_bonus) + int(ammo.attack_bonus)
-	var dmg: int = randi_range(1, 6) + bonus
+	var dice_count: int = maxi(1, int(weapon.damage_dice_count))
+	var dice_sides: int = maxi(1, int(weapon.damage_dice_sides))
+	var bonus: int = dex_mod + int(weapon.enhancement_bonus) + int(ammo.enhancement_bonus)
+	var dmg: int = _roll_damage(dice_count, dice_sides) + bonus
 	target.take_damage(dmg)
-	return "%s %s %s for %d damage. [ranged: %d vs AC %d, 1d6+%d = %d]" % \
-		[_subj(), v_hit, target._obj(), dmg, roll, target.ac, bonus, dmg]
+	return "%s %s %s for %d damage. [ranged: %d vs AC %d, %dd%d%+d = %d]" % \
+		[_subj(), v_hit, target._obj(), dmg, roll, target.ac, dice_count, dice_sides, bonus, dmg]
+
+
+func melee_damage_label() -> String:
+	var weapon = equipped.get(ItemClass.SLOT_WEAPON)
+	if weapon != null and int((weapon as ItemClass).damage_dice_count) > 0 and int((weapon as ItemClass).damage_dice_sides) > 0:
+		return "%s%+d" % [(weapon as ItemClass).damage_label(), power + total_melee_enhancement_bonus]
+	return "1d6%+d" % power
+
+
+func ranged_damage_label() -> String:
+	var weapon = equipped.get(ItemClass.SLOT_RANGED)
+	if weapon == null:
+		return "none"
+	var ammo = null
+	for item in inventory:
+		if item.category == ItemClass.CATEGORY_AMMO and item.item_type == (weapon as ItemClass).ammo_type and item.stack_count() > 0:
+			ammo = item
+			break
+	var bonus: int = dex_mod + int((weapon as ItemClass).enhancement_bonus)
+	if ammo != null:
+		bonus += int((ammo as ItemClass).enhancement_bonus)
+	return "%s%+d" % [(weapon as ItemClass).damage_label(), bonus]
+
+
+func _roll_damage(dice_count: int, dice_sides: int) -> int:
+	var total: int = 0
+	for _i in range(maxi(1, dice_count)):
+		total += randi_range(1, maxi(1, dice_sides))
+	return total
 
 
 func take_damage(amount: int) -> void:
@@ -166,6 +203,7 @@ func take_damage(amount: int) -> void:
 
 func die() -> String:
 	char = "%"
+	tileset_char = "%"
 	color = Color(0.45, 0.12, 0.05)
 	blocks_movement = false
 	ai = null

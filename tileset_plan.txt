@@ -1,0 +1,206 @@
+BRONZE AGE TRADERS - TILESET RENDERER SKETCH
+============================================
+
+Context
+-------
+Current rendering is still character-driven. The game decides that a tile or
+entity should display a glyph such as "@", ".", "#", "~", or "g", then
+scripts/ascii_map.gd draws that glyph with draw_string().
+
+This is good news for a tileset migration because we do NOT need to rewrite the
+simulation or content data. We only need to replace the final rendering step.
+
+
+Candidate asset
+---------------
+File:
+  assets/tilesets/Alloy_curses_12x12.png
+
+Observed dimensions:
+  192x192 pixels
+
+Likely structure:
+  16 columns x 16 rows
+  12x12 pixels per tile
+  256 glyphs total
+
+This strongly suggests a CP437-style atlas, which is the easiest possible case
+for our game because the codebase already thinks in ASCII/CP437-like glyphs.
+
+
+What changes and what stays the same
+------------------------------------
+Stays the same:
+  - game logic
+  - map generation
+  - item/NPC content definitions
+  - glyph choices in data (for example "@", "#", ".", "~", "^")
+  - Control-based menus and HUD
+
+Changes:
+  - local chunk map rendering in scripts/ascii_map.gd
+  - chunk-view zoom logic
+  - mouse-to-tile math for the chunk view
+  - possibly world-map rendering later
+
+Not recommended for the first pass:
+  - converting menus to tiles
+  - converting title/character creation to tiles
+  - converting the world map at the same time as the local chunk view
+
+
+Core implementation idea
+------------------------
+Replace this style of rendering:
+
+  draw_string(_font, pos, ch, ..., color)
+
+With this style:
+
+  draw_texture_rect_region(_tileset_texture, dest_rect, src_rect, color)
+
+Where:
+  - dest_rect is the on-screen cell rectangle
+  - src_rect is the glyph's rectangle inside the tileset atlas
+  - color remains our current tinting/palette system
+
+That means the renderer still asks:
+  "what glyph should be shown here?"
+
+But instead of using a font to render the glyph, it looks up a rectangle in the
+atlas and draws the corresponding tile image.
+
+
+Recommended first-pass scope
+----------------------------
+Phase 1:
+  Add optional tileset-backed rendering for the LOCAL chunk view only.
+
+Phase 2:
+  Keep the world map and UI text font-based.
+
+Phase 3:
+  If local chunk rendering feels good, decide whether the world map should also
+  use the tileset or remain text-based.
+
+This keeps risk low and gives the biggest visual payoff quickly.
+
+
+Concrete code changes in scripts/ascii_map.gd
+---------------------------------------------
+1. Add tileset state
+   var _tileset: Texture2D
+   var _tileset_enabled: bool = false
+   const TILESET_PATH := "res://assets/tilesets/Alloy_curses_12x12.png"
+   const TILESET_COLS := 16
+   const TILESET_ROWS := 16
+   const TILESET_TILE_W := 12
+   const TILESET_TILE_H := 12
+
+2. Load the texture during _ready()
+   - if the file exists, load it
+   - keep font rendering as a fallback
+
+3. Add a glyph-to-atlas helper
+   func _glyph_region(ch: String) -> Rect2:
+     - convert the character to a CP437 codepoint/index
+     - column = index % 16
+     - row = index / 16
+     - return Rect2(column * 12, row * 12, 12, 12)
+
+4. Add a tileset draw helper
+   func _put_map_tile(x: int, y: int, ch: String, color: Color) -> void:
+     - compute screen rect from x/y and current zoom
+     - call draw_texture_rect_region()
+
+5. Update _put_map()
+   - if tileset mode is enabled, route to _put_map_tile()
+   - otherwise keep draw_string() behavior
+
+6. Update chunk zoom
+   - current zoom changes font size
+   - tileset zoom should instead change destination cell size
+   - source tile size remains 12x12
+
+7. Update chunk cell metrics
+   - _map_cell_w()
+   - _map_cell_h()
+   should become tileset-aware
+
+Right now map width is derived from the current font's tall aspect:
+  _map_cell_w() = round(_map_font_size() * (CELL_W / CELL_H))
+
+For a square 12x12 tileset, local chunk rendering should instead use square
+cell metrics, for example:
+  _map_cell_w() = _map_tile_size()
+  _map_cell_h() = _map_tile_size()
+
+That is what will actually fix the "map feels too tall" issue.
+
+
+Important technical note: CP437 mapping
+---------------------------------------
+The tricky part is not drawing the atlas. The tricky part is mapping a GDScript
+String like "#" or "." or the road shade glyph to the correct atlas index.
+
+Easy cases:
+  "@", "#", ".", "~", "^", letters, digits
+
+Special case to verify:
+  road currently uses U+2591 (light shade)
+
+This MAY exist in the tileset if it is a proper CP437 sheet, but we should
+verify before relying on it. If not, we can:
+  - swap the road glyph to something else for tileset mode, or
+  - add a tiny override map for special glyphs
+
+
+Recommended migration strategy
+------------------------------
+Step 1:
+  Add tileset loading + optional draw path with a hardcoded "enabled" flag.
+
+Step 2:
+  Implement only the small glyph set the game currently needs:
+    @ . # ~ ^ letters digits + - | ? and the road glyph
+
+Step 3:
+  Switch local chunk terrain/entity drawing to the tileset.
+
+Step 4:
+  Tune zoom levels for the square tile cells.
+
+Step 5:
+  Decide whether to:
+    - keep world map as text
+    - or render world map with the same atlas
+
+
+Why this is a good fit for the current codebase
+-----------------------------------------------
+The code already separates:
+  - map drawing
+  - entity drawing
+  - HUD/menu drawing
+
+And most map rendering flows through _put_map().
+
+That makes the renderer swap contained and realistic. We are not replacing the
+whole presentation layer; we are swapping the "how a chunk cell gets painted"
+step.
+
+
+Suggested next implementation task
+----------------------------------
+Implement a hidden prototype mode in scripts/ascii_map.gd:
+
+  const TILESET_ENABLED := true
+
+that only affects local chunk rendering and leaves the rest of the game alone.
+
+Once that works, evaluate:
+  - readability
+  - mouse picking alignment
+  - zoom feel
+  - whether the sheet's glyphs/tinting match the game's palette well
+

@@ -32,7 +32,7 @@ func _ready() -> void:
 
 
 func _load_font() -> Font:
-	var path := "res://assets/fonts/Px437_IBM_VGA_9x16.ttf"
+	var path := GameState.current_font_path()
 	if FileAccess.file_exists(path):
 		var ff := FontFile.new()
 		ff.data = FileAccess.get_file_as_bytes(path)
@@ -106,16 +106,16 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 
 
 func _option_at_pos(mouse_pos: Vector2) -> int:
-	var row: int = int(floor(mouse_pos.y / CELL_H))
+	var row: int = int(floor(mouse_pos.y / _cell_h()))
 	for i in range(OPTIONS.size()):
-		var option_row: int = 22 + i * 2
-		if row == option_row:
+		var option_row: int = _scaled_row(22 + i * 2)
+		if abs(row - option_row) <= 1:
 			return i
 	return -1
 
 
 func _draw() -> void:
-	draw_rect(Rect2(Vector2.ZERO, Vector2(COLS * CELL_W, ROWS * CELL_H)), C_BG)
+	draw_rect(Rect2(Vector2.ZERO, get_viewport_rect().size), C_BG)
 	_draw_border()
 	_draw_title()
 	_draw_options()
@@ -123,21 +123,21 @@ func _draw() -> void:
 
 
 func _draw_border() -> void:
-	for x in range(COLS):
+	for x in range(_view_cols()):
 		_put(x, 0, "-", C_BORDER)
-		_put(x, ROWS - 1, "-", C_BORDER)
-	for y in range(1, ROWS - 1):
+		_put(x, _view_rows() - 1, "-", C_BORDER)
+	for y in range(1, _view_rows() - 1):
 		_put(0, y, "|", C_BORDER)
-		_put(COLS - 1, y, "|", C_BORDER)
+		_put(_view_cols() - 1, y, "|", C_BORDER)
 	_put(0, 0, "+", C_BORDER)
-	_put(COLS - 1, 0, "+", C_BORDER)
-	_put(0, ROWS - 1, "+", C_BORDER)
-	_put(COLS - 1, ROWS - 1, "+", C_BORDER)
+	_put(_view_cols() - 1, 0, "+", C_BORDER)
+	_put(0, _view_rows() - 1, "+", C_BORDER)
+	_put(_view_cols() - 1, _view_rows() - 1, "+", C_BORDER)
 
 
 func _draw_title() -> void:
-	_puts_centered(14, "B R O N Z E  A G E  T R A D E R S", C_TITLE)
-	_puts_centered(16, "survive . trade . ascend", C_TAGLINE)
+	_puts_centered(_scaled_row(14), "B R O N Z E  A G E  T R A D E R S", C_TITLE)
+	_puts_centered(_scaled_row(16), "survive . trade . ascend", C_TAGLINE)
 
 
 func _draw_options() -> void:
@@ -153,22 +153,46 @@ func _draw_options() -> void:
 		else:
 			color = C_NORMAL
 		var prefix := "> " if is_selected or is_hovered else "  "
-		_puts_centered(22 + i * 2, prefix + OPTIONS[i], color)
+		_puts_centered(_scaled_row(22 + i * 2), prefix + OPTIONS[i], color)
 
 
 func _draw_hint() -> void:
-	_puts_centered(ROWS - 2, "arrows/mouse: navigate    enter/click: select", C_BORDER)
+	_puts_centered(_view_rows() - 2, "arrows/mouse: navigate    enter/click: select", C_BORDER)
 
 
 func _puts_centered(row: int, text: String, color: Color) -> void:
-	_puts((COLS - text.length()) >> 1, row, text, color)
+	_puts((_view_cols() - text.length()) >> 1, row, text, color)
+
+
+func _view_cols() -> int:
+	return maxi(40, int(floor(get_viewport_rect().size.x / _cell_w())))
+
+
+func _view_rows() -> int:
+	return maxi(20, int(floor(get_viewport_rect().size.y / _cell_h())))
+
+
+func _cell_w() -> float:
+	if _font == null:
+		return CELL_W
+	return maxf(1.0, ceil(_font.get_string_size("M", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE).x))
+
+
+func _cell_h() -> float:
+	if _font == null:
+		return CELL_H
+	return maxf(1.0, ceil(_font.get_height(FONT_SIZE)))
+
+
+func _scaled_row(base_row: int) -> int:
+	return clampi(int(round(float(base_row) * float(_view_rows()) / float(ROWS))), 1, _view_rows() - 2)
 
 
 func _put(x: int, y: int, ch: String, color: Color) -> void:
-	draw_string(_font, Vector2(x * CELL_W, y * CELL_H + FONT_SIZE),
+	draw_string(_font, Vector2(x * _cell_w(), y * _cell_h() + FONT_SIZE),
 			ch, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE, color)
 
 
 func _puts(x: int, y: int, text: String, color: Color) -> void:
-	draw_string(_font, Vector2(x * CELL_W, y * CELL_H + FONT_SIZE),
+	draw_string(_font, Vector2(x * _cell_w(), y * _cell_h() + FONT_SIZE),
 			text, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE, color)

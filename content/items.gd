@@ -3,7 +3,8 @@
 # updating scripts/entities/item.gd.
 #
 # Schema for each entry  (key = item_type string):
-#   char          String  — single CP437 glyph displayed on the map
+#   char          String  — ASCII fallback glyph displayed in font mode
+#   tileset_char  String  — optional CP437 tileset glyph override
 #   cr/cg/cb      float   — RGB colour (0.0–1.0)
 #   name          String  — display name (lowercase)
 #   category      int     — 0=gold  1=usable  2=trade  3=equipment  4=readable  5=ammo
@@ -12,10 +13,12 @@
 #   material      String  — period-accurate material descriptor
 #   dice_count    int     — usable items: number of HP-recovery dice
 #   dice_sides    int     — usable items: sides per die
-#   attack_bonus  int     — equipment: added to attacker damage roll
+#   damage_dice_count int — weapons: number of damage dice rolled
+#   damage_dice_sides int — weapons: sides per damage die
+#   enhancement_bonus int — weapons/ammo: flat bonus added to damage
 #   defense_bonus int     — equipment: added to wearer's AC
 #   ammo_type     String  — ranged weapons: ammo item_type consumed when fired
-#   ranged_range  int     — ranged weapons: maximum firing distance in tiles
+#   weapon_range  int     — weapons: maximum reach/firing distance in tiles
 #   stack_size    int     — ammo: default quantity when created
 #
 # Only include fields relevant to the item — missing numeric fields default to 0,
@@ -202,34 +205,40 @@ const DATA: Dictionary = {
 	"dagger": {
 		"char": ")", "cr": 0.78, "cg": 0.72, "cb": 0.55,
 		"name": "dagger", "category": 3, "slot": "weapon",
-		"attack_bonus": 1, "base_value": 15, "weight": 3, "material": "copper",
+		"damage_dice_count": 1, "damage_dice_sides": 4, "enhancement_bonus": 0,
+		"weapon_range": 1, "base_value": 15, "weight": 3, "material": "copper",
 	},
 	"short_sword": {
 		"char": ")", "cr": 0.85, "cg": 0.82, "cb": 0.60,
 		"name": "short sword", "category": 3, "slot": "weapon",
-		"attack_bonus": 2, "base_value": 28, "weight": 5, "material": "bronze",
+		"damage_dice_count": 1, "damage_dice_sides": 6, "enhancement_bonus": 0,
+		"weapon_range": 1, "base_value": 28, "weight": 5, "material": "bronze",
 	},
 	"spear": {
 		"char": "/", "cr": 0.72, "cg": 0.65, "cb": 0.42,
 		"name": "spear", "category": 3, "slot": "weapon",
-		"attack_bonus": 3, "base_value": 20, "weight": 6, "material": "wood",
+		"damage_dice_count": 1, "damage_dice_sides": 8, "enhancement_bonus": 0,
+		"weapon_range": 1, "base_value": 20, "weight": 6, "material": "wood",
 	},
 	"club": {
 		"char": ")", "cr": 0.55, "cg": 0.38, "cb": 0.22,
 		"name": "club", "category": 3, "slot": "weapon",
-		"attack_bonus": 1, "base_value": 8, "weight": 5, "material": "wood",
+		"damage_dice_count": 1, "damage_dice_sides": 6, "enhancement_bonus": 0,
+		"weapon_range": 1, "base_value": 8, "weight": 5, "material": "wood",
 	},
 	"sling": {
 		"char": ")", "cr": 0.65, "cg": 0.55, "cb": 0.38,
 		"name": "sling", "category": 3, "slot": "ranged",
-		"attack_bonus": 0, "base_value": 5, "weight": 1, "material": "leather",
-		"ammo_type": "sling_stone", "ranged_range": 8,
+		"damage_dice_count": 1, "damage_dice_sides": 4, "enhancement_bonus": 0,
+		"base_value": 5, "weight": 1, "material": "leather",
+		"ammo_type": "sling_stone", "weapon_range": 8,
 	},
 	"short_bow": {
 		"char": ")", "cr": 0.74, "cg": 0.62, "cb": 0.35,
 		"name": "short bow", "category": 3, "slot": "ranged",
-		"attack_bonus": 1, "base_value": 18, "weight": 2, "material": "wood",
-		"ammo_type": "reed_arrow", "ranged_range": 10,
+		"damage_dice_count": 1, "damage_dice_sides": 6, "enhancement_bonus": 0,
+		"base_value": 18, "weight": 2, "material": "wood",
+		"ammo_type": "reed_arrow", "weapon_range": 10,
 	},
 
 	# —— Ammunition —— 
@@ -237,13 +246,13 @@ const DATA: Dictionary = {
 		"char": "*", "cr": 0.70, "cg": 0.70, "cb": 0.70,
 		"name": "sling stones", "category": 5, "slot": "",
 		"base_value": 2, "weight": 1, "material": "stone",
-		"attack_bonus": 0, "stack_size": 10,
+		"enhancement_bonus": 0, "stack_size": 10,
 	},
 	"reed_arrow": {
 		"char": "/", "cr": 0.78, "cg": 0.70, "cb": 0.48,
 		"name": "reed arrows", "category": 5, "slot": "",
 		"base_value": 4, "weight": 1, "material": "reed",
-		"attack_bonus": 1, "stack_size": 8,
+		"enhancement_bonus": 0, "stack_size": 8,
 	},
 
 	# ── Body armour  (slot: "body") ───────────────────────────────────────────

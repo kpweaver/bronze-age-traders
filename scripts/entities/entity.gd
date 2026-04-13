@@ -4,6 +4,7 @@ extends RefCounted
 var pos: Vector2i
 @warning_ignore("shadowed_global_identifier")
 var char: String
+var tileset_char: String = ""
 var color: Color
 var name: String
 var blocks_movement: bool
@@ -19,6 +20,7 @@ func _init(
 ) -> void:
 	pos = p_pos
 	char = p_char
+	tileset_char = p_char
 	color = p_color
 	name = p_name
 	blocks_movement = p_blocks

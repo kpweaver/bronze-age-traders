@@ -12,6 +12,24 @@
 This document explains how the game is structured and where to find things when
 you want to make changes. Read it top-to-bottom once, then use it as a reference.
 
+Tileset migration note:
+  A first tileset migration sketch now lives in tileset_plan.txt. The dropped
+  Alloy_curses_12x12.png sheet appears to be a 16x16 CP437-style atlas with
+  12x12 square cells, which makes it a strong candidate for replacing the
+  local chunk renderer later without rewriting game logic or Control-based UI.
+  There is now also a first prototype in scripts/ascii_map.gd: local chunk
+  rendering can draw through the tileset pipeline, while menus, HUD, title,
+  character creation, and the world map remain font-based.
+  Content is now future-proofed for an Angband-style visual toggle:
+    char         = ASCII fallback glyph
+    tileset_char = optional CP437 glyph used only when chunk tileset mode is on
+  The settings screen exposes this as "Chunk visuals: ASCII / TILESET".
+  Current default is ASCII mode, and the local chunk view now uses the same
+  foreground/background cell model there too: terrain backgrounds are filled
+  per-cell, terrain glyphs are drawn on top, and visible entities suppress the
+  terrain glyph underneath them so actors, stairs, and items sit inside the
+  tile instead of punching out a black box.
+
 
 ────────────────────────────────────────────────────────────────────────────────
   THE BIG PICTURE
@@ -76,7 +94,10 @@ time more slowly than a normal action.
     slot        — for equipment: "weapon" "body" "feet" "head" "light" or "" for none
     base_value  — price in gold coins (used by merchants as a baseline)
     weight      — carrying weight in pounds
-    attack_bonus / defense_bonus — combat stats for equipment
+    damage_dice_count / damage_dice_sides — weapon damage dice
+    enhancement_bonus — flat damage bonus on weapons and ammunition
+    weapon_range — reach / firing distance in tiles
+    defense_bonus — AC bonus from armour and head/foot gear
     dice_count / dice_sides — for usable items: how much HP they restore
                               (e.g. dice_count=2, dice_sides=4 → heals 2d4 HP)
     light_fov   — for light sources: FOV radius granted when equipped and lit
@@ -277,7 +298,7 @@ time more slowly than a normal action.
 
     Ranged attacks are DEX-based:
       to-hit  = 1d20 + dex_mod
-      damage = 1d6 + dex_mod + ranged weapon attack_bonus + ammo attack_bonus
+      damage = weapon damage dice + dex_mod + ranged weapon enhancement bonus + ammo enhancement bonus
 
     Ammunition is stored as weighted stacks in inventory, trade, and save data.
 
@@ -304,10 +325,10 @@ time more slowly than a normal action.
     not replace the real map — it is only a decision point.
 
     CURRENT STRATEGIC TRAVEL COST:
-      base chunk travel = 200
+      base chunk travel = 100
       mounted chunk travel = base × 0.75
       road destination chunk = additional × 0.90
-      minimum chunk cost = 120
+      minimum chunk cost = 60
 
     In practice that means:
       foot cross-country = 200
@@ -428,6 +449,13 @@ time more slowly than a normal action.
     trade, character, help, dialogue, reader, pause/settings, travel-event
     prompts, and attribute selection) are built with Godot Control nodes on the
     CanvasLayer for more reliable layout, clipping, scrolling, and styling.
+    The migration is now effectively complete for menu-style screens:
+      inventory/trade rows are actual Button controls
+      pause/settings/attribute/disambiguation/dialogue/travel-event actions are
+        also real buttons instead of screen-coordinate hit tests
+      the old custom mouse-click handlers for those overlays are now inert
+    Practical rule: if you're changing how a menu looks or clicks, start in the
+    Control-building/refresh helpers, not the old ASCII cell hit-test helpers.
 
   MOUSE INPUT (first pass):
     ascii_map.gd now also handles InputEventMouseMotion / InputEventMouseButton.
@@ -442,6 +470,7 @@ time more slowly than a normal action.
                   slot in the right panel to unequip it
       trade — click merchant rows to buy and player rows to sell
       ranged targeting — mouse hover updates the aim point; left click fires
+                 mouse wheel zooms the chunk-level view through discrete glyph sizes
     Not yet done: world-map mouse travel, drag selection, or mouse interaction
     for every overlay.
 
@@ -452,6 +481,24 @@ time more slowly than a normal action.
     do_player_turn() loop. That means thirst, fatigue, combat, pickups, stairs,
     and dialogue all keep working exactly as they do for keyboard movement.
     Travel interrupts on visible hostiles or when the player cancels / retargets.
+
+  CHUNK ZOOM:
+    The chunk renderer now supports discrete mouse-wheel zoom. This only affects
+    the local map view, look mode, and ranged targeting. The world map and the
+    Control-based HUD/menus stay at their normal size.
+
+    Internally, ascii_map.gd now derives chunk draw metrics from helper
+    functions instead of assuming the old fixed 120x44 tile view:
+      _map_font_size()
+      _map_cell_w() / _map_cell_h()
+      _map_visible_cols() / _map_visible_rows()
+
+    Camera centering, on-screen checks, mouse picking, cursor highlights, and
+    map/entity glyph drawing all need to use those helpers. If you add new
+    chunk-view overlays later, do not hardcode CELL_W/CELL_H unless you want
+    them to ignore zoom.
+    Current first-pass zoom ladder: 16, 18, 20, 24, 28, 32 px glyphs.
+    Default zoom is 20 px.
 
     TRAVEL_EVENT: Popup shown over the world map when chunk-scale travel
     reveals something important. The first version handles merchants
@@ -540,11 +587,15 @@ time more slowly than a normal action.
                             (minimum spanning tree) connecting all villages.
     generate_world_biomes() — assigns a biome to every chunk in the world grid.
     generate_villages()   — places villages at random chunk positions.
+    Village buildings now come from larger hard-coded templates by role
+    (home, commercial, admin). Their gameplay tiles are still standard wall/
+    floor cells, but procgen also stamps CP437 box-drawing glyph overrides
+    so village walls render with corners and vertical/horizontal edges.
 
   WORLD SCALE:
     Each overworld chunk is 200×200 tiles. Each tile = 0.1 miles (528 feet).
-    So one chunk = 20×20 miles — roughly the territory of one city-state.
-    The world is 60×36 chunks = 1200×720 miles total.
+    So one chunk = 10×10 miles — a tighter local territory scale.
+    The world is 60×36 chunks = 600×360 miles total.
 
 
 ── scripts/entities/ ─────────────────────────────────────────────────────────
@@ -568,6 +619,12 @@ time more slowly than a normal action.
                 Carrying capacity is weight-based now. Actor.max_carry_weight
                 starts at 60 lbs. and changes by +10 lbs. per point of STR modifier.
                 Actor.total_carry_weight includes both inventory and equipped gear.
+                Weapons now use an explicit profile instead of the old attack-bonus
+                shortcut: damage dice (for example 1d6), enhancement bonus, and
+                range. Melee attacks use the equipped weapon's dice if present,
+                otherwise the actor falls back to 1d6 unarmed damage. STR no longer
+                gets counted twice in melee damage; actor.power already contains the
+                archetype's STR contribution, and enhancement is added on top.
 
   npc.gd      — Extends Actor. Village inhabitants built from content/npcs.gd
                 data. Adds: dialogue cycling, trade stock, merchant logic.
@@ -758,7 +815,7 @@ Say you want to understand how a merchant ends up in the world with items to sel
   GLOSSARY
 ────────────────────────────────────────────────────────────────────────────────
 
-  Chunk       A single overworld map region (200×200 tiles, 20×20 miles).
+  Chunk       A single overworld map region (100×100 tiles, 10×10 miles).
   FOV         Field of View — which tiles the player can currently see.
   Explored    Tiles the player has seen before (shown dimly, not updated).
   Visible     Tiles the player can see right now (bright, current state).

@@ -58,6 +58,7 @@ static func save_game(game_map, player, floor: int, floors: Dictionary, chunk: V
 			"map_type": game_map.map_type,
 			"tiles":    game_map.tiles,
 			"explored": game_map.explored,
+			"glyph_overrides": game_map.glyph_overrides,
 			"permanent_light": game_map.permanent_light,
 		},
 		"entities": _serialize_entities(game_map.entities, player),
@@ -79,6 +80,7 @@ static func _serialize_stored_floors(floors: Dictionary) -> Dictionary:
 			"map_type": m.map_type,
 			"tiles":    m.tiles,
 			"explored": m.explored,
+			"glyph_overrides": m.glyph_overrides,
 			"permanent_light": m.permanent_light,
 			"entities": _serialize_entities(m.entities, null),
 		}
@@ -96,6 +98,7 @@ static func _serialize_stored_chunks(chunks: Dictionary) -> Dictionary:
 			"map_type": m.map_type,
 			"tiles":    m.tiles,
 			"explored": m.explored,
+			"glyph_overrides": m.glyph_overrides,
 			"permanent_light": m.permanent_light,
 			"entities": _serialize_entities(m.entities, null),
 		}
@@ -128,6 +131,7 @@ static func _serialize_entities(entities: Array, player) -> Array:
 		var entry := {
 			"x": e.pos.x, "y": e.pos.y,
 			"char": e.char,
+			"tileset_char": e.tileset_char,
 			"cr": e.color.r, "cg": e.color.g, "cb": e.color.b,
 			"name": e.name,
 			"blocks_movement": e.blocks_movement,
@@ -210,11 +214,14 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 
 	var tiles_raw: Array = md["tiles"]
 	var explored_raw: Array = md["explored"]
+	var glyph_overrides_raw: Array = md.get("glyph_overrides", [])
 	var permanent_light_raw: Array = md.get("permanent_light", [])
 	for y in range(game_map.height):
 		for x in range(game_map.width):
 			game_map.tiles[y][x]    = int(tiles_raw[y][x])
 			game_map.explored[y][x] = bool(explored_raw[y][x])
+			if not glyph_overrides_raw.is_empty():
+				game_map.glyph_overrides[y][x] = str(glyph_overrides_raw[y][x])
 			if not permanent_light_raw.is_empty():
 				game_map.permanent_light[y][x] = bool(permanent_light_raw[y][x])
 
@@ -277,6 +284,7 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 			"actor":
 				var actor = ActorClass.new(pos, ed["char"], color, ed["name"],
 						int(ed["max_hp"]), int(ed["defense"]), int(ed["power"]))
+				actor.tileset_char    = str(ed.get("tileset_char", actor.char))
 				actor.hp              = int(ed["hp"])
 				actor.is_mountable    = bool(ed.get("is_mountable", false))
 				actor.is_mounted      = bool(ed.get("is_mounted", false))
@@ -289,6 +297,7 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 				game_map.add_entity(item)
 			"entity":
 				var ent = load("res://scripts/entities/entity.gd").new(pos, ed["char"], color, ed["name"], bool(ed["blocks_movement"]))
+				ent.tileset_char = str(ed.get("tileset_char", ent.char))
 				ent.light_radius = int(ed.get("light_radius", 0))
 				game_map.add_entity(ent)
 
@@ -302,11 +311,14 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 		stored_map.map_type = int(fd.get("map_type", GameMapClass.MAP_DUNGEON))
 		var st_raw: Array = fd["tiles"]
 		var se_raw: Array = fd["explored"]
+		var sgo_raw: Array = fd.get("glyph_overrides", [])
 		var spl_raw: Array = fd.get("permanent_light", [])
 		for y in range(stored_map.height):
 			for x in range(stored_map.width):
 				stored_map.tiles[y][x]    = int(st_raw[y][x])
 				stored_map.explored[y][x] = bool(se_raw[y][x])
+				if not sgo_raw.is_empty():
+					stored_map.glyph_overrides[y][x] = str(sgo_raw[y][x])
 				if not spl_raw.is_empty():
 					stored_map.permanent_light[y][x] = bool(spl_raw[y][x])
 		for ed: Dictionary in fd["entities"]:
@@ -335,6 +347,7 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 				"actor":
 					var actor = ActorClass.new(pos, ed["char"], color, ed["name"],
 							int(ed["max_hp"]), int(ed["defense"]), int(ed["power"]))
+					actor.tileset_char    = str(ed.get("tileset_char", actor.char))
 					actor.hp              = int(ed["hp"])
 					actor.is_mountable    = bool(ed.get("is_mountable", false))
 					actor.is_mounted      = bool(ed.get("is_mounted", false))
@@ -348,6 +361,7 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 				"entity":
 					var ent = load("res://scripts/entities/entity.gd").new(
 							pos, ed["char"], color, ed["name"], bool(ed["blocks_movement"]))
+					ent.tileset_char = str(ed.get("tileset_char", ent.char))
 					ent.light_radius = int(ed.get("light_radius", 0))
 					stored_map.add_entity(ent)
 		floors[f_int] = stored_map
@@ -364,11 +378,14 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 		cmap.map_type = int(cd.get("map_type", GameMapClass.MAP_OVERWORLD))
 		var ct_raw: Array = cd["tiles"]
 		var ce_raw: Array = cd["explored"]
+		var cgo_raw: Array = cd.get("glyph_overrides", [])
 		var cpl_raw: Array = cd.get("permanent_light", [])
 		for y in range(cmap.height):
 			for x in range(cmap.width):
 				cmap.tiles[y][x]    = int(ct_raw[y][x])
 				cmap.explored[y][x] = bool(ce_raw[y][x])
+				if not cgo_raw.is_empty():
+					cmap.glyph_overrides[y][x] = str(cgo_raw[y][x])
 				if not cpl_raw.is_empty():
 					cmap.permanent_light[y][x] = bool(cpl_raw[y][x])
 		for ed: Dictionary in cd.get("entities", []):
@@ -397,6 +414,7 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 				"actor":
 					var actor = ActorClass.new(pos, ed["char"], color, ed["name"],
 							int(ed["max_hp"]), int(ed["defense"]), int(ed["power"]))
+					actor.tileset_char    = str(ed.get("tileset_char", actor.char))
 					actor.hp              = int(ed["hp"])
 					actor.is_mountable    = bool(ed.get("is_mountable", false))
 					actor.is_mounted      = bool(ed.get("is_mounted", false))
@@ -407,6 +425,7 @@ static func restore(data: Dictionary, fov_radius: int) -> Array:
 				"entity":
 					var ent = load("res://scripts/entities/entity.gd").new(
 							pos, ed["char"], color, ed["name"], bool(ed["blocks_movement"]))
+					ent.tileset_char = str(ed.get("tileset_char", ent.char))
 					ent.light_radius = int(ed.get("light_radius", 0))
 					cmap.add_entity(ent)
 				"item":

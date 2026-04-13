@@ -7,6 +7,10 @@ var load_save: bool = false
 var auto_pickup: bool = false
 var god_mode: bool    = false
 var debug_tools_enabled: bool = false
+var use_tileset: bool = false
+const FONT_PROFILE_BIOS := "bios"
+const FONT_PROFILE_VGA_9X14 := "vga_9x14"
+var font_profile: String = FONT_PROFILE_BIOS
 
 # Fixed seed for the entire world — set once on new game, saved to disk.
 # All overworld chunk noise uses this seed so terrain is seamless across borders.
@@ -27,3 +31,31 @@ var world_biomes: Array = []
 var villages: Array = []
 # Road chunks — "cx,cy" string keys. Regenerated from world_seed on load.
 var road_chunks: Dictionary = {}
+
+
+func current_font_path() -> String:
+	match font_profile:
+		FONT_PROFILE_VGA_9X14:
+			return "res://assets/fonts/Px437_IBM_VGA_9x14.ttf"
+		_:
+			return "res://assets/fonts/Px437_IBM_BIOS.ttf"
+
+
+func current_font_label() -> String:
+	match font_profile:
+		FONT_PROFILE_VGA_9X14:
+			return "IBM VGA 9x14"
+		_:
+			return "IBM BIOS"
+
+
+func current_map_zoom_sizes() -> Array:
+	match font_profile:
+		FONT_PROFILE_VGA_9X14:
+			return [14, 16, 18, 20, 24, 28]
+		_:
+			return [16, 18, 20, 24, 28, 32]
+
+
+func toggle_font_profile() -> void:
+	font_profile = FONT_PROFILE_VGA_9X14 if font_profile == FONT_PROFILE_BIOS else FONT_PROFILE_BIOS

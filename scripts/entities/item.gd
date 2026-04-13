@@ -109,10 +109,12 @@ var weight: int        = 0   # carrying weight in pounds
 var dice_count: int    = 0   # usable items — dice rolled on use
 var dice_sides: int    = 0
 
-var attack_bonus: int  = 0   # equipment — added to attacker's damage roll
+var damage_dice_count: int = 0  # weapons — number of damage dice rolled
+var damage_dice_sides: int = 0  # weapons — sides per damage die
+var enhancement_bonus: int = 0  # weapons/ammo — flat bonus added to damage
 var defense_bonus: int = 0   # equipment — added to wearer's AC
 var ammo_type: String  = ""  # ranged weapons — which ammo item_type they consume
-var ranged_range: int  = 0   # ranged weapons — max range in tiles
+var weapon_range: int  = 1   # weapons — max range in tiles (1 for most melee)
 
 var light_fov: int     = 0   # light sources — FOV radius when equipped and lit
 var burn_turns: int    = 0   # light sources — max lifetime in turns (0 = infinite)
@@ -133,10 +135,12 @@ func _init(p_pos: Vector2i, p_type: String, p_value: int) -> void:
 	weight       = int(d.get("weight", 0))
 	dice_count   = int(d.get("dice_count", 0))
 	dice_sides   = int(d.get("dice_sides", 0))
-	attack_bonus  = int(d.get("attack_bonus",  0))
+	damage_dice_count = int(d.get("damage_dice_count", 0))
+	damage_dice_sides = int(d.get("damage_dice_sides", 0))
+	enhancement_bonus = int(d.get("enhancement_bonus", 0))
 	defense_bonus = int(d.get("defense_bonus", 0))
 	ammo_type      = str(d.get("ammo_type", ""))
-	ranged_range   = int(d.get("ranged_range", 0))
+	weapon_range   = int(d.get("weapon_range", 1))
 	light_fov     = int(d.get("light_fov",    0))
 	burn_turns    = int(d.get("burn_turns",   0))
 	text          = str(d.get("text", ""))
@@ -151,6 +155,7 @@ func _init(p_pos: Vector2i, p_type: String, p_value: int) -> void:
 		value = p_value if p_value > 0 else burn_turns
 
 	super._init(p_pos, ch, col, nm, false)
+	tileset_char = str(d.get("tileset_char", ch))
 
 
 # Roll dice_count d dice_sides — used by usable items.
@@ -164,6 +169,16 @@ func _roll() -> int:
 # Human-readable dice label e.g. "1d6".
 func dice_label() -> String:
 	return "%dd%d" % [dice_count, dice_sides]
+
+
+func damage_label() -> String:
+	if damage_dice_count <= 0 or damage_dice_sides <= 0:
+		return ""
+	return "%dd%d" % [damage_dice_count, damage_dice_sides]
+
+
+func enhancement_label() -> String:
+	return "%+d" % enhancement_bonus
 
 
 func weight_label() -> String:

@@ -18,6 +18,16 @@ const FONT_SIZE: int    = 14   # map tile glyphs
 const UI_FONT_SIZE: int = 16   # overlay / status bar text
 const CELL_W: float = 9.0
 const CELL_H: float = 14.0
+const TILESET_ENABLED := true
+const TILESET_PATH := "res://assets/tilesets/CGA8x8thick_mask.png"
+const TILESET_COLS := 16
+const TILESET_ROWS := 16
+const TILESET_TILE_W := 8
+const TILESET_TILE_H := 8
+const TILESET_BG_OVERDRAW := 1.0
+const ASCII_BG_OVERDRAW_X := 0.5
+const ASCII_BG_OVERDRAW_Y := 0.5
+const HUD_SIDEBAR_W := 320.0
 
 const MAP_ROWS: int      = 44
 const DIVIDER_ROW: int   = 44
@@ -54,6 +64,33 @@ const C_GRASS_DIM  := Color(0.18, 0.38, 0.10)
 const C_ROAD_LIT   := Color(0.78, 0.62, 0.38)
 const C_ROAD_DIM   := Color(0.42, 0.32, 0.18)
 const C_VILLAGE_WM := Color(0.95, 0.90, 0.70)
+
+const C_WALL_DIM_TILESET  := Color(0.08, 0.05, 0.03)
+const C_FLOOR_DIM_TILESET := Color(0.03, 0.025, 0.02)
+const C_SAND_DIM_TILESET  := Color(0.08, 0.06, 0.03)
+const C_DUNE_DIM_TILESET  := Color(0.10, 0.05, 0.02)
+const C_ROCK_DIM_TILESET  := Color(0.08, 0.035, 0.02)
+const C_WATER_DIM_TILESET := Color(0.03, 0.08, 0.14)
+const C_GRASS_DIM_TILESET := Color(0.04, 0.08, 0.03)
+const C_ROAD_DIM_TILESET  := Color(0.08, 0.06, 0.03)
+const C_UNEXPLORED_TILESET := Color(0.0, 0.0, 0.0)
+
+const C_WALL_BG_TILESET_LIT  := Color(0.46, 0.24, 0.14)
+const C_WALL_BG_TILESET_DIM  := Color(0.18, 0.10, 0.06)
+const C_FLOOR_BG_TILESET_LIT := Color(0.42, 0.32, 0.18)
+const C_FLOOR_BG_TILESET_DIM := Color(0.14, 0.10, 0.06)
+const C_SAND_BG_TILESET_LIT  := Color(0.66, 0.54, 0.28)
+const C_SAND_BG_TILESET_DIM  := Color(0.22, 0.18, 0.08)
+const C_DUNE_BG_TILESET_LIT  := Color(0.72, 0.46, 0.16)
+const C_DUNE_BG_TILESET_DIM  := Color(0.24, 0.14, 0.05)
+const C_ROCK_BG_TILESET_LIT  := Color(0.48, 0.22, 0.12)
+const C_ROCK_BG_TILESET_DIM  := Color(0.16, 0.08, 0.05)
+const C_WATER_BG_TILESET_LIT := Color(0.16, 0.34, 0.54)
+const C_WATER_BG_TILESET_DIM := Color(0.06, 0.12, 0.20)
+const C_GRASS_BG_TILESET_LIT := Color(0.22, 0.46, 0.14)
+const C_GRASS_BG_TILESET_DIM := Color(0.08, 0.16, 0.05)
+const C_ROAD_BG_TILESET_LIT  := Color(0.50, 0.40, 0.24)
+const C_ROAD_BG_TILESET_DIM  := Color(0.18, 0.14, 0.08)
 
 # ---------------------------------------------------------------------------
 # Escape menu
@@ -111,6 +148,7 @@ var _target_candidates: Array = []
 var _target_candidate_index: int = 0
 var _hover_pos: Vector2i = Vector2i.ZERO
 var _hover_active: bool = false
+var _hover_path: Array = []
 var _auto_move_mode: AutoMoveMode = AutoMoveMode.NONE
 var _auto_move_target: Vector2i = Vector2i.ZERO
 var _auto_move_accum: float = 0.0
@@ -118,6 +156,7 @@ var _auto_move_steps_taken: int = 0
 const AUTO_MOVE_STEP_SECONDS: float = 0.05
 const MOUNT_GLYPH_CYCLE_MS: int = 700
 var _mount_cycle_bucket: int = -1
+var _map_zoom_idx: int = 2
 
 # ---------------------------------------------------------------------------
 # Day/night tint — applied to map tiles and entities only (UI stays lit).
@@ -130,6 +169,7 @@ var _day_tint: Color = Color.WHITE
 # ---------------------------------------------------------------------------
 var _world  # GameWorld — untyped to avoid class_name scope issues
 var _font: Font
+var _tileset: Texture2D
 var _ui_theme: Theme
 var _ui_layer
 var _inventory_ui_root: Control
@@ -143,18 +183,25 @@ var _inventory_right_hint_label
 var _menu_ui_root: Control
 var _menu_shell: PanelContainer
 var _menu_title_label
+var _menu_spacer_top
 var _menu_body_text
+var _menu_button_box
+var _menu_spacer_bottom
 var _menu_footer_label
 var _trade_ui_root: Control
 var _trade_shell: PanelContainer
 var _trade_title_label
-var _trade_buy_text
-var _trade_sell_text
+var _trade_buy_list
+var _trade_sell_list
 var _trade_footer_label
 var _hud_ui_root: Control
 var _hud_bg: ColorRect
-var _hud_status_top: Label
-var _hud_status_bottom: Label
+var _hud_sidebar_bg: ColorRect
+var _hud_log_divider: ColorRect
+var _hud_status_top
+var _hud_status_bottom
+var _hud_status_third
+var _hud_sky_label
 var _hud_message_labels: Array = []
 
 # Convenience aliases — read-only proxies into _world.
@@ -181,6 +228,7 @@ var _game_over:
 
 func _ready() -> void:
 	_font  = _make_font()
+	_tileset = _load_tileset()
 	_ui_theme = _make_ui_theme()
 	_world = GameWorldClass.new()
 	add_child(_world)
@@ -189,6 +237,7 @@ func _ready() -> void:
 	_build_inventory_ui()
 	_build_menu_ui()
 	_build_trade_ui()
+	_layout_hud_ui()
 	set_process(true)
 	_world.turn_ended.connect(_on_turn_ended)
 	_world.map_changed.connect(_on_map_changed)
@@ -231,7 +280,7 @@ func _process(delta: float) -> void:
 
 
 func _make_font() -> Font:
-	var path := "res://assets/fonts/Px437_IBM_VGA_9x14.ttf"
+	var path := GameState.current_font_path()
 	if FileAccess.file_exists(path):
 		var ff := FontFile.new()
 		ff.data = FileAccess.get_file_as_bytes(path)
@@ -239,6 +288,51 @@ func _make_font() -> Font:
 	var sf := SystemFont.new()
 	sf.font_names = PackedStringArray(["Consolas", "Cascadia Mono", "Lucida Console", "Courier New"])
 	return sf
+
+
+func _load_tileset() -> Texture2D:
+	if not TILESET_ENABLED or not FileAccess.file_exists(TILESET_PATH):
+		return null
+	var imported_texture := load(TILESET_PATH)
+	if imported_texture is Texture2D:
+		return imported_texture as Texture2D
+	var image := Image.load_from_file(TILESET_PATH)
+	if image == null or image.is_empty():
+		return null
+	if not TILESET_PATH.ends_with("_mask.png"):
+		_prepare_tileset_mask(image)
+	return ImageTexture.create_from_image(image)
+
+
+func _prepare_tileset_mask(image: Image) -> void:
+	var w: int = image.get_width()
+	var h: int = image.get_height()
+	for y in range(h):
+		for x in range(w):
+			var px: Color = image.get_pixel(x, y)
+			if _is_tileset_bg(px):
+				image.set_pixel(x, y, Color(0, 0, 0, 0))
+			else:
+				var alpha := _tileset_mask_alpha(px)
+				image.set_pixel(x, y, Color(1, 1, 1, alpha))
+
+
+func _is_tileset_bg(px: Color) -> bool:
+	if px.a <= 0.01:
+		return true
+	if px.r >= 0.75 and px.g <= 0.25 and px.b >= 0.75:
+		return true
+	var brightness: float = (px.r + px.g + px.b) / 3.0
+	return brightness <= 0.55
+
+
+func _tileset_mask_alpha(px: Color) -> float:
+	var brightness: float = (px.r + px.g + px.b) / 3.0
+	return clampf((brightness - 0.55) / 0.45, 0.0, 1.0)
+
+
+func _tileset_active() -> bool:
+	return _tileset != null and GameState.use_tileset
 
 
 func _make_ui_theme() -> Theme:
@@ -314,6 +408,16 @@ func _set_rich_text_with_highlight(label: RichTextLabel, lines: Array[String], h
 			label.add_text("\n")
 
 
+func _set_hud_segments(label: RichTextLabel, segments: Array) -> void:
+	label.clear()
+	for segment in segments:
+		var text: String = str(segment.get("text", ""))
+		var color: Color = segment.get("color", C_STATUS)
+		label.push_color(color)
+		label.add_text(text)
+		label.pop()
+
+
 func _make_panel_style(border_color: Color, content_margin: int, border_width: int = 2) -> StyleBoxFlat:
 	var panel_style := StyleBoxFlat.new()
 	panel_style.bg_color = Color(0.05, 0.04, 0.03, 0.97)
@@ -359,6 +463,13 @@ func _build_hud_ui() -> void:
 	_hud_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_hud_ui_root.add_child(_hud_bg)
 
+	_hud_sidebar_bg = ColorRect.new()
+	_hud_sidebar_bg.color = C_BG
+	_hud_sidebar_bg.position = Vector2(COLS * CELL_W - HUD_SIDEBAR_W, 0)
+	_hud_sidebar_bg.size = Vector2(HUD_SIDEBAR_W, DIVIDER_ROW * CELL_H)
+	_hud_sidebar_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hud_ui_root.add_child(_hud_sidebar_bg)
+
 	var divider := ColorRect.new()
 	divider.color = C_DIVIDER
 	divider.position = Vector2(0, DIVIDER_ROW * CELL_H)
@@ -366,23 +477,59 @@ func _build_hud_ui() -> void:
 	divider.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_hud_ui_root.add_child(divider)
 
-	_hud_status_top = Label.new()
+	var side_divider := ColorRect.new()
+	side_divider.name = "HudSideDivider"
+	side_divider.color = C_DIVIDER
+	side_divider.position = Vector2(COLS * CELL_W - HUD_SIDEBAR_W, 0)
+	side_divider.size = Vector2(1, DIVIDER_ROW * CELL_H)
+	side_divider.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hud_ui_root.add_child(side_divider)
+
+	_hud_status_top = RichTextLabel.new()
+	_hud_status_top.bbcode_enabled = false
+	_hud_status_top.fit_content = false
+	_hud_status_top.scroll_active = false
+	_hud_status_top.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_hud_status_top.position = Vector2(0, STATUS_ROW * CELL_H - 2)
-	_hud_status_top.custom_minimum_size = Vector2(COLS * CELL_W, CELL_H)
+	_hud_status_top.size = Vector2(COLS * CELL_W, _ui_line_height() + 6.0)
 	_hud_status_top.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_hud_ui_root.add_child(_hud_status_top)
 
-	_hud_status_bottom = Label.new()
+	_hud_status_bottom = RichTextLabel.new()
+	_hud_status_bottom.bbcode_enabled = false
+	_hud_status_bottom.fit_content = false
+	_hud_status_bottom.scroll_active = false
+	_hud_status_bottom.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_hud_status_bottom.position = Vector2(0, STATUS_ROW_2 * CELL_H - 2)
-	_hud_status_bottom.custom_minimum_size = Vector2(COLS * CELL_W, CELL_H)
+	_hud_status_bottom.size = Vector2(COLS * CELL_W, _ui_line_height() + 6.0)
 	_hud_status_bottom.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_hud_status_bottom.add_theme_color_override("font_color", C_STATUS)
 	_hud_ui_root.add_child(_hud_status_bottom)
+
+	_hud_status_third = RichTextLabel.new()
+	_hud_status_third.bbcode_enabled = false
+	_hud_status_third.fit_content = false
+	_hud_status_third.scroll_active = false
+	_hud_status_third.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_hud_status_third.position = Vector2(0, (STATUS_ROW_2 + 1) * CELL_H - 2)
+	_hud_status_third.size = Vector2(COLS * CELL_W, _ui_line_height() + 6.0)
+	_hud_status_third.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hud_ui_root.add_child(_hud_status_third)
+
+	_hud_sky_label = Label.new()
+	_hud_sky_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hud_ui_root.add_child(_hud_sky_label)
+
+	_hud_log_divider = ColorRect.new()
+	_hud_log_divider.color = C_DIVIDER
+	_hud_log_divider.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hud_ui_root.add_child(_hud_log_divider)
 
 	for i in range(MSG_LINES):
 		var msg := Label.new()
-		msg.position = Vector2(0, (MSG_START_ROW + i) * CELL_H - 6)
-		msg.custom_minimum_size = Vector2(COLS * CELL_W, CELL_H + 8)
+		msg.position = Vector2(0, (MSG_START_ROW + i) * CELL_H - 4)
+		msg.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		msg.clip_text = false
+		msg.custom_minimum_size = Vector2(COLS * CELL_W, _ui_line_height() + 12.0)
 		msg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_hud_ui_root.add_child(msg)
 		_hud_message_labels.append(msg)
@@ -435,7 +582,7 @@ func _build_inventory_ui() -> void:
 	_inventory_shell = PanelContainer.new()
 	_inventory_shell.position = Vector2(52, 34)
 	_inventory_shell.size = Vector2(976, 412)
-	_inventory_shell.mouse_filter = Control.MOUSE_FILTER_STOP
+	_inventory_shell.mouse_filter = Control.MOUSE_FILTER_PASS
 	_inventory_ui_root.add_child(_inventory_shell)
 
 	var outer := MarginContainer.new()
@@ -551,6 +698,32 @@ func _clear_control_children(node: Node) -> void:
 	for child in node.get_children():
 		node.remove_child(child)
 		child.free()
+
+
+func _make_menu_button(text: String, callback: Callable, selected: bool = false, centered: bool = false) -> Button:
+	var button := Button.new()
+	button.text = text
+	button.flat = true
+	button.alignment = HORIZONTAL_ALIGNMENT_CENTER if centered else HORIZONTAL_ALIGNMENT_LEFT
+	button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER if centered else Control.SIZE_EXPAND_FILL
+	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	button.add_theme_color_override("font_color", C_STATUS if selected else C_MSG_RECENT)
+	button.pressed.connect(callback)
+	return button
+
+
+func _add_trade_entry_row(parent, text: String, callback: Callable, selected: bool = false) -> void:
+	var button := _make_menu_button(text, callback, selected)
+	parent.add_child(button)
+
+
+func _add_menu_label(parent, text: String, color: Color = C_MSG_RECENT, centered: bool = false) -> void:
+	var label := Label.new()
+	label.text = text
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER if centered else HORIZONTAL_ALIGNMENT_LEFT
+	label.add_theme_color_override("font_color", color)
+	parent.add_child(label)
 
 
 func _refresh_inventory_ui() -> void:
@@ -714,7 +887,7 @@ func _refresh_inventory_ui() -> void:
 func _build_menu_ui() -> void:
 	_menu_ui_root = Control.new()
 	_menu_ui_root.visible = false
-	_menu_ui_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_menu_ui_root.mouse_filter = Control.MOUSE_FILTER_STOP
 	_menu_ui_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_menu_ui_root.theme = _ui_theme
 	_ui_layer.add_child(_menu_ui_root)
@@ -728,7 +901,7 @@ func _build_menu_ui() -> void:
 	_menu_shell = PanelContainer.new()
 	_menu_shell.position = Vector2(184, 78)
 	_menu_shell.size = Vector2(712, 368)
-	_menu_shell.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_menu_shell.mouse_filter = Control.MOUSE_FILTER_PASS
 	_menu_ui_root.add_child(_menu_shell)
 
 	var margin := MarginContainer.new()
@@ -748,6 +921,11 @@ func _build_menu_ui() -> void:
 	_menu_title_label.add_theme_color_override("font_color", C_STATUS)
 	v.add_child(_menu_title_label)
 
+	_menu_spacer_top = Control.new()
+	_menu_spacer_top.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_menu_spacer_top.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	v.add_child(_menu_spacer_top)
+
 	_menu_body_text = RichTextLabel.new()
 	_menu_body_text.bbcode_enabled = false
 	_menu_body_text.fit_content = false
@@ -755,6 +933,16 @@ func _build_menu_ui() -> void:
 	_menu_body_text.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_menu_body_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.add_child(_menu_body_text)
+
+	_menu_button_box = VBoxContainer.new()
+	_menu_button_box.add_theme_constant_override("separation", 6)
+	_menu_button_box.visible = false
+	v.add_child(_menu_button_box)
+
+	_menu_spacer_bottom = Control.new()
+	_menu_spacer_bottom.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_menu_spacer_bottom.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	v.add_child(_menu_spacer_bottom)
 
 	_menu_footer_label = Label.new()
 	_menu_footer_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -765,7 +953,7 @@ func _build_menu_ui() -> void:
 func _build_trade_ui() -> void:
 	_trade_ui_root = Control.new()
 	_trade_ui_root.visible = false
-	_trade_ui_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_trade_ui_root.mouse_filter = Control.MOUSE_FILTER_STOP
 	_trade_ui_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_trade_ui_root.theme = _ui_theme
 	_ui_layer.add_child(_trade_ui_root)
@@ -779,7 +967,7 @@ func _build_trade_ui() -> void:
 	_trade_shell = PanelContainer.new()
 	_trade_shell.position = Vector2(52, 34)
 	_trade_shell.size = Vector2(976, 412)
-	_trade_shell.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_trade_shell.mouse_filter = Control.MOUSE_FILTER_PASS
 	_trade_ui_root.add_child(_trade_shell)
 
 	var margin := MarginContainer.new()
@@ -804,23 +992,27 @@ func _build_trade_ui() -> void:
 	split.add_theme_constant_override("separation", 18)
 	v.add_child(split)
 
-	_trade_buy_text = RichTextLabel.new()
-	_trade_buy_text.bbcode_enabled = false
-	_trade_buy_text.fit_content = false
-	_trade_buy_text.scroll_active = true
-	_trade_buy_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_trade_buy_text.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_trade_buy_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	split.add_child(_trade_buy_text)
+	var buy_scroll := ScrollContainer.new()
+	buy_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	buy_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	buy_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	split.add_child(buy_scroll)
 
-	_trade_sell_text = RichTextLabel.new()
-	_trade_sell_text.bbcode_enabled = false
-	_trade_sell_text.fit_content = false
-	_trade_sell_text.scroll_active = true
-	_trade_sell_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_trade_sell_text.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_trade_sell_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	split.add_child(_trade_sell_text)
+	_trade_buy_list = VBoxContainer.new()
+	_trade_buy_list.add_theme_constant_override("separation", 4)
+	_trade_buy_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	buy_scroll.add_child(_trade_buy_list)
+
+	var sell_scroll := ScrollContainer.new()
+	sell_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sell_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	sell_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	split.add_child(sell_scroll)
+
+	_trade_sell_list = VBoxContainer.new()
+	_trade_sell_list.add_theme_constant_override("separation", 4)
+	_trade_sell_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sell_scroll.add_child(_trade_sell_list)
 
 	_trade_footer_label = Label.new()
 	_trade_footer_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -905,24 +1097,212 @@ func _centered_shell_pos(shell_size: Vector2) -> Vector2:
 	)
 
 
+func _map_font_size() -> int:
+	var zoom_sizes: Array = GameState.current_map_zoom_sizes()
+	_map_zoom_idx = clampi(_map_zoom_idx, 0, zoom_sizes.size() - 1)
+	return int(zoom_sizes[_map_zoom_idx])
+
+
+func _divider_y_px() -> float:
+	var ui_line_h: float = _ui_line_height()
+	return get_viewport_rect().size.y - (ui_line_h * 5.0 + 46.0)
+
+
+func _hud_sidebar_w_px() -> float:
+	return minf(HUD_SIDEBAR_W, floor(get_viewport_rect().size.x * 0.32))
+
+
+func _chunk_view_px_w() -> float:
+	return get_viewport_rect().size.x - _hud_sidebar_w_px()
+
+
+func _chunk_view_px_h() -> float:
+	return _divider_y_px()
+
+
+func _map_cell_w() -> float:
+	if _tileset_active():
+		return float(_map_font_size())
+	return maxf(1.0, ceil(_font.get_string_size("M", HORIZONTAL_ALIGNMENT_LEFT, -1, _map_font_size()).x))
+
+
+func _map_cell_h() -> float:
+	if _tileset_active():
+		return float(_map_font_size())
+	return maxf(1.0, ceil(_font.get_height(_map_font_size())))
+
+
+func _map_visible_cols() -> int:
+	return maxi(10, int(floor(_chunk_view_px_w() / _map_cell_w())))
+
+
+func _map_visible_rows() -> int:
+	return maxi(8, int(floor(_chunk_view_px_h() / _map_cell_h())))
+
+
+func _map_px_rect() -> Rect2:
+	return Rect2(0.0, 0.0, float(_map_visible_cols()) * _map_cell_w(), float(_map_visible_rows()) * _map_cell_h())
+
+
+func _set_chunk_zoom(step: int) -> void:
+	var zoom_sizes: Array = GameState.current_map_zoom_sizes()
+	var new_idx: int = clampi(_map_zoom_idx + step, 0, zoom_sizes.size() - 1)
+	if new_idx == _map_zoom_idx:
+		return
+	_map_zoom_idx = new_idx
+	_update_camera()
+	_layout_hud_ui()
+	queue_redraw()
+
+
+func _layout_hud_ui() -> void:
+	if _hud_ui_root == null:
+		return
+	var viewport_size: Vector2 = get_viewport_rect().size
+	var divider_y: float = _divider_y_px()
+	var ui_line_h: float = _ui_line_height()
+	var hud_pad_top: float = 10.0
+	var hud_row_gap: float = 6.0
+	var msg_gap: float = 6.0
+	var msg_block_h: float = ui_line_h + 12.0
+	var sidebar_w: float = _hud_sidebar_w_px()
+	var sidebar_x: float = viewport_size.x - sidebar_w
+	_hud_bg.position = Vector2(0, divider_y)
+	_hud_bg.size = Vector2(viewport_size.x, viewport_size.y - divider_y)
+	_hud_sidebar_bg.position = Vector2(sidebar_x, 0)
+	_hud_sidebar_bg.size = Vector2(sidebar_w, divider_y)
+	var divider := _hud_ui_root.get_child(2) as ColorRect
+	if divider != null:
+		divider.position = Vector2(0, divider_y)
+		divider.size = Vector2(viewport_size.x, 1)
+	var side_divider := _hud_ui_root.get_node_or_null("HudSideDivider") as ColorRect
+	if side_divider != null:
+		side_divider.position = Vector2(sidebar_x, 0)
+		side_divider.size = Vector2(1, divider_y)
+	var sidebar_inner_x: float = sidebar_x + 10.0
+	var sidebar_inner_w: float = sidebar_w - 20.0
+	var block_h: float = ui_line_h * 2.0 + 14.0
+	_hud_status_top.position = Vector2(sidebar_inner_x, hud_pad_top)
+	_hud_status_top.size = Vector2(sidebar_inner_w, block_h)
+	_hud_status_bottom.position = Vector2(sidebar_inner_x, hud_pad_top + block_h + hud_row_gap)
+	_hud_status_bottom.size = Vector2(sidebar_inner_w, block_h)
+	var third_y: float = hud_pad_top + (block_h + hud_row_gap) * 2.0
+	_hud_status_third.position = Vector2(sidebar_inner_x, third_y)
+	_hud_status_third.size = Vector2(sidebar_inner_w, maxi(block_h + ui_line_h + 6.0, divider_y - third_y - 10.0))
+	var sky_y: float = divider_y + 6.0
+	_hud_sky_label.position = Vector2(0, sky_y)
+	_hud_sky_label.custom_minimum_size = Vector2(viewport_size.x, ui_line_h + 8.0)
+	_hud_log_divider.position = Vector2(0, sky_y + ui_line_h + 8.0)
+	_hud_log_divider.size = Vector2(viewport_size.x, 1)
+	var msg_start_y: float = sky_y + ui_line_h + 14.0
+	for i in range(_hud_message_labels.size()):
+		var msg: Label = _hud_message_labels[i]
+		msg.position = Vector2(0, msg_start_y + float(i) * (msg_block_h + msg_gap))
+		msg.custom_minimum_size = Vector2(viewport_size.x, msg_block_h)
+
+
+func _set_menu_vertical_centering(enabled: bool) -> void:
+	if _menu_spacer_top == null or _menu_spacer_bottom == null or _menu_body_text == null:
+		return
+	_menu_spacer_top.visible = enabled
+	_menu_spacer_bottom.visible = enabled
+	_menu_spacer_top.size_flags_vertical = Control.SIZE_EXPAND_FILL if enabled else Control.SIZE_SHRINK_BEGIN
+	_menu_spacer_bottom.size_flags_vertical = Control.SIZE_EXPAND_FILL if enabled else Control.SIZE_SHRINK_BEGIN
+	_menu_body_text.size_flags_vertical = Control.SIZE_SHRINK_CENTER if enabled else Control.SIZE_EXPAND_FILL
+
+
+func _ui_line_height() -> float:
+	return maxf(1.0, ceil(_font.get_height(UI_FONT_SIZE)))
+
+
+func _apply_font_profile() -> void:
+	_font = _make_font()
+	_ui_theme = _make_ui_theme()
+	if _hud_ui_root != null:
+		_hud_ui_root.theme = _ui_theme
+	if _inventory_ui_root != null:
+		_inventory_ui_root.theme = _ui_theme
+	if _menu_ui_root != null:
+		_menu_ui_root.theme = _ui_theme
+	if _trade_ui_root != null:
+		_trade_ui_root.theme = _ui_theme
+	_map_zoom_idx = clampi(_map_zoom_idx, 0, GameState.current_map_zoom_sizes().size() - 1)
+	_update_camera()
+	_layout_hud_ui()
+	_refresh_hud_ui()
+	if _screen == Screen.INVENTORY:
+		_refresh_inventory_ui()
+	if _screen in [Screen.ESCAPE, Screen.CHARACTER, Screen.SETTINGS, Screen.ATTRIBUTE_PICK, Screen.DISAMBIGUATE, Screen.HELP, Screen.READER, Screen.DIALOGUE, Screen.TRAVEL_EVENT]:
+		_refresh_menu_ui()
+	if _screen == Screen.TRADE:
+		_refresh_trade_ui()
+	queue_redraw()
+
+
 func _refresh_menu_ui() -> void:
 	if _menu_ui_root == null:
 		return
+	_clear_control_children(_menu_button_box)
+	_menu_button_box.visible = false
+	_menu_body_text.visible = true
+	_set_menu_vertical_centering(false)
 	match _screen:
 		Screen.ESCAPE:
+			_set_menu_vertical_centering(true)
 			_menu_title_label.text = "-=[ PAUSED ]=-"
-			var lines: Array[String] = []
+			_set_rich_text_plain(_menu_body_text, "")
+			_menu_button_box.visible = true
 			for i in range(ESCAPE_OPTIONS.size()):
-				lines.append("%s %s" % [">" if i == _escape_cursor else " ", ESCAPE_OPTIONS[i]])
-			_set_rich_text_with_highlight(_menu_body_text, lines, _escape_cursor)
+				var idx: int = i
+				var escape_callback := func():
+					_escape_cursor = idx
+					_confirm_escape()
+				var escape_button := _make_menu_button(
+					ESCAPE_OPTIONS[i],
+					escape_callback,
+					i == _escape_cursor,
+					true
+				)
+				_menu_button_box.add_child(escape_button)
 			_menu_footer_label.text = "Enter: select    Esc: resume"
 		Screen.SETTINGS:
+			_set_menu_vertical_centering(true)
 			_menu_title_label.text = "-=[ SETTINGS ]=-"
-			_set_rich_text_plain(_menu_body_text, "a) Auto-pickup items:  %s\nd) Debug tools:        %s\ng) God mode:           %s" % [
-				"ON" if GameState.auto_pickup else "OFF",
-				"ON" if GameState.debug_tools_enabled else "OFF",
-				"ON" if GameState.god_mode else "OFF",
-			])
+			_set_rich_text_plain(_menu_body_text, "")
+			_menu_button_box.visible = true
+			_menu_button_box.add_child(_make_menu_button(
+				"[A] Auto-pickup items:  %s" % ("ON" if GameState.auto_pickup else "OFF"),
+				func():
+					GameState.auto_pickup = not GameState.auto_pickup
+					_refresh_menu_ui()
+			, false, true))
+			_menu_button_box.add_child(_make_menu_button(
+				"[D] Debug tools:        %s" % ("ON" if GameState.debug_tools_enabled else "OFF"),
+				func():
+					GameState.debug_tools_enabled = not GameState.debug_tools_enabled
+					_refresh_menu_ui()
+			, false, true))
+			_menu_button_box.add_child(_make_menu_button(
+				"[G] God mode:           %s" % ("ON" if GameState.god_mode else "OFF"),
+				func():
+					GameState.god_mode = not GameState.god_mode
+					_refresh_menu_ui()
+			, false, true))
+			_menu_button_box.add_child(_make_menu_button(
+				"[V] Chunk visuals:      %s" % ("TILESET" if _tileset_active() else "ASCII"),
+				func():
+					GameState.use_tileset = not GameState.use_tileset
+					_update_camera()
+					_refresh_menu_ui()
+					queue_redraw()
+			, false, true))
+			_menu_button_box.add_child(_make_menu_button(
+				"[F] Font:               %s" % GameState.current_font_label(),
+				func():
+					GameState.toggle_font_profile()
+					_apply_font_profile()
+					_refresh_menu_ui()
+			, false, true))
 			_menu_footer_label.text = "Esc: back"
 		Screen.CHARACTER:
 			_menu_title_label.text = "-=[ CHARACTER ]=-"
@@ -934,15 +1314,15 @@ func _refresh_menu_ui() -> void:
 				ranged_str = (ranged_weapon as ItemClass).name
 				if ammo != null:
 					ranged_str += " [%d]" % (ammo as ItemClass).stack_count()
-			_set_rich_text_plain(_menu_body_text, "Name       %s\nClass      %s\nLevel      %d\nXP         %d / %d\nMount      %s\n\nHP         %d / %d\nAttack     1d6+%d\nRanged     %s\nAC         %d\nGold       %d\nCarry      %s / %s\nSTR Carry  %+d lbs.\n\nSTR        %d (%+d)\nDEX        %d (%+d)\nCON        %d (%+d)\nINT        %d (%+d)\nWIS        %d (%+d)\nCHA        %d (%+d)" % [
+			_set_rich_text_plain(_menu_body_text, "Name       %s\nClass      %s\nLevel      %d\nXP         %d / %d\nMount      %s\n\nHP         %d / %d\nAttack     %s\nRanged     %s\nAC         %d\nGold       %d\nCarry      %s / %s\nSTR Carry  %+d lbs.\n\nSTR        %d (%+d)\nDEX        %d (%+d)\nCON        %d (%+d)\nINT        %d (%+d)\nWIS        %d (%+d)\nCHA        %d (%+d)" % [
 				GameState.player_name,
 				GameState.player_class.capitalize(),
 				_player.level,
 				_player.xp, _player.xp_to_next,
 				mount.name.capitalize() if mount != null else "None",
 				_player.hp, _player.max_hp,
-				_player.power + _player.total_attack_bonus,
-				ranged_str,
+				_player.melee_damage_label(),
+				("%s  (%s)" % [ranged_str, _player.ranged_damage_label()]) if ranged_weapon != null else ranged_str,
 				_player.ac,
 				_player.gold,
 				_format_lbs(_player.total_carry_weight), _format_lbs(_player.max_carry_weight),
@@ -954,60 +1334,130 @@ func _refresh_menu_ui() -> void:
 				_player.wis_score, _player.wis_mod,
 				_player.cha_score, _player.cha_mod,
 			])
+			_menu_button_box.visible = true
+			_menu_button_box.add_child(_make_menu_button("Close", func():
+				_screen = Screen.NONE
+				queue_redraw()
+			, false, true))
 			_menu_footer_label.text = "Esc: close"
 		Screen.ATTRIBUTE_PICK:
+			_set_menu_vertical_centering(true)
 			_menu_title_label.text = "-=[ ATTRIBUTE INCREASE ]=-"
-			var attr_body := "Choose an attribute to raise by 1.\nUnspent points: %d\n\n" % _player.unspent_attribute_points
+			var attr_body := "Choose an attribute to raise by 1.\nUnspent points: %d" % _player.unspent_attribute_points
+			_set_rich_text_plain(_menu_body_text, attr_body)
+			_menu_button_box.visible = true
 			for opt in ATTRIBUTE_OPTIONS:
 				var score: int = int(_player.get("%s_score" % str(opt.code)))
-				attr_body += "[%s] %-12s %2d -> %2d\n" % [char(int(opt.key)), str(opt.label), score, score + 1]
-			_set_rich_text_plain(_menu_body_text, attr_body)
+				var attr_code: String = str(opt.code)
+				var attr_callback := func():
+					if _world.apply_attribute_increase(attr_code):
+						_open_attribute_overlay_if_needed()
+						queue_redraw()
+				var attr_button := _make_menu_button(
+					"[%s] %-12s %2d -> %2d" % [char(int(opt.key)), str(opt.label), score, score + 1],
+					attr_callback,
+					false,
+					true
+				)
+				_menu_button_box.add_child(attr_button)
 			_menu_footer_label.text = "Press the matching key"
 		Screen.DISAMBIGUATE:
+			_set_menu_vertical_centering(true)
 			_menu_title_label.text = _disambig_prompt
-			var disambig_body := ""
-			for i in range(_disambig_options.size()):
-				var opt: Dictionary = _disambig_options[i]
-				disambig_body += "%s [%s] %s\n" % [
-					">" if i == _disambig_cursor else " ",
-					char(int(opt.key)) if int(opt.key) >= KEY_A and int(opt.key) <= KEY_Z else "•",
-					str(opt.label)
-				]
-			var disambig_lines: Array[String] = []
+			_set_rich_text_plain(_menu_body_text, "")
+			_menu_button_box.visible = true
 			for i in range(_disambig_options.size()):
 				var opt_line: Dictionary = _disambig_options[i]
 				var opt_key: int = int(opt_line.get("key", KEY_NONE))
 				var key_label := char(opt_key) if opt_key >= KEY_A and opt_key <= KEY_Z else "*"
-				disambig_lines.append("%s [%s] %s" % [
-					">" if i == _disambig_cursor else " ",
-					key_label,
-					str(opt_line.get("label", ""))
-				])
-			_set_rich_text_with_highlight(_menu_body_text, disambig_lines, _disambig_cursor)
+				var callback: Callable = opt_line.get("callback", Callable())
+				var idx: int = i
+				var disambig_callback := func():
+					_disambig_cursor = idx
+					if callback.is_valid():
+						callback.call()
+				var disambig_button := _make_menu_button(
+					"[%s] %s" % [key_label, str(opt_line.get("label", ""))],
+					disambig_callback,
+					i == _disambig_cursor,
+					true
+				)
+				_menu_button_box.add_child(disambig_button)
 			_menu_footer_label.text = "Enter: confirm    Esc: cancel"
 		Screen.HELP:
 			_menu_title_label.text = "-=[ KEYBINDS ]=-"
-			_set_rich_text_plain(_menu_body_text, "MOVEMENT\narrows / numpad  move\nnumpad 7/9/1/3   diagonal move\nnumpad 5 / .     wait one turn\n\nACTIONS\nm  mount / dismount\ng  pick up items\ns  skin/butcher carcass\nt  trade (near merchant)\nf  fire ranged weapon\nShift+dir  force attack\n>  descend / enter\n<  ascend / world map\n\nMENUS\ni  inventory\nc  character sheet\nl  look mode\n?  this help screen\nEsc  pause menu\n\nINVENTORY\n[a-z] use / equip item\n[w/r/b/f/h/u] unequip slot\n\nTRADE\n[a-z] buy item\n[Tab + A-Z] sell item\n\nWORLD MAP\narrows  travel between chunks\nl  toggle look cursor\n>  enter chunk view")
+			_set_rich_text_plain(_menu_body_text, "MOVEMENT\narrows / numpad  move\nnumpad 7/9/1/3   diagonal move\nnumpad 5 / .     wait one turn\nmouse wheel       zoom chunk view\n\nACTIONS\nm  mount / dismount\ng  pick up items\ns  skin/butcher carcass\nt  trade (near merchant)\nf  fire ranged weapon\nShift+dir  force attack\n>  descend / enter\n<  ascend / world map\n\nMENUS\ni  inventory\nc  character sheet\nl  look mode\n?  this help screen\nEsc  pause menu\n\nINVENTORY\n[a-z] use / equip item\n[w/r/b/f/h/u] unequip slot\n\nTRADE\n[a-z] buy item\n[Tab + A-Z] sell item\n\nWORLD MAP\narrows  travel between chunks\nl  toggle look cursor\n>  enter chunk view")
+			_menu_button_box.visible = true
+			_menu_button_box.add_child(_make_menu_button("Close", func():
+				_screen = Screen.NONE
+				queue_redraw()
+			, false, true))
 			_menu_footer_label.text = "Any key to close"
 		Screen.READER:
 			_menu_title_label.text = "-=[ %s ]=-" % (_reader_item.name.to_upper() if _reader_item != null else "READER")
 			var visible := _reader_lines.slice(_reader_scroll, _reader_scroll + 18)
 			_set_rich_text_plain(_menu_body_text, "\n".join(visible))
+			_menu_button_box.visible = true
+			var max_scroll: int = maxi(0, _reader_lines.size() - 18)
+			var scroll_up_callback := func():
+				_reader_scroll = maxi(0, _reader_scroll - 1)
+				_refresh_menu_ui()
+			var scroll_up_button := _make_menu_button(
+				"Scroll Up",
+				scroll_up_callback,
+				_reader_scroll > 0,
+				true
+			)
+			_menu_button_box.add_child(scroll_up_button)
+			var scroll_down_callback := func():
+				_reader_scroll = mini(_reader_scroll + 1, max_scroll)
+				_refresh_menu_ui()
+			var scroll_down_button := _make_menu_button(
+				"Scroll Down",
+				scroll_down_callback,
+				_reader_scroll < max_scroll,
+				true
+			)
+			_menu_button_box.add_child(scroll_down_button)
+			_menu_button_box.add_child(_make_menu_button("Close", func():
+				_screen = Screen.NONE
+				_reader_item = null
+				queue_redraw()
+			, false, true))
 			_menu_footer_label.text = "Esc / Space close    Up / Down scroll"
 		Screen.DIALOGUE:
+			_set_menu_vertical_centering(true)
 			var npc: NpcClass = _dialogue_npc as NpcClass
 			_menu_title_label.text = "-=[ %s ]=-" % npc.name.to_upper()
 			_set_rich_text_plain(_menu_body_text, _dialogue_line)
+			_menu_button_box.visible = true
+			if npc.is_merchant:
+				_menu_button_box.add_child(_make_menu_button("[T] Trade", func():
+					_open_trade(_dialogue_npc)
+				, false, true))
+			_menu_button_box.add_child(_make_menu_button("Close", func():
+				_screen = Screen.NONE
+				_dialogue_npc = null
+				queue_redraw()
+			, false, true))
 			_menu_footer_label.text = "[T] Trade    [Any other key] Close" if npc.is_merchant else "[Any key] Close"
 		Screen.TRAVEL_EVENT:
+			_set_menu_vertical_centering(true)
 			var event_data: Dictionary = _world.pending_travel_event
 			_menu_title_label.text = "-=[ %s ]=-" % str(event_data.get("title", "TRAVEL EVENT"))
-			var options: Array[String] = ["[E] Enter the chunk"]
+			_set_rich_text_plain(_menu_body_text, str(event_data.get("desc", "")))
+			_menu_button_box.visible = true
+			_menu_button_box.add_child(_make_menu_button("[E] Enter the chunk", func():
+				_world.resolve_travel_event("enter")
+			, false, true))
 			if bool(event_data.get("can_ignore", false)):
-				options.append("[I] Ignore and continue")
+				_menu_button_box.add_child(_make_menu_button("[I] Ignore and continue", func():
+					_world.resolve_travel_event("ignore")
+				, false, true))
 			if bool(event_data.get("can_flee", false)):
-				options.append("[F] Attempt to flee")
-			_set_rich_text_plain(_menu_body_text, "%s\n\n%s" % [str(event_data.get("desc", "")), "\n".join(options)])
+				_menu_button_box.add_child(_make_menu_button("[F] Attempt to flee", func():
+					_world.resolve_travel_event("flee")
+				, false, true))
 			_menu_footer_label.text = "Choose an option"
 
 
@@ -1016,9 +1466,11 @@ func _refresh_trade_ui() -> void:
 		return
 	var npc: NpcClass = _trade_npc as NpcClass
 	_trade_title_label.text = "-=[ TRADE: %s ]=-" % npc.name.capitalize()
-	var buy_lines: Array[String] = ["MERCHANT SELLS", ""]
+	_clear_control_children(_trade_buy_list)
+	_clear_control_children(_trade_sell_list)
+	_add_menu_label(_trade_buy_list, "MERCHANT SELLS", C_STATUS)
 	if npc.trade_stock.is_empty():
-		buy_lines.append("Nothing for sale.")
+		_add_menu_label(_trade_buy_list, "Nothing for sale.", C_MSG_OLD)
 	else:
 		for i in range(npc.trade_stock.size()):
 			var entry: Dictionary = npc.trade_stock[i]
@@ -1026,24 +1478,32 @@ func _refresh_trade_ui() -> void:
 			var itype := str(entry.get("item_type", ""))
 			var qty := int(entry.get("qty", 0))
 			var price := int(entry.get("price", 0))
-			var marker := ">" if _trade_panel == 0 and i == _trade_buy_cursor else " "
-			buy_lines.append("%s %s) %-18s %3dg  %8s  x%d" % [marker, sl, itype.replace("_", " "), price, _format_lbs(_item_weight_for_type(itype)), qty])
-	buy_lines.append("")
-	buy_lines.append("Gold: %d" % _player.gold)
-	_set_rich_text_with_highlight(_trade_buy_text, buy_lines, _trade_buy_cursor + 2 if _trade_panel == 0 and not npc.trade_stock.is_empty() else -1)
+			var idx: int = i
+			var buy_text := "%s) %-18s %3dg  %8s  x%d" % [sl, itype.replace("_", " "), price, _format_lbs(_item_weight_for_type(itype)), qty]
+			var buy_callback := func():
+				_trade_panel = 0
+				_trade_buy_cursor = idx
+				_trade_buy(idx)
+			_add_trade_entry_row(_trade_buy_list, buy_text, buy_callback, _trade_panel == 0 and i == _trade_buy_cursor)
+	_add_menu_label(_trade_buy_list, "")
+	_add_menu_label(_trade_buy_list, "Gold: %d" % _player.gold, C_GOLD)
 
-	var sell_lines: Array[String] = ["YOUR PACK", ""]
+	_add_menu_label(_trade_sell_list, "YOUR PACK", C_STATUS)
 	var sellable: Array = _build_sellable()
 	if sellable.is_empty():
-		sell_lines.append("Nothing to sell.")
+		_add_menu_label(_trade_sell_list, "Nothing to sell.", C_MSG_OLD)
 	else:
 		for i in range(sellable.size()):
 			var item = sellable[i]
 			var sl := char(ord("A") + i)
 			var offer: int = npc.buy_price(item)
-			var marker := ">" if _trade_panel == 1 and i == _trade_sell_cursor else " "
-			sell_lines.append("%s %s) %-18s %3dg  %8s" % [marker, sl, (item as ItemClass).name, offer, _format_lbs(int((item as ItemClass).total_weight()))])
-	_set_rich_text_with_highlight(_trade_sell_text, sell_lines, _trade_sell_cursor + 2 if _trade_panel == 1 and not sellable.is_empty() else -1)
+			var idx: int = i
+			var sell_text := "%s) %-18s %3dg  %8s" % [sl, (item as ItemClass).name, offer, _format_lbs(int((item as ItemClass).total_weight()))]
+			var sell_callback := func():
+				_trade_panel = 1
+				_trade_sell_cursor = idx
+				_trade_sell(idx)
+			_add_trade_entry_row(_trade_sell_list, sell_text, sell_callback, _trade_panel == 1 and i == _trade_sell_cursor)
 
 	var hint: String = "[a-z] buy   [Tab] sell panel   [Esc] leave" if _trade_panel == 0 else "[A-Z] sell   [Tab] buy panel   [Esc] leave"
 	_trade_footer_label.text = hint
@@ -1052,33 +1512,66 @@ func _refresh_trade_ui() -> void:
 func _refresh_hud_ui() -> void:
 	if _hud_ui_root == null or _world == null or _player == null:
 		return
+	_layout_hud_ui()
 	var hp_frac: float = float(_player.hp) / float(_player.max_hp)
-	var hp_color := C_STATUS.lerp(Color(0.8, 0.15, 0.05), 1.0 - hp_frac)
 	var wpn = _player.equipped.get(ItemClass.SLOT_WEAPON)
-	var wpn_str := ("  WPN: %s" % (wpn as ItemClass).name) if wpn != null else ""
+	var wpn_str := ("WPN %s" % (wpn as ItemClass).name) if wpn != null else ""
 	var lit = _player.equipped.get(ItemClass.SLOT_LIGHT)
 	var lit_str := ""
 	if lit != null:
 		var lt := lit as ItemClass
-		lit_str = "  LIT: %dt" % lt.value if lt.burn_turns > 0 else "  LIT"
+		lit_str = "LIT %dt" % lt.value if lt.burn_turns > 0 else "LIT"
 	var mount = _world.get_player_mount()
 	var mount_str := ""
 	if mount != null:
-		mount_str = "  MOUNT: %s" % mount.name
-	var move_cost_str := "  MOVE: %s" % _world.get_move_cost_label()
+		mount_str = "MOUNT %s" % mount.name
+	var move_cost_str := "SPD %s" % _world.get_move_cost_label()
 	var cal_str: String = _world.get_calendar_string()
 	var sky_str: String = _sky_track()
+	var target = _sidebar_target_enemy()
+	var hostile_lines: Array[String] = _sidebar_nearby_hostiles()
 	var thr_pct: int = int(float(_player.thirst) / float(ActorClass.THIRST_MAX) * 100.0)
 	var fat_pct: int = int(float(_player.fatigue) / float(ActorClass.FATIGUE_MAX) * 100.0)
-	var thr_str: String = ("  THR: %d%%" % thr_pct) if _floor == 0 else ""
-	var fat_str: String = "  FAT: %d%%" % fat_pct
-	var floor_label: String = "HUB" if _world.debug_hub_active else str(_floor)
-	_hud_status_top.text = "Lvl: %d   HP: %d/%d   ATK: 1d6+%d  AC: %d   Gold: %d   Floor: %s   %s  %s" % [
-		_player.level, _player.hp, _player.max_hp, _player.power + _player.total_attack_bonus,
-		_player.ac, _player.gold, floor_label, cal_str, sky_str
-	]
-	_hud_status_top.add_theme_color_override("font_color", hp_color)
-	_hud_status_bottom.text = ("%s%s%s%s%s" % [thr_str, fat_str, wpn_str, lit_str, mount_str + move_cost_str]).strip_edges()
+	var hp_color := C_STATUS.lerp(Color(0.8, 0.15, 0.05), clampf(1.0 - hp_frac, 0.0, 1.0))
+	var fat_color := C_STATUS.lerp(Color(0.8, 0.15, 0.05), clampf(float(_player.fatigue) / float(ActorClass.FATIGUE_MAX), 0.0, 1.0))
+	var thr_color := C_STATUS.lerp(Color(0.8, 0.15, 0.05), clampf(float(_player.thirst) / float(ActorClass.THIRST_MAX), 0.0, 1.0))
+	_set_hud_segments(_hud_status_top, [
+		{"text": "LVL %d" % _player.level, "color": C_STATUS},
+		{"text": "    ", "color": C_STATUS},
+		{"text": "HP %d/%d" % [_player.hp, _player.max_hp], "color": hp_color},
+		{"text": "\nATK %s" % _player.melee_damage_label(), "color": C_STATUS},
+		{"text": "   ", "color": C_STATUS},
+		{"text": "AC %d" % _player.ac, "color": C_STATUS},
+	])
+	var bottom_segments: Array = []
+	bottom_segments.append({"text": "GOLD %d" % _player.gold, "color": C_GOLD})
+	if _floor == 0:
+		bottom_segments.append({"text": "\nTHR %d%%" % thr_pct, "color": thr_color})
+		bottom_segments.append({"text": "   ", "color": C_STATUS})
+	bottom_segments.append({"text": "FAT %d%%" % fat_pct, "color": fat_color})
+	bottom_segments.append({"text": "\n%s" % move_cost_str, "color": C_STATUS})
+	_set_hud_segments(_hud_status_bottom, bottom_segments)
+	var detail_lines: Array[String] = []
+	if mount_str != "":
+		detail_lines.append(mount_str)
+	if lit_str != "":
+		detail_lines.append(lit_str)
+	if wpn_str != "":
+		detail_lines.append(wpn_str)
+	if target != null:
+		detail_lines.append("")
+		detail_lines.append("TARGET")
+		detail_lines.append("%s %s" % [str(target.name).capitalize(), _sidebar_hp_bar(target)])
+	if not hostile_lines.is_empty():
+		detail_lines.append("")
+		detail_lines.append("NEARBY")
+		for line in hostile_lines:
+			detail_lines.append(line)
+	_set_hud_segments(_hud_status_third, [
+		{"text": "\n".join(detail_lines), "color": C_STATUS},
+	])
+	_hud_sky_label.text = "%s  %s" % [cal_str, sky_str]
+	_hud_sky_label.add_theme_color_override("font_color", C_STATUS)
 
 	for label in _hud_message_labels:
 		label.text = ""
@@ -1184,6 +1677,8 @@ func _start_autoexplore() -> void:
 	_auto_move_mode = AutoMoveMode.EXPLORE
 	_auto_move_accum = 0.0
 	_auto_move_steps_taken = 0
+	_hover_active = false
+	_hover_path.clear()
 	_tick_auto_move()
 
 
@@ -1207,6 +1702,8 @@ func _start_travel_to(target: Vector2i) -> void:
 	_auto_move_target = target
 	_auto_move_accum = 0.0
 	_auto_move_steps_taken = 0
+	_hover_active = false
+	_hover_path.clear()
 	_tick_auto_move()
 
 
@@ -1279,32 +1776,182 @@ func _after_auto_move_step(label: String) -> void:
 func _compute_day_tint() -> Color:
 	# Only the overworld is lit by the sun.  Underground is always the same dim.
 	if _world.debug_hub_active or _world.depth > 0:
+		if _tileset_active():
+			return Color(0.62, 0.64, 0.74)  # tileset dungeon — cooler, readable stone-dark
 		return Color(0.55, 0.50, 0.45)  # dungeon — torchlight amber-dim
 
 	var t: float = _world.time_of_day   # 0.0 = midnight, 0.5 = noon
 
 	# Four anchor points that repeat symmetrically (dawn ↔ dusk).
 	# Each anchor: [time, Color].
-	const ANCHORS: Array = [
-		[0.00, Color(0.18, 0.20, 0.40)],  # midnight  — deep blue-black
-		[0.17, Color(0.22, 0.22, 0.48)],  # pre-dawn  — indigo dark
-		[0.25, Color(0.88, 0.60, 0.35)],  # dawn      — warm amber
-		[0.33, Color(0.95, 0.85, 0.65)],  # morning   — golden
-		[0.50, Color(1.00, 1.00, 1.00)],  # midday    — full white
-		[0.67, Color(0.95, 0.85, 0.65)],  # afternoon — golden
-		[0.75, Color(0.88, 0.58, 0.32)],  # dusk      — amber
-		[0.83, Color(0.22, 0.22, 0.48)],  # nightfall — indigo dark
-		[1.00, Color(0.18, 0.20, 0.40)],  # midnight  — wraps back
-	]
+	var anchors: Array
+	if _tileset_active():
+		anchors = [
+			[0.00, Color(0.44, 0.58, 0.96)],  # midnight  — stronger moonlit blue
+			[0.17, Color(0.50, 0.62, 1.00)],  # pre-dawn  — cold blue
+			[0.25, Color(0.86, 0.66, 0.44)],  # dawn      — warm amber-blue transition
+			[0.33, Color(0.95, 0.85, 0.65)],  # morning   — golden
+			[0.50, Color(1.00, 1.00, 1.00)],  # midday    — full white
+			[0.67, Color(0.95, 0.85, 0.65)],  # afternoon — golden
+			[0.75, Color(0.82, 0.60, 0.40)],  # dusk      — amber-blue transition
+			[0.83, Color(0.50, 0.62, 1.00)],  # nightfall — cold blue
+			[1.00, Color(0.44, 0.58, 0.96)],  # midnight  — wraps back
+		]
+	else:
+		anchors = [
+			[0.00, Color(0.18, 0.20, 0.40)],  # midnight  — deep blue-black
+			[0.17, Color(0.22, 0.22, 0.48)],  # pre-dawn  — indigo dark
+			[0.25, Color(0.88, 0.60, 0.35)],  # dawn      — warm amber
+			[0.33, Color(0.95, 0.85, 0.65)],  # morning   — golden
+			[0.50, Color(1.00, 1.00, 1.00)],  # midday    — full white
+			[0.67, Color(0.95, 0.85, 0.65)],  # afternoon — golden
+			[0.75, Color(0.88, 0.58, 0.32)],  # dusk      — amber
+			[0.83, Color(0.22, 0.22, 0.48)],  # nightfall — indigo dark
+			[1.00, Color(0.18, 0.20, 0.40)],  # midnight  — wraps back
+		]
 
 	# Linear interpolation between the two surrounding anchors.
-	for i in range(ANCHORS.size() - 1):
-		var t0: float  = float(ANCHORS[i][0])
-		var t1: float  = float(ANCHORS[i + 1][0])
+	for i in range(anchors.size() - 1):
+		var t0: float  = float(anchors[i][0])
+		var t1: float  = float(anchors[i + 1][0])
 		if t >= t0 and t <= t1:
 			var f: float = (t - t0) / (t1 - t0)
-			return (ANCHORS[i][1] as Color).lerp(ANCHORS[i + 1][1] as Color, f)
+			return (anchors[i][1] as Color).lerp(anchors[i + 1][1] as Color, f)
 	return Color.WHITE
+
+
+func _tile_dim_color(tile: int) -> Color:
+	var tileset_mode: bool = _tileset_active()
+	match tile:
+		GameMapClass.TILE_WALL:
+			return C_WALL_DIM_TILESET if tileset_mode else C_WALL_DIM
+		GameMapClass.TILE_FLOOR:
+			return C_FLOOR_DIM_TILESET if tileset_mode else C_FLOOR_DIM
+		GameMapClass.TILE_SAND:
+			return C_SAND_DIM_TILESET if tileset_mode else C_SAND_DIM
+		GameMapClass.TILE_DUNE:
+			return C_DUNE_DIM_TILESET if tileset_mode else C_DUNE_DIM
+		GameMapClass.TILE_ROCK:
+			return C_ROCK_DIM_TILESET if tileset_mode else C_ROCK_DIM
+		GameMapClass.TILE_WATER:
+			return C_WATER_DIM_TILESET if tileset_mode else C_WATER_DIM
+		GameMapClass.TILE_GRASS:
+			return C_GRASS_DIM_TILESET if tileset_mode else C_GRASS_DIM
+		GameMapClass.TILE_ROAD:
+			return C_ROAD_DIM_TILESET if tileset_mode else C_ROAD_DIM
+		_:
+			return Color(0.05, 0.05, 0.05) if tileset_mode else Color(0.20, 0.20, 0.20)
+
+
+func _tileset_fill_color(tile: int, base_color: Color, lit: bool) -> Color:
+	var fill: Color
+	match tile:
+		GameMapClass.TILE_WALL:
+			fill = C_WALL_BG_TILESET_LIT if lit else C_WALL_BG_TILESET_DIM
+		GameMapClass.TILE_FLOOR:
+			fill = C_FLOOR_BG_TILESET_LIT if lit else C_FLOOR_BG_TILESET_DIM
+		GameMapClass.TILE_SAND:
+			fill = C_SAND_BG_TILESET_LIT if lit else C_SAND_BG_TILESET_DIM
+		GameMapClass.TILE_DUNE:
+			fill = C_DUNE_BG_TILESET_LIT if lit else C_DUNE_BG_TILESET_DIM
+		GameMapClass.TILE_ROCK:
+			fill = C_ROCK_BG_TILESET_LIT if lit else C_ROCK_BG_TILESET_DIM
+		GameMapClass.TILE_WATER:
+			fill = C_WATER_BG_TILESET_LIT if lit else C_WATER_BG_TILESET_DIM
+		GameMapClass.TILE_GRASS:
+			fill = C_GRASS_BG_TILESET_LIT if lit else C_GRASS_BG_TILESET_DIM
+		GameMapClass.TILE_ROAD:
+			fill = C_ROAD_BG_TILESET_LIT if lit else C_ROAD_BG_TILESET_DIM
+		_:
+			fill = base_color
+	fill = fill * _day_tint
+	fill.a = 1.0
+	return fill
+
+
+func _ascii_fill_color(tile: int, base_color: Color, lit: bool) -> Color:
+	var fill: Color
+	match tile:
+		GameMapClass.TILE_WALL:
+			fill = C_WALL_LIT if lit else C_WALL_DIM
+		GameMapClass.TILE_FLOOR:
+			fill = C_FLOOR_LIT if lit else C_FLOOR_DIM
+		GameMapClass.TILE_SAND:
+			fill = C_SAND_LIT if lit else C_SAND_DIM
+		GameMapClass.TILE_DUNE:
+			fill = C_DUNE_LIT if lit else C_DUNE_DIM
+		GameMapClass.TILE_ROCK:
+			fill = C_ROCK_LIT if lit else C_ROCK_DIM
+		GameMapClass.TILE_WATER:
+			fill = C_WATER_LIT if lit else C_WATER_DIM
+		GameMapClass.TILE_GRASS:
+			fill = C_GRASS_LIT if lit else C_GRASS_DIM
+		GameMapClass.TILE_ROAD:
+			fill = C_ROAD_LIT if lit else C_ROAD_DIM
+		_:
+			fill = base_color
+	fill = fill * _day_tint
+	var bg: Color = fill.lerp(C_BG, 0.55 if lit else 0.78)
+	bg.a = 1.0
+	return bg
+
+
+func _tileset_glyph_tint(base_color: Color, lit: bool) -> Color:
+	var glyph_color: Color
+	if lit:
+		glyph_color = base_color.lerp(Color(1, 1, 1, 1), 0.10)
+	else:
+		glyph_color = base_color.lerp(Color(0.80, 0.80, 0.80, 1), 0.05)
+	glyph_color.a = 1.0
+	return glyph_color
+
+
+func _ascii_glyph_tint(base_color: Color, lit: bool) -> Color:
+	var glyph_color: Color
+	if lit:
+		glyph_color = base_color.lerp(Color(1, 1, 1, 1), 0.12)
+	else:
+		glyph_color = base_color.lerp(Color(0.85, 0.85, 0.85, 1), 0.06)
+	glyph_color.a = 1.0
+	return glyph_color
+
+
+func _ascii_cell_rect(x: int, y: int) -> Rect2:
+	var cell_w: float = _map_cell_w()
+	var cell_h: float = _map_cell_h()
+	return Rect2(
+		float(x) * cell_w - ASCII_BG_OVERDRAW_X,
+		float(y) * cell_h - ASCII_BG_OVERDRAW_Y,
+		cell_w + ASCII_BG_OVERDRAW_X * 2.0,
+		cell_h + ASCII_BG_OVERDRAW_Y * 2.0
+	)
+
+
+func _tileset_cell_rect(x: int, y: int) -> Rect2:
+	var cell_w: float = _map_cell_w()
+	var cell_h: float = _map_cell_h()
+	return Rect2(
+		float(x) * cell_w - TILESET_BG_OVERDRAW,
+		float(y) * cell_h - TILESET_BG_OVERDRAW,
+		cell_w + TILESET_BG_OVERDRAW * 2.0,
+		cell_h + TILESET_BG_OVERDRAW * 2.0
+	)
+
+
+func _draw_tileset_cell(x: int, y: int, tile: int, ch: String, base_color: Color, lit: bool, occupied: bool = false) -> void:
+	var dest_rect := _tileset_cell_rect(x, y)
+	var fill_color := _tileset_fill_color(tile, base_color, lit)
+	draw_rect(dest_rect, fill_color)
+	if not occupied:
+		_put_map_fg(x, y, ch, _tileset_glyph_tint(base_color, lit))
+
+
+func _draw_ascii_cell(x: int, y: int, tile: int, ch: String, base_color: Color, lit: bool, occupied: bool = false) -> void:
+	var dest_rect := _ascii_cell_rect(x, y)
+	var fill_color := _ascii_fill_color(tile, base_color, lit)
+	draw_rect(dest_rect, fill_color)
+	if not occupied:
+		_put_map_fg(x, y, ch, _ascii_glyph_tint(base_color, lit))
 
 
 # ===========================================================================
@@ -1506,31 +2153,48 @@ func _unhandled_input(event: InputEvent) -> void:
 func _handle_mouse_motion(event: InputEventMouseMotion) -> void:
 	var cell := _mouse_cell(event.position)
 	var map_pos := Vector2i(cell.x + _cam_x, cell.y + _cam_y)
-	var should_highlight: bool = cell.y >= 0 and cell.y < MAP_ROWS and _map != null and _map.is_in_bounds(map_pos.x, map_pos.y)
+	var should_highlight: bool = cell.x >= 0 and cell.y >= 0 and _map != null and _map.is_in_bounds(map_pos.x, map_pos.y)
 	if _screen == Screen.NONE:
 		_hover_active = should_highlight and _map.explored[map_pos.y][map_pos.x]
 		if _hover_active:
 			_hover_pos = map_pos
+			_refresh_hover_path_preview()
+		else:
+			_hover_path.clear()
 	elif _screen == Screen.WORLD_MAP:
+		_hover_path.clear()
 		var chunk := _world_map_chunk_at_pos(event.position)
 		if chunk.x >= 0:
 			_world_look_cursor = chunk
 			queue_redraw()
 	elif _screen == Screen.LOOK:
 		_hover_active = false
+		_hover_path.clear()
 		if should_highlight and _map.explored[map_pos.y][map_pos.x]:
 			_look_pos = map_pos
 	elif _screen == Screen.TARGET:
 		_hover_active = false
+		_hover_path.clear()
 		if should_highlight and _map.explored[map_pos.y][map_pos.x]:
 			_target_pos = map_pos
 	else:
 		_hover_active = false
+		_hover_path.clear()
 	if _screen == Screen.NONE or _screen == Screen.LOOK or _screen == Screen.TARGET:
 		queue_redraw()
 
 
 func _handle_mouse_button(event: InputEventMouseButton) -> void:
+	if event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
+		if _screen in [Screen.NONE, Screen.LOOK, Screen.TARGET]:
+			_set_chunk_zoom(1)
+			get_viewport().set_input_as_handled()
+		return
+	if event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
+		if _screen in [Screen.NONE, Screen.LOOK, Screen.TARGET]:
+			_set_chunk_zoom(-1)
+			get_viewport().set_input_as_handled()
+		return
 	if event.button_index == MOUSE_BUTTON_RIGHT:
 		match _screen:
 			Screen.TARGET:
@@ -1579,17 +2243,10 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 
 
 func _mouse_cell(mouse_pos: Vector2) -> Vector2i:
-	return Vector2i(int(floor(mouse_pos.x / CELL_W)), int(floor(mouse_pos.y / CELL_H)))
-
-
-func _mouse_cell_in_control(mouse_pos: Vector2, control: Control) -> Vector2i:
-	if control == null:
-		return Vector2i(-1, -1)
-	var rect: Rect2 = control.get_global_rect()
+	var rect := _map_px_rect()
 	if not rect.has_point(mouse_pos):
 		return Vector2i(-1, -1)
-	var local: Vector2 = mouse_pos - rect.position
-	return Vector2i(int(floor(local.x / CELL_W)), int(floor(local.y / CELL_H)))
+	return Vector2i(int(floor(mouse_pos.x / _map_cell_w())), int(floor(mouse_pos.y / _map_cell_h())))
 
 
 func _mouse_in_control(mouse_pos: Vector2, control: Control) -> bool:
@@ -1602,7 +2259,7 @@ func _screen_to_map(cell: Vector2i) -> Vector2i:
 
 func _handle_map_mouse_click(mouse_pos: Vector2) -> void:
 	var cell := _mouse_cell(mouse_pos)
-	if cell.y < 0 or cell.y >= MAP_ROWS:
+	if cell.x < 0 or cell.y < 0:
 		return
 	var map_pos := _screen_to_map(cell)
 	if not _map.is_in_bounds(map_pos.x, map_pos.y) or not _map.explored[map_pos.y][map_pos.x]:
@@ -1626,7 +2283,7 @@ func _handle_map_mouse_click(mouse_pos: Vector2) -> void:
 
 func _handle_look_mouse_click(mouse_pos: Vector2) -> void:
 	var cell := _mouse_cell(mouse_pos)
-	if cell.y < 0 or cell.y >= MAP_ROWS:
+	if cell.x < 0 or cell.y < 0:
 		return
 	var map_pos := _screen_to_map(cell)
 	if not _map.is_in_bounds(map_pos.x, map_pos.y) or not _map.explored[map_pos.y][map_pos.x]:
@@ -1658,8 +2315,10 @@ func _open_ranged_targeting() -> void:
 			_target_pos.y = clampi(_target_pos.y, 0, _map.height - 1)
 	_screen = Screen.TARGET
 	_hover_active = false
-	_cam_x = clampi(_target_pos.x - (COLS >> 1), 0, _map.width - COLS)
-	_cam_y = clampi(_target_pos.y - (MAP_ROWS >> 1), 0, _map.height - MAP_ROWS)
+	var vis_cols: int = _map_visible_cols()
+	var vis_rows: int = _map_visible_rows()
+	_cam_x = clampi(_target_pos.x - (vis_cols >> 1), 0, maxi(0, _map.width - vis_cols))
+	_cam_y = clampi(_target_pos.y - (vis_rows >> 1), 0, maxi(0, _map.height - vis_rows))
 	queue_redraw()
 
 
@@ -1686,8 +2345,10 @@ func _cycle_target_candidate(step: int) -> void:
 		return
 	_target_candidate_index = wrapi(_target_candidate_index + step, 0, _target_candidates.size())
 	_target_pos = (_target_candidates[_target_candidate_index] as ActorClass).pos
-	_cam_x = clampi(_target_pos.x - (COLS >> 1), 0, _map.width - COLS)
-	_cam_y = clampi(_target_pos.y - (MAP_ROWS >> 1), 0, _map.height - MAP_ROWS)
+	var vis_cols: int = _map_visible_cols()
+	var vis_rows: int = _map_visible_rows()
+	_cam_x = clampi(_target_pos.x - (vis_cols >> 1), 0, maxi(0, _map.width - vis_cols))
+	_cam_y = clampi(_target_pos.y - (vis_rows >> 1), 0, maxi(0, _map.height - vis_rows))
 	queue_redraw()
 
 
@@ -1720,14 +2381,16 @@ func _handle_target_input(event: InputEvent) -> void:
 	_target_pos += delta
 	_target_pos.x = clampi(_target_pos.x, 0, _map.width - 1)
 	_target_pos.y = clampi(_target_pos.y, 0, _map.height - 1)
-	_cam_x = clampi(_target_pos.x - (COLS >> 1), 0, _map.width - COLS)
-	_cam_y = clampi(_target_pos.y - (MAP_ROWS >> 1), 0, _map.height - MAP_ROWS)
+	var vis_cols: int = _map_visible_cols()
+	var vis_rows: int = _map_visible_rows()
+	_cam_x = clampi(_target_pos.x - (vis_cols >> 1), 0, maxi(0, _map.width - vis_cols))
+	_cam_y = clampi(_target_pos.y - (vis_rows >> 1), 0, maxi(0, _map.height - vis_rows))
 	queue_redraw()
 
 
 func _handle_target_mouse_click(mouse_pos: Vector2) -> void:
 	var cell := _mouse_cell(mouse_pos)
-	if cell.y < 0 or cell.y >= MAP_ROWS:
+	if cell.x < 0 or cell.y < 0:
 		return
 	var map_pos := _screen_to_map(cell)
 	if not _map.is_in_bounds(map_pos.x, map_pos.y) or not _map.explored[map_pos.y][map_pos.x]:
@@ -1772,69 +2435,23 @@ func _confirm_escape() -> void:
 
 
 func _handle_escape_mouse_click(mouse_pos: Vector2) -> void:
-	var cell := _mouse_cell_in_control(mouse_pos, _menu_shell)
-	if cell.x < 0:
-		return
-	var idx: int = cell.y - 3
-	if idx >= 0 and idx < ESCAPE_OPTIONS.size():
-		_escape_cursor = idx
-		_confirm_escape()
+	return
 
 
 func _handle_character_mouse_click(mouse_pos: Vector2) -> void:
-	var cell := _mouse_cell_in_control(mouse_pos, _menu_shell)
-	if cell.x < 0:
-		return
-	if cell.y >= int(floor(_menu_shell.size.y / CELL_H)) - 3:
-		_screen = Screen.NONE
-		queue_redraw()
+	return
 
 
 func _handle_help_mouse_click(mouse_pos: Vector2) -> void:
-	if _mouse_in_control(mouse_pos, _menu_shell):
-		_screen = Screen.NONE
-		queue_redraw()
+	return
 
 
 func _handle_reader_mouse_click(mouse_pos: Vector2) -> void:
-	if _reader_item == null:
-		return
-	const VISIBLE_LINES := 18
-	if not _mouse_in_control(mouse_pos, _menu_shell):
-		return
-	var body_rect: Rect2 = _menu_body_text.get_global_rect()
-	var footer_rect: Rect2 = _menu_footer_label.get_global_rect()
-	if footer_rect.has_point(mouse_pos):
-		_screen = Screen.NONE
-		_reader_item = null
-		queue_redraw()
-		return
-	if body_rect.has_point(mouse_pos) and mouse_pos.x >= body_rect.end.x - 48 and mouse_pos.y <= body_rect.position.y + 48 and _reader_scroll > 0:
-		_reader_scroll = maxi(0, _reader_scroll - 1)
-		queue_redraw()
-		return
-	var max_scroll: int = maxi(0, _reader_lines.size() - VISIBLE_LINES)
-	if body_rect.has_point(mouse_pos) and mouse_pos.x >= body_rect.end.x - 48 and mouse_pos.y >= body_rect.end.y - 48 and _reader_scroll < max_scroll:
-		_reader_scroll = mini(_reader_scroll + 1, max_scroll)
-		queue_redraw()
-		return
+	return
 
 
 func _handle_dialogue_mouse_click(mouse_pos: Vector2) -> void:
-	if _dialogue_npc == null:
-		return
-	if not _mouse_in_control(mouse_pos, _menu_shell):
-		return
-	var npc: NpcClass = _dialogue_npc as NpcClass
-	var footer_rect: Rect2 = _menu_footer_label.get_global_rect()
-	if npc.is_merchant and footer_rect.has_point(mouse_pos):
-		var footer_mid: float = footer_rect.position.x + footer_rect.size.x * 0.5
-		if mouse_pos.x <= footer_mid:
-			_open_trade(_dialogue_npc)
-			return
-	_screen = Screen.NONE
-	_dialogue_npc = null
-	queue_redraw()
+	return
 
 
 func _activate_inventory_item(item) -> void:
@@ -1881,23 +2498,7 @@ func _inventory_item_at_row(row: int):
 
 
 func _handle_inventory_mouse_click(mouse_pos: Vector2) -> void:
-	var cell := _mouse_cell_in_control(mouse_pos, _inventory_shell)
-	if cell.x < 0:
-		return
-	if cell.x >= 4 and cell.x < 75:
-		var item = _inventory_item_at_row(cell.y)
-		if item != null:
-			_activate_inventory_item(item)
-			return
-	for si in range(6):
-		var label_row: int = 6 + si * 2
-		if cell.x >= 80 and cell.x < 115 and cell.y >= label_row and cell.y <= label_row + 2:
-			var slot_key: String = [ItemClass.SLOT_WEAPON, ItemClass.SLOT_RANGED, ItemClass.SLOT_BODY, ItemClass.SLOT_FEET, ItemClass.SLOT_HEAD, ItemClass.SLOT_LIGHT][si]
-			var msg: String = _player.unequip(slot_key)
-			if msg != "":
-				_world.add_msg(msg)
-				queue_redraw()
-			return
+	return
 
 
 func _handle_inventory_input(event: InputEvent) -> void:
@@ -2030,35 +2631,21 @@ func _handle_settings_input(event: InputEvent) -> void:
 			KEY_G:
 				GameState.god_mode = not GameState.god_mode
 				queue_redraw()
+			KEY_F:
+				GameState.toggle_font_profile()
+				_apply_font_profile()
+			KEY_V:
+				GameState.use_tileset = not GameState.use_tileset
+				_update_camera()
+				queue_redraw()
 
 
 func _handle_settings_mouse_click(mouse_pos: Vector2) -> void:
-	var cell := _mouse_cell_in_control(mouse_pos, _menu_shell)
-	if cell.x < 0:
-		return
-	match cell.y:
-		3:
-			GameState.auto_pickup = not GameState.auto_pickup
-		4:
-			GameState.debug_tools_enabled = not GameState.debug_tools_enabled
-		5:
-			GameState.god_mode = not GameState.god_mode
-		_:
-			return
-	queue_redraw()
+	return
 
 
 func _handle_attribute_pick_mouse_click(mouse_pos: Vector2) -> void:
-	var cell := _mouse_cell_in_control(mouse_pos, _menu_shell)
-	if cell.x < 0:
-		return
-	for i in range(ATTRIBUTE_OPTIONS.size()):
-		if cell.y == 6 + i:
-			var opt: Dictionary = ATTRIBUTE_OPTIONS[i]
-			if _world.apply_attribute_increase(str(opt.code)):
-				_open_attribute_overlay_if_needed()
-				queue_redraw()
-			return
+	return
 
 
 func _handle_look_input(event: InputEvent) -> void:
@@ -2081,8 +2668,10 @@ func _handle_look_input(event: InputEvent) -> void:
 	if moved:
 		_look_pos.x = clampi(_look_pos.x, 0, _map.width - 1)
 		_look_pos.y = clampi(_look_pos.y, 0, _map.height - 1)
-		_cam_x = clampi(_look_pos.x - (COLS >> 1), 0, _map.width  - COLS)
-		_cam_y = clampi(_look_pos.y - (MAP_ROWS >> 1), 0, _map.height - MAP_ROWS)
+		var vis_cols: int = _map_visible_cols()
+		var vis_rows: int = _map_visible_rows()
+		_cam_x = clampi(_look_pos.x - (vis_cols >> 1), 0, maxi(0, _map.width  - vis_cols))
+		_cam_y = clampi(_look_pos.y - (vis_rows >> 1), 0, maxi(0, _map.height - vis_rows))
 		queue_redraw()
 
 
@@ -2126,8 +2715,10 @@ func _look_description() -> String:
 # ===========================================================================
 
 func _update_camera() -> void:
-	_cam_x = clampi(_player.pos.x - (COLS >> 1), 0, _map.width  - COLS)
-	_cam_y = clampi(_player.pos.y - (MAP_ROWS >> 1), 0, _map.height - MAP_ROWS)
+	var vis_cols: int = _map_visible_cols()
+	var vis_rows: int = _map_visible_rows()
+	_cam_x = clampi(_player.pos.x - (vis_cols >> 1), 0, maxi(0, _map.width  - vis_cols))
+	_cam_y = clampi(_player.pos.y - (vis_rows >> 1), 0, maxi(0, _map.height - vis_rows))
 
 
 func _to_screen(mx: int, my: int) -> Vector2i:
@@ -2135,8 +2726,8 @@ func _to_screen(mx: int, my: int) -> Vector2i:
 
 
 func _on_screen(mx: int, my: int) -> bool:
-	return mx >= _cam_x and mx < _cam_x + COLS \
-	   and my >= _cam_y and my < _cam_y + MAP_ROWS
+	return mx >= _cam_x and mx < _cam_x + _map_visible_cols() \
+	   and my >= _cam_y and my < _cam_y + _map_visible_rows()
 
 
 # ===========================================================================
@@ -2228,17 +2819,7 @@ func _handle_disambig_input(event: InputEvent) -> void:
 
 
 func _handle_disambig_mouse_click(mouse_pos: Vector2) -> void:
-	var cell := _mouse_cell_in_control(mouse_pos, _menu_shell)
-	if cell.x < 0:
-		return
-	for i in range(_disambig_options.size()):
-		if cell.y == 3 + i:
-			_disambig_cursor = i
-			var selected: Dictionary = _disambig_options[i]
-			(selected.callback as Callable).call()
-			return
-	if cell.y >= int(floor(_menu_shell.size.y / CELL_H)) - 3:
-		_close_disambig_overlay()
+	return
 
 
 func _handle_travel_event_input(event: InputEvent) -> void:
@@ -2277,34 +2858,7 @@ func _handle_attribute_pick_input(event: InputEvent) -> void:
 
 
 func _handle_travel_event_mouse_click(mouse_pos: Vector2) -> void:
-	if not _mouse_in_control(mouse_pos, _menu_shell) or not _world.has_pending_travel_event():
-		return
-	var event_data: Dictionary = _world.pending_travel_event
-	var body_rect: Rect2 = _menu_body_text.get_global_rect()
-	if not body_rect.has_point(mouse_pos):
-		return
-	var actions: Array[String] = ["enter"]
-	if bool(event_data.get("can_ignore", false)):
-		actions.append("ignore")
-	if bool(event_data.get("can_flee", false)):
-		actions.append("flee")
-	var option_band_top: float = body_rect.end.y - float(actions.size()) * (CELL_H + 2) - 8.0
-	if mouse_pos.y < option_band_top:
-		return
-	var idx: int = int(floor((mouse_pos.y - option_band_top) / float(CELL_H + 2)))
-	if idx < 0 or idx >= actions.size():
-		return
-	match actions[idx]:
-		"enter":
-			_world.enter_pending_travel_event()
-			_screen = Screen.NONE
-		"ignore":
-			_world.ignore_pending_travel_event()
-			_screen = Screen.WORLD_MAP
-		"flee":
-			var result: Dictionary = _world.attempt_pending_travel_flee()
-			_screen = Screen.NONE if bool(result.get("entered", false)) else Screen.WORLD_MAP
-	queue_redraw()
+	return
 
 
 # ===========================================================================
@@ -2315,13 +2869,15 @@ func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, get_viewport_rect().size), C_BG)
 	if _screen == Screen.WORLD_MAP or _screen == Screen.TRAVEL_EVENT:
 		_draw_world_map()
-		_draw_ui()
 		return
 	_draw_map()
 	_draw_entities()
 	if _screen == Screen.NONE:
+		_draw_hover_path_preview()
+	elif _screen == Screen.TARGET:
+		_draw_target_line_preview()
+	if _screen == Screen.NONE:
 		_draw_hover_cursor()
-	_draw_ui()
 	match _screen:
 		Screen.ESCAPE:       pass
 		Screen.INVENTORY:    pass
@@ -2338,36 +2894,65 @@ func _draw() -> void:
 
 
 func _draw_map() -> void:
-	for vy in range(MAP_ROWS):
-		for vx in range(COLS):
+	var occupied_cells: Dictionary = _visible_entity_screen_positions()
+	for vy in range(_map_visible_rows()):
+		for vx in range(_map_visible_cols()):
 			var mx := vx + _cam_x
 			var my := vy + _cam_y
-			if not _map.is_in_bounds(mx, my) or not _map.explored[my][mx]:
+			if not _map.is_in_bounds(mx, my):
+				continue
+			if not _map.explored[my][mx]:
+				if _tileset_active():
+					draw_rect(_tileset_cell_rect(vx, vy), C_UNEXPLORED_TILESET)
+				else:
+					draw_rect(_ascii_cell_rect(vx, vy), C_BG)
 				continue
 			var tile: int = _map.tiles[my][mx]
 			var lit: bool = _map.visible[my][mx]
-			var ch: String
+			var ch: String = _map.get_glyph_override(mx, my)
 			var color: Color
 			match tile:
 				GameMapClass.TILE_WALL:
-					ch = "#"; color = C_WALL_LIT if lit else C_WALL_DIM
+					if ch == "":
+						ch = "#"
+					color = C_WALL_LIT if lit else _tile_dim_color(tile)
 				GameMapClass.TILE_FLOOR:
-					ch = "."; color = C_FLOOR_LIT if lit else C_FLOOR_DIM
+					if ch == "":
+						ch = "."
+					color = C_FLOOR_LIT if lit else _tile_dim_color(tile)
 				GameMapClass.TILE_SAND:
-					ch = "."; color = C_SAND_LIT if lit else C_SAND_DIM
+					if ch == "":
+						ch = "."
+					color = C_SAND_LIT if lit else _tile_dim_color(tile)
 				GameMapClass.TILE_DUNE:
-					ch = "^"; color = C_DUNE_LIT if lit else C_DUNE_DIM
+					if ch == "":
+						ch = "^"
+					color = C_DUNE_LIT if lit else _tile_dim_color(tile)
 				GameMapClass.TILE_ROCK:
-					ch = "#"; color = C_ROCK_LIT if lit else C_ROCK_DIM
+					if ch == "":
+						ch = "#"
+					color = C_ROCK_LIT if lit else _tile_dim_color(tile)
 				GameMapClass.TILE_WATER:
-					ch = "~"; color = C_WATER_LIT if lit else C_WATER_DIM
+					if ch == "":
+						ch = "~"
+					color = C_WATER_LIT if lit else _tile_dim_color(tile)
 				GameMapClass.TILE_GRASS:
-					ch = "."; color = C_GRASS_LIT if lit else C_GRASS_DIM
+					if ch == "":
+						ch = "."
+					color = C_GRASS_LIT if lit else _tile_dim_color(tile)
 				GameMapClass.TILE_ROAD:
-					ch = "\u2591"; color = C_ROAD_LIT if lit else C_ROAD_DIM
+					if ch == "":
+						ch = "\u2591"
+					color = C_ROAD_LIT if lit else _tile_dim_color(tile)
 				_:
-					ch = "?"; color = Color.WHITE
-			_put(vx, vy, ch, color * _day_tint)
+					if ch == "":
+						ch = "?"
+					color = Color.WHITE
+			var tinted: Color = color * _day_tint
+			if _tileset_active():
+				_draw_tileset_cell(vx, vy, tile, ch, tinted, lit, occupied_cells.has(Vector2i(vx, vy)))
+			else:
+				_draw_ascii_cell(vx, vy, tile, ch, tinted, lit, occupied_cells.has(Vector2i(vx, vy)))
 
 
 func _draw_entities() -> void:
@@ -2385,8 +2970,20 @@ func _draw_entities() -> void:
 		var e = _display_entity_for_cell(cell_map[sp] as Array)
 		if e == null:
 			continue
-		draw_rect(Rect2(sp.x * CELL_W, sp.y * CELL_H, CELL_W, CELL_H), C_BG)
-		_put(sp.x, sp.y, e.char as String, e.color * _day_tint)
+		if _tileset_active():
+			_put_map_fg(sp.x, sp.y, _entity_glyph(e), _tileset_glyph_tint(e.color * _day_tint, true))
+		else:
+			_put_map_fg(sp.x, sp.y, _entity_glyph(e), _ascii_glyph_tint(e.color * _day_tint, true))
+
+
+func _visible_entity_screen_positions() -> Dictionary:
+	var occupied: Dictionary = {}
+	for e in _map.entities:
+		if not _on_screen(e.pos.x, e.pos.y) or not _map.visible[e.pos.y][e.pos.x]:
+			continue
+		var sp := _to_screen(e.pos.x, e.pos.y)
+		occupied[Vector2i(sp.x, sp.y)] = true
+	return occupied
 
 
 func _display_entity_for_cell(entities_on_cell: Array):
@@ -2411,18 +3008,14 @@ func _display_entity_for_cell(entities_on_cell: Array):
 	return best
 
 
-func _draw_ui() -> void:
-	return
-
-
 func _sky_track() -> String:
-	const TRACK_LEN: int = 19
+	const TRACK_LEN: int = 17
 	var t: float = _world.time_of_day
 	var is_night: bool = _world.is_night
 	var body: String = "o" if is_night else "*"
 	var travel_t: float
 	if is_night:
-		travel_t = t / 0.20 if t < 0.20 else (t - 0.80) / 0.20
+		travel_t = (t + 0.20) / 0.40 if t < 0.20 else (t - 0.80) / 0.40
 	else:
 		travel_t = (t - 0.20) / 0.60
 	travel_t = clampf(travel_t, 0.0, 1.0)
@@ -2433,12 +3026,62 @@ func _sky_track() -> String:
 	return "[%s]" % track
 
 
+func _sidebar_target_enemy():
+	if _world == null or _map == null:
+		return null
+	var best = null
+	var best_dist: int = 999999
+	for e in _map.entities:
+		if not (e is ActorClass) or e == _player:
+			continue
+		if e.ai == null or e.ai.get_script() == null or str(e.ai.get_script().resource_path) != "res://scripts/components/hostile_ai.gd":
+			continue
+		if not _map.visible[e.pos.y][e.pos.x]:
+			continue
+		var dist: int = maxi(absi(e.pos.x - _player.pos.x), absi(e.pos.y - _player.pos.y))
+		if dist < best_dist:
+			best = e
+			best_dist = dist
+	return best
+
+
+func _sidebar_hp_bar(actor: ActorClass) -> String:
+	if actor == null or actor.max_hp <= 0:
+		return "[-----]"
+	const BAR_LEN: int = 5
+	var filled: int = int(round((float(actor.hp) / float(actor.max_hp)) * float(BAR_LEN)))
+	filled = clampi(filled, 0, BAR_LEN)
+	return "[%s%s]" % ["#".repeat(filled), "-".repeat(BAR_LEN - filled)]
+
+
+func _sidebar_nearby_hostiles() -> Array[String]:
+	var lines: Array[String] = []
+	if _world == null or _map == null:
+		return lines
+	var hostiles: Array = []
+	for e in _map.entities:
+		if not (e is ActorClass) or e == _player:
+			continue
+		if e.ai == null or e.ai.get_script() == null or str(e.ai.get_script().resource_path) != "res://scripts/components/hostile_ai.gd":
+			continue
+		if not _map.visible[e.pos.y][e.pos.x]:
+			continue
+		var dist: int = maxi(absi(e.pos.x - _player.pos.x), absi(e.pos.y - _player.pos.y))
+		hostiles.append({"actor": e, "dist": dist})
+	hostiles.sort_custom(func(a, b): return int(a.dist) < int(b.dist))
+	for i in range(mini(4, hostiles.size())):
+		var actor: ActorClass = hostiles[i].actor as ActorClass
+		var dist: int = int(hostiles[i].dist)
+		lines.append("%s (%d)" % [str(actor.name).capitalize(), dist])
+	return lines
+
+
 func _target_description() -> String:
 	var weapon = _world.get_equipped_ranged_weapon()
 	if weapon == null:
 		return "No ranged weapon readied."
 	var ammo = _world.get_matching_ammo(weapon)
-	var range_str := "range %d" % int((weapon as ItemClass).ranged_range)
+	var range_str := "range %d" % int((weapon as ItemClass).weapon_range)
 	var ammo_str := "no ammo"
 	if ammo != null:
 		ammo_str = "%s %s" % [(ammo as ItemClass).name, (ammo as ItemClass).stack_label()]
@@ -2456,270 +3099,13 @@ func _world_map_look_label() -> String:
 		return str(village.name)
 	return _biome_name(_world.get_chunk_biome(_world_look_cursor))
 
-
-# ---------------------------------------------------------------------------
-# Overlay: escape menu
-# ---------------------------------------------------------------------------
-func _draw_escape_menu() -> void:
-	const BOX_W := 52
-	const BOX_H := 12
-	const BOX_X := (COLS - BOX_W) >> 1
-	const BOX_Y := (MAP_ROWS - BOX_H) >> 1
-
-	draw_rect(Rect2(Vector2.ZERO, Vector2(COLS * CELL_W, ROWS * CELL_H)), Color(0, 0, 0, 0.65))
-	draw_rect(Rect2(BOX_X * CELL_W, BOX_Y * CELL_H, BOX_W * CELL_W, BOX_H * CELL_H), C_BG)
-	_draw_box(BOX_X, BOX_Y, BOX_W, BOX_H)
-
-	var title := "-=[ PAUSED ]=-"
-	_puts(BOX_X + ((BOX_W - title.length()) >> 1), BOX_Y + 1, title, C_STATUS)
-
-	for i in range(ESCAPE_OPTIONS.size()):
-		var color  := C_STATUS if i == _escape_cursor else C_MSG_OLD
-		var prefix := "> " if i == _escape_cursor else "  "
-		_puts(BOX_X + 2, BOX_Y + 3 + i, prefix + ESCAPE_OPTIONS[i], color)
-
-	var hint := "enter: select   esc: resume"
-	_puts(BOX_X + ((BOX_W - hint.length()) >> 1), BOX_Y + BOX_H - 2, hint, C_DIVIDER)
-
-
-# ---------------------------------------------------------------------------
-# Overlay: settings
-# ---------------------------------------------------------------------------
-func _draw_settings() -> void:
-	const BOX_W := 54
-	const BOX_H := 13
-	const BOX_X := (COLS - BOX_W) >> 1
-	const BOX_Y := (MAP_ROWS - BOX_H) >> 1
-
-	draw_rect(Rect2(Vector2.ZERO, Vector2(COLS * CELL_W, ROWS * CELL_H)), Color(0, 0, 0, 0.65))
-	draw_rect(Rect2(BOX_X * CELL_W, BOX_Y * CELL_H, BOX_W * CELL_W, BOX_H * CELL_H), C_BG)
-	_draw_box(BOX_X, BOX_Y, BOX_W, BOX_H)
-
-	var title := "-=[ SETTINGS ]=-"
-	_puts(BOX_X + ((BOX_W - title.length()) >> 1), BOX_Y + 1, title, C_STATUS)
-
-	var ap_val  := "ON " if GameState.auto_pickup else "OFF"
-	var dbg_val := "ON " if GameState.debug_tools_enabled else "OFF"
-	var god_val := "ON " if GameState.god_mode    else "OFF"
-	_puts(BOX_X + 2, BOX_Y + 3, "a) Auto-pickup items:  %s" % ap_val,  C_MSG_RECENT)
-	_puts(BOX_X + 2, BOX_Y + 4, "d) Debug tools:        %s" % dbg_val,
-		Color(0.72, 0.88, 1.0) if GameState.debug_tools_enabled else C_MSG_RECENT)
-	_puts(BOX_X + 2, BOX_Y + 5, "g) God mode:           %s" % god_val,
-		Color(1.0, 0.85, 0.2) if GameState.god_mode else C_MSG_RECENT)
-
-	var hint := "esc: back"
-	_puts(BOX_X + ((BOX_W - hint.length()) >> 1), BOX_Y + BOX_H - 2, hint, C_DIVIDER)
-
-
-# ---------------------------------------------------------------------------
-# Overlay: inventory
-# ---------------------------------------------------------------------------
-func _draw_inventory() -> void:
-	const BOX_X := 2
-	const BOX_Y := 1
-	const BOX_W := 116
-	const BOX_H := 32
-	const LEFT_X := BOX_X + 2
-	const RIGHT_X := BOX_X + 77
-	const LEFT_W := 70
-	const RIGHT_W := 35
-
-	draw_rect(Rect2(Vector2.ZERO, Vector2(COLS * CELL_W, ROWS * CELL_H)), Color(0, 0, 0, 0.85))
-	draw_rect(Rect2(BOX_X * CELL_W, BOX_Y * CELL_H, BOX_W * CELL_W, BOX_H * CELL_H), C_BG)
-	_draw_box(BOX_X, BOX_Y, BOX_W, BOX_H)
-
-	var title := "-=[ INVENTORY ]=-"
-	_puts(BOX_X + ((BOX_W - title.length()) >> 1), BOX_Y, title, C_STATUS)
-	for dy in range(2, BOX_H - 1):
-		_puts(BOX_X + 73, BOX_Y + dy, "|", C_DIVIDER)
-
-	# Left panel: grouped inventory list, closer to a classic roguelike gear view.
-	var load_header := "PACK"
-	var load_value := "[%s / %s]" % [_format_lbs(_player.total_carry_weight), _format_lbs(_player.max_carry_weight)]
-	_puts(LEFT_X, BOX_Y + 2, load_header, C_STATUS)
-	_puts(LEFT_X + LEFT_W - load_value.length(), BOX_Y + 2, load_value, C_STATUS)
-
-	var section_order := ["weapons", "ammo", "armor", "lights", "consumables", "goods", "tablets", "other"]
-	var section_items: Dictionary = {}
-	for section_key in section_order:
-		section_items[section_key] = []
-	for item in _player.inventory:
-		var section_key := _inventory_section_key(item)
-		(section_items[section_key] as Array).append(item)
-
-	var row: int = BOX_Y + 4
-	var next_letter_ord: int = ord("a")
-	for section_key in section_order:
-		var items: Array = section_items[section_key]
-		if items.is_empty():
-			continue
-		var section_weight: int = 0
-		for item in items:
-			section_weight += int(item.total_weight())
-		var section_label := "[-] %s" % _inventory_section_title(section_key)
-		var section_value := "[%s]" % _format_lbs(section_weight)
-		_puts(LEFT_X, row, section_label, C_STATUS)
-		_puts(LEFT_X + LEFT_W - section_value.length(), row, section_value, C_STATUS)
-		row += 1
-
-		for item in items:
-			if row >= BOX_Y + BOX_H - 3:
-				break
-			var letter := "?"
-			if next_letter_ord <= ord("z"):
-				letter = char(next_letter_ord)
-			var detail: String = _inventory_item_detail(item)
-			var item_name: String = item.name
-			if item.stack_label() != "":
-				item_name += " %s" % item.stack_label()
-			var detail_col: String = "%-16s" % detail if not detail.is_empty() else "                "
-			var weight_col := "[%s]" % item.weight_label()
-			_puts(LEFT_X + 2, row,
-				"%s) %-24s %s %s" % [letter, item_name.left(24), detail_col, weight_col],
-				C_MSG_RECENT)
-			next_letter_ord += 1
-			row += 1
-		row += 1
-
-	if _player.inventory.is_empty():
-		_puts(LEFT_X, BOX_Y + 5, "Your pack is empty.", C_MSG_OLD)
-
-	# Bottom-left summary block.
-	_puts(LEFT_X, BOX_Y + BOX_H - 6, "Carry: %s / %s" %
-		[_format_lbs(_player.total_carry_weight), _format_lbs(_player.max_carry_weight)], C_MSG_RECENT)
-	_puts(LEFT_X, BOX_Y + BOX_H - 5, "STR bonus: %+d lbs." %
-		(_player.max_carry_weight - ActorClass.BASE_CARRY_WEIGHT), C_MSG_RECENT)
-	_puts(LEFT_X, BOX_Y + BOX_H - 4, "Gold: %d" % _player.gold, C_GOLD)
-
-	# Right panel: equipment only.
-	_puts(RIGHT_X, BOX_Y + 2, "LOADOUT", C_STATUS)
-	_puts(RIGHT_X, BOX_Y + 4, "EQUIPPED", C_STATUS)
-	var slot_rows: Array = [
-		[ItemClass.SLOT_WEAPON, "w) WEAPON"],
-		[ItemClass.SLOT_RANGED, "r) RANGED"],
-		[ItemClass.SLOT_BODY,   "b) BODY  "],
-		[ItemClass.SLOT_FEET,   "f) FEET  "],
-		[ItemClass.SLOT_HEAD,   "h) HEAD  "],
-		[ItemClass.SLOT_LIGHT,  "u) LIGHT "],
-	]
-	for si in range(slot_rows.size()):
-		var sdata: Array  = slot_rows[si]
-		var s_key: String = str(sdata[0])
-		var s_lbl: String = str(sdata[1])
-		var eq    = _player.equipped.get(s_key)
-		if eq != null:
-			var eq_item: ItemClass = eq as ItemClass
-			var bonus_str := _inventory_item_detail(eq_item)
-			var weight_str := "[%s]" % eq_item.weight_label()
-			_puts(RIGHT_X, BOX_Y + 6 + si * 2,
-				"%s" % s_lbl, C_STATUS)
-			_puts(RIGHT_X + 2, BOX_Y + 7 + si * 2, eq_item.name.left(18), C_MSG_RECENT)
-			_puts(RIGHT_X + RIGHT_W - weight_str.length(), BOX_Y + 7 + si * 2, weight_str, C_MSG_RECENT)
-			if not bonus_str.is_empty():
-				_puts(RIGHT_X + 2, BOX_Y + 8 + si * 2, bonus_str.left(RIGHT_W - 4), C_MSG_OLD)
-		else:
-			_puts(RIGHT_X, BOX_Y + 6 + si * 2, "%s" % s_lbl, C_STATUS)
-			_puts(RIGHT_X + 2, BOX_Y + 7 + si * 2, "-", C_MSG_OLD)
-
-	var left_hint := "[a-z] use / equip / read"
-	var right_hint := "[w/r/b/f/h/u] unequip  [Esc] close"
-	_puts(LEFT_X + ((LEFT_W - left_hint.length()) >> 1), BOX_Y + BOX_H - 2, left_hint, C_DIVIDER)
-	_puts(RIGHT_X + ((RIGHT_W - right_hint.length()) >> 1), BOX_Y + BOX_H - 2, right_hint, C_DIVIDER)
-
-
-# ---------------------------------------------------------------------------
-# Overlay: character sheet
-# ---------------------------------------------------------------------------
-func _draw_character_sheet() -> void:
-	const BOX_X := 35
-	const BOX_Y := 4
-	const BOX_W := 50
-	const BOX_H := 24
-
-	draw_rect(Rect2(Vector2.ZERO, Vector2(COLS * CELL_W, ROWS * CELL_H)), Color(0, 0, 0, 0.80))
-	draw_rect(Rect2(BOX_X * CELL_W, BOX_Y * CELL_H, BOX_W * CELL_W, BOX_H * CELL_H), C_BG)
-	_draw_box(BOX_X, BOX_Y, BOX_W, BOX_H)
-
-	var title := "-=[ CHARACTER ]=-"
-	_puts(BOX_X + ((BOX_W - title.length()) >> 1), BOX_Y, title, C_STATUS)
-
-	var r := BOX_Y + 2
-	_stat_line(BOX_X + 4, r, "Name",  GameState.player_name);                       r += 1
-	_stat_line(BOX_X + 4, r, "Class", GameState.player_class.capitalize());          r += 1
-	_stat_line(BOX_X + 4, r, "Level", str(_player.level));                           r += 1
-	_stat_line(BOX_X + 4, r, "XP",    "%d / %d" % [_player.xp, _player.xp_to_next]); r += 1
-	var mount = _world.get_player_mount()
-	_stat_line(BOX_X + 4, r, "Mount", mount.name.capitalize() if mount != null else "None"); r += 1
-	r += 1
-	_stat_line(BOX_X + 4, r, "Floor", "HUB" if _world.debug_hub_active else str(_floor)); r += 1
-	r += 1
-	_stat_line(BOX_X + 4, r, "HP",    "%d / %d" % [_player.hp, _player.max_hp]);    r += 1
-	var atk_total: int = _player.power + _player.total_attack_bonus
-	var atk_str := "1d6+%d" % atk_total
-	if _player.total_attack_bonus > 0:
-		atk_str += "  (+%d from gear)" % _player.total_attack_bonus
-	_stat_line(BOX_X + 4, r, "Attack", atk_str); r += 1
-	var ranged_weapon = _player.equipped.get(ItemClass.SLOT_RANGED)
-	var ranged_str := "none"
-	if ranged_weapon != null:
-		var ammo = _world.get_matching_ammo(ranged_weapon)
-		var ammo_suffix := ""
-		if ammo != null:
-			ammo_suffix = "  [%d]" % (ammo as ItemClass).stack_count()
-		ranged_str = "%s  1d6+%d%s" % [(ranged_weapon as ItemClass).name, _player.dex_mod + _player.total_ranged_bonus, ammo_suffix]
-	_stat_line(BOX_X + 4, r, "Ranged", ranged_str); r += 1
-	var ac_str := str(_player.ac)
-	if _player.total_defense_bonus > 0:
-		ac_str += "  (+%d from gear)" % _player.total_defense_bonus
-	_stat_line(BOX_X + 4, r, "AC", ac_str); r += 1
-	r += 1
-	_stat_line(BOX_X + 4, r, "Gold", str(_player.gold), C_GOLD); r += 1
-	_stat_line(BOX_X + 4, r, "Carry",
-		"%s / %s" % [_format_lbs(_player.total_carry_weight), _format_lbs(_player.max_carry_weight)]); r += 1
-	_stat_line(BOX_X + 4, r, "STR Carry",
-		"%+d lbs." % (_player.max_carry_weight - ActorClass.BASE_CARRY_WEIGHT)); r += 1
-	r += 1
-	_stat_line(BOX_X + 4, r, "STR", "%d (%+d)" % [_player.str_score, _player.str_mod]); r += 1
-	_stat_line(BOX_X + 4, r, "DEX", "%d (%+d)" % [_player.dex_score, _player.dex_mod]); r += 1
-	_stat_line(BOX_X + 4, r, "CON", "%d (%+d)" % [_player.con_score, _player.con_mod]); r += 1
-	_stat_line(BOX_X + 4, r, "INT", "%d (%+d)" % [_player.int_score, _player.int_mod]); r += 1
-	_stat_line(BOX_X + 4, r, "WIS", "%d (%+d)" % [_player.wis_score, _player.wis_mod]); r += 1
-	_stat_line(BOX_X + 4, r, "CHA", "%d (%+d)" % [_player.cha_score, _player.cha_mod]); r += 1
-
-	var hint := "[Esc] close"
-	_puts(BOX_X + ((BOX_W - hint.length()) >> 1), BOX_Y + BOX_H - 2, hint, C_DIVIDER)
-
-
-func _draw_attribute_pick_overlay() -> void:
-	const BOX_X := 34
-	const BOX_Y := 13
-	const BOX_W := 52
-	const BOX_H := 14
-
-	draw_rect(Rect2(Vector2.ZERO, Vector2(COLS * CELL_W, ROWS * CELL_H)), Color(0, 0, 0, 0.84))
-	draw_rect(Rect2(BOX_X * CELL_W, BOX_Y * CELL_H, BOX_W * CELL_W, BOX_H * CELL_H), C_BG)
-	_draw_box(BOX_X, BOX_Y, BOX_W, BOX_H)
-
-	var title := "-=[ ATTRIBUTE INCREASE ]=-"
-	_puts(BOX_X + ((BOX_W - title.length()) >> 1), BOX_Y, title, C_STATUS)
-	_puts(BOX_X + 4, BOX_Y + 2, "Choose an attribute to raise by 1.", C_MSG_RECENT)
-	_puts(BOX_X + 4, BOX_Y + 3, "Unspent points: %d" % _player.unspent_attribute_points, C_STATUS)
-
-	for i in range(ATTRIBUTE_OPTIONS.size()):
-		var opt: Dictionary = ATTRIBUTE_OPTIONS[i]
-		var score: int = int(_player.get("%s_score" % str(opt.code)))
-		_puts(BOX_X + 4, BOX_Y + 5 + i,
-			"[%s] %-12s %2d -> %2d" % [char(int(opt.key)), str(opt.label), score, score + 1],
-			C_MSG_RECENT)
-
-
 # ---------------------------------------------------------------------------
 # Overlay: look mode
 # ---------------------------------------------------------------------------
 func _draw_look_cursor() -> void:
 	var sp := _to_screen(_look_pos.x, _look_pos.y)
 	draw_rect(
-		Rect2(sp.x * CELL_W, sp.y * CELL_H, CELL_W, CELL_H),
+		Rect2(sp.x * _map_cell_w(), sp.y * _map_cell_h(), _map_cell_w(), _map_cell_h()),
 		Color(0.20, 0.75, 0.90, 0.40)
 	)
 
@@ -2727,304 +3113,90 @@ func _draw_look_cursor() -> void:
 func _draw_target_cursor() -> void:
 	if not _on_screen(_target_pos.x, _target_pos.y):
 		return
-	for point in _world._bresenham_line(_player.pos, _target_pos):
-		if point == _player.pos or not _on_screen(point.x, point.y):
-			continue
-		var line_sp := _to_screen(point.x, point.y)
-		draw_rect(
-			Rect2(line_sp.x * CELL_W, line_sp.y * CELL_H, CELL_W, CELL_H),
-			Color(0.80, 0.20, 0.10, 0.14)
-		)
 	var sp := _to_screen(_target_pos.x, _target_pos.y)
 	draw_rect(
-		Rect2(sp.x * CELL_W, sp.y * CELL_H, CELL_W, CELL_H),
+		Rect2(sp.x * _map_cell_w(), sp.y * _map_cell_h(), _map_cell_w(), _map_cell_h()),
 		Color(0.92, 0.28, 0.12, 0.42)
 	)
 
 
 func _draw_hover_cursor() -> void:
-	if not _hover_active or not _on_screen(_hover_pos.x, _hover_pos.y):
+	if _auto_move_mode != AutoMoveMode.NONE or not _hover_active or not _on_screen(_hover_pos.x, _hover_pos.y):
 		return
 	var sp := _to_screen(_hover_pos.x, _hover_pos.y)
 	draw_rect(
-		Rect2(sp.x * CELL_W, sp.y * CELL_H, CELL_W, CELL_H),
+		Rect2(sp.x * _map_cell_w(), sp.y * _map_cell_h(), _map_cell_w(), _map_cell_h()),
 		Color(0.85, 0.72, 0.20, 0.24)
 	)
 
 
-# ---------------------------------------------------------------------------
-# Overlay: reader screen (clay tablets, scrolls, etc.)
-# ---------------------------------------------------------------------------
-func _draw_reader_screen() -> void:
-	if _reader_item == null:
+func _refresh_hover_path_preview() -> void:
+	_hover_path.clear()
+	if _auto_move_mode != AutoMoveMode.NONE or _screen != Screen.NONE or not _hover_active or _world == null or _map == null:
 		return
-	const BOX_X := 6
-	const BOX_Y := 3
-	const BOX_W := 108
-	const BOX_H := 24
-	const TEXT_X := BOX_X + 4
-	const TEXT_W := BOX_W - 8
-	const VISIBLE_LINES := 18
-
-	draw_rect(Rect2(Vector2.ZERO, Vector2(COLS * CELL_W, ROWS * CELL_H)), Color(0, 0, 0, 0.88))
-	draw_rect(Rect2(BOX_X * CELL_W, BOX_Y * CELL_H, BOX_W * CELL_W, BOX_H * CELL_H),
-			Color(0.12, 0.09, 0.05))
-	_draw_box(BOX_X, BOX_Y, BOX_W, BOX_H)
-
-	var title := "-=[ %s ]=-" % _reader_item.name.to_upper()
-	_puts(BOX_X + ((BOX_W - title.length()) >> 1), BOX_Y, title, C_STATUS)
-
-	var visible := _reader_lines.slice(_reader_scroll, _reader_scroll + VISIBLE_LINES)
-	for i in range(visible.size()):
-		_puts(TEXT_X, BOX_Y + 2 + i, str(visible[i]), C_MSG_RECENT)
-
-	# Scroll indicators
-	if _reader_scroll > 0:
-		_puts(BOX_X + BOX_W - 4, BOX_Y + 2, "/\\", C_DIVIDER)
-	if _reader_scroll + VISIBLE_LINES < _reader_lines.size():
-		_puts(BOX_X + BOX_W - 4, BOX_Y + BOX_H - 3, "\\/", C_DIVIDER)
-
-	var hint := "[Esc / Space] close   [Up / Down] scroll"
-	_puts(BOX_X + ((BOX_W - hint.length()) >> 1), BOX_Y + BOX_H - 2, hint, C_DIVIDER)
-
-
-# ---------------------------------------------------------------------------
-# Overlay: disambiguation
-# ---------------------------------------------------------------------------
-func _draw_disambig_overlay() -> void:
-	const PAD := 3
-	var box_w: int = 44
-	for opt: Dictionary in _disambig_options:
-		var w: int = (opt.label as String).length() + 10
-		if w > box_w:
-			box_w = w
-	var box_h: int = _disambig_options.size() + 6
-	var box_x: int = (COLS - box_w) >> 1
-	var box_y: int = (MAP_ROWS - box_h) >> 1
-
-	draw_rect(Rect2(Vector2.ZERO, Vector2(COLS * CELL_W, ROWS * CELL_H)), Color(0, 0, 0, 0.70))
-	draw_rect(Rect2(box_x * CELL_W, box_y * CELL_H, box_w * CELL_W, box_h * CELL_H), C_BG)
-	_draw_box(box_x, box_y, box_w, box_h)
-
-	_puts(box_x + ((box_w - _disambig_prompt.length()) >> 1), box_y + 1, _disambig_prompt, C_STATUS)
-
-	for i in range(_disambig_options.size()):
-		var opt: Dictionary = _disambig_options[i]
-		var arrow := "?"
-		match int(opt.key):
-			KEY_UP:    arrow = "^"
-			KEY_DOWN:  arrow = "v"
-			KEY_LEFT:  arrow = "<"
-			KEY_RIGHT: arrow = ">"
-			_:         arrow = char(int(opt.key))
-		var prefix: String = "> " if i == _disambig_cursor else "  "
-		var color: Color = C_STATUS if i == _disambig_cursor else C_MSG_RECENT
-		_puts(box_x + PAD, box_y + 3 + i,
-			"%s[%s]  %s" % [prefix, arrow, str(opt.label)], color)
-
-	_puts(box_x + ((box_w - 25) >> 1), box_y + box_h - 2, "[Enter] confirm  [Esc] cancel", C_DIVIDER)
-
-
-func _draw_travel_event_overlay() -> void:
-	if not _world.has_pending_travel_event():
+	if _hover_pos == _player.pos:
 		return
-	var event_data: Dictionary = _world.pending_travel_event
-	var desc_lines: Array[String] = _word_wrap(str(event_data.get("desc", "")), 48)
-	var options: Array[String] = ["[E] Enter the chunk"]
-	if bool(event_data.get("can_ignore", false)):
-		options.append("[I] Ignore and continue")
-	if bool(event_data.get("can_flee", false)):
-		options.append("[F] Attempt to flee")
-
-	const BOX_W := 58
-	var box_h: int = 8 + desc_lines.size() + options.size()
-	var box_x: int = (COLS - BOX_W) >> 1
-	var box_y: int = (MAP_ROWS - box_h) >> 1
-
-	draw_rect(Rect2(Vector2.ZERO, Vector2(COLS * CELL_W, ROWS * CELL_H)), Color(0, 0, 0, 0.72))
-	draw_rect(Rect2(box_x * CELL_W, box_y * CELL_H, BOX_W * CELL_W, box_h * CELL_H), C_BG)
-	_draw_box(box_x, box_y, BOX_W, box_h)
-
-	var title := "-=[ %s ]=-" % str(event_data.get("title", "TRAVEL EVENT"))
-	_puts(box_x + ((BOX_W - title.length()) >> 1), box_y + 1, title, C_STATUS)
-
-	for i in range(desc_lines.size()):
-		_puts(box_x + 4, box_y + 3 + i, desc_lines[i], C_MSG_RECENT)
-	for i in range(options.size()):
-		_puts(box_x + 4, box_y + 5 + desc_lines.size() + i, options[i], C_STATUS)
-
-
-# ---------------------------------------------------------------------------
-# Overlay: help screen
-# ---------------------------------------------------------------------------
-func _draw_help_screen() -> void:
-	const BOX_X := 4
-	const BOX_Y := 1
-	const BOX_W := 112
-	const BOX_H := 33
-	const COL1  := BOX_X + 3
-	const COL2  := BOX_X + 38
-	const COL3  := BOX_X + 74
-
-	draw_rect(Rect2(Vector2.ZERO, Vector2(COLS * CELL_W, ROWS * CELL_H)), Color(0, 0, 0, 0.88))
-	draw_rect(Rect2(BOX_X * CELL_W, BOX_Y * CELL_H, BOX_W * CELL_W, BOX_H * CELL_H), C_BG)
-	_draw_box(BOX_X, BOX_Y, BOX_W, BOX_H)
-
-	var title := "-=[ KEYBINDS ]=-"
-	_puts(BOX_X + ((BOX_W - title.length()) >> 1), BOX_Y, title, C_STATUS)
-
-	var r := BOX_Y + 2
-
-	# Column 1 — Movement
-	_puts(COL1, r, "MOVEMENT", C_STATUS); r += 1
-	_help_row(COL1, r, "arrows / numpad", "move");           r += 1
-	_help_row(COL1, r, "numpad 7/9/1/3",  "diagonal move");  r += 1
-	_help_row(COL1, r, "numpad 5 / .",    "wait one turn");   r += 1
-	r += 1
-	_puts(COL1, r, "ACTIONS", C_STATUS); r += 1
-	_help_row(COL1, r, "m",           "mount / dismount");       r += 1
-	_help_row(COL1, r, "g",           "pick up items");           r += 1
-	_help_row(COL1, r, "s",           "skin/butcher carcass");    r += 1
-	_help_row(COL1, r, "t",           "trade (near merchant)");   r += 1
-	_help_row(COL1, r, "f",           "fire ranged weapon");      r += 1
-	_help_row(COL1, r, "Shift+dir",   "force attack (any NPC)");  r += 1
-	_help_row(COL1, r, ">",           "descend / enter");         r += 1
-	_help_row(COL1, r, "<",           "ascend / world map");      r += 1
-
-	# Column 2 — Menus
-	r = BOX_Y + 2
-	_puts(COL2, r, "MENUS", C_STATUS); r += 1
-	_help_row(COL2, r, "i",    "inventory");        r += 1
-	_help_row(COL2, r, "c",    "character sheet");  r += 1
-	_help_row(COL2, r, "l",    "look mode");        r += 1
-	_help_row(COL2, r, "Shift+D", "debug hub");     r += 1
-	_help_row(COL2, r, "?",    "this help screen"); r += 1
-	_help_row(COL2, r, "Esc",  "pause menu");       r += 1
-	r += 1
-	_puts(COL2, r, "INVENTORY", C_STATUS); r += 1
-	_help_row(COL2, r, "a-z",    "use / equip item"); r += 1
-	_help_row(COL2, r, "w/r/b/f/h/u","unequip slot");   r += 1
-	r += 1
-	_puts(COL2, r, "TRADE", C_STATUS); r += 1
-	_help_row(COL2, r, "a-z",       "buy item");  r += 1
-	_help_row(COL2, r, "Tab + A-Z", "sell item"); r += 1
-	_help_row(COL2, r, "Esc",       "leave");     r += 1
-
-	# Column 3 — World map
-	r = BOX_Y + 2
-	_puts(COL3, r, "WORLD MAP", C_STATUS); r += 1
-	_help_row(COL3, r, "arrows", "travel between chunks"); r += 1
-	_help_row(COL3, r, "l",      "toggle look cursor");    r += 1
-	_help_row(COL3, r, ">",      "enter chunk view");      r += 1
-	_help_row(COL3, r, "Esc",    "close silently");        r += 1
-
-	_puts(BOX_X + ((BOX_W - 20) >> 1), BOX_Y + BOX_H - 2, "any key to close", C_DIVIDER)
-
-
-func _help_row(x: int, y: int, key: String, desc: String) -> void:
-	_puts(x,      y, "%-16s" % key, C_STATUS)
-	_puts(x + 16, y, desc,          C_MSG_RECENT)
-
-
-# ---------------------------------------------------------------------------
-# Overlay: trade screen
-# ---------------------------------------------------------------------------
-# Overlay: dialogue panel
-# ---------------------------------------------------------------------------
-func _draw_dialogue_screen() -> void:
-	if _dialogue_npc == null:
+	if not _map.is_in_bounds(_hover_pos.x, _hover_pos.y) or not _map.explored[_hover_pos.y][_hover_pos.x]:
 		return
-	const BOX_X := 2
-	const BOX_Y := 30
-	const BOX_W := 116
-	const BOX_H := 9
-	const TEXT_X := BOX_X + 4
-	const TEXT_W := BOX_W - 8
-
-	# Dim only the bottom portion so the map stays readable above.
-	draw_rect(Rect2(BOX_X * CELL_W, BOX_Y * CELL_H, BOX_W * CELL_W, BOX_H * CELL_H),
-			Color(0.08, 0.05, 0.03, 0.96))
-	_draw_box(BOX_X, BOX_Y, BOX_W, BOX_H)
-
-	var npc: NpcClass = _dialogue_npc as NpcClass
-	var title := "-=[ %s ]=-" % npc.name.to_upper()
-	_puts(BOX_X + ((BOX_W - title.length()) >> 1), BOX_Y, title, C_STATUS)
-
-	# Word-wrap the dialogue line into the box.
-	var wrapped: Array[String] = _word_wrap(_dialogue_line, TEXT_W)
-	for i in range(mini(wrapped.size(), 4)):
-		_puts(TEXT_X, BOX_Y + 2 + i, str(wrapped[i]), C_MSG_RECENT)
-
-	var hint := "[Space] Next   [T] Trade   [Esc] Close"
-	if not npc.is_merchant:
-		hint = "[Any key] Close"
-	else:
-		hint = "[T] Trade   [Any other key] Close"
-	_puts(BOX_X + ((BOX_W - hint.length()) >> 1), BOX_Y + BOX_H - 2, hint, C_DIVIDER)
-
-
-# ---------------------------------------------------------------------------
-func _draw_trade_screen() -> void:
-	if _trade_npc == null:
+	if not _map.is_walkable(_hover_pos.x, _hover_pos.y):
 		return
-	var npc: NpcClass = _trade_npc as NpcClass
+	var blocker = _map.get_blocking_entity_at(_hover_pos.x, _hover_pos.y)
+	if blocker != null and blocker != _player:
+		return
+	_hover_path = _world._path_to(_hover_pos, true)
 
-	const BOX_X := 2
-	const BOX_Y := 1
-	const BOX_W := 116
-	const BOX_H := 32
-	const BUY_X  := BOX_X + 2
-	const SELL_X := BOX_X + 60
 
-	draw_rect(Rect2(Vector2.ZERO, Vector2(COLS * CELL_W, ROWS * CELL_H)), Color(0, 0, 0, 0.85))
-	draw_rect(Rect2(BOX_X * CELL_W, BOX_Y * CELL_H, BOX_W * CELL_W, BOX_H * CELL_H), C_BG)
-	_draw_box(BOX_X, BOX_Y, BOX_W, BOX_H)
+func _draw_hover_path_preview() -> void:
+	if _auto_move_mode != AutoMoveMode.NONE or _hover_path.is_empty():
+		return
+	for step in _hover_path:
+		if not _on_screen(step.x, step.y):
+			continue
+		var sp := _to_screen(step.x, step.y)
+		var glyph := "X" if step == _hover_pos else "•"
+		var color := Color(0.96, 0.96, 0.92, 0.86) if step == _hover_pos else Color(0.90, 0.90, 0.86, 0.62)
+		_put_map_fg(sp.x, sp.y, glyph, color)
 
-	var title := "-=[ TRADE: %s ]=-" % npc.name.capitalize()
-	_puts(BOX_X + ((BOX_W - title.length()) >> 1), BOX_Y, title, C_STATUS)
 
-	for dy in range(2, BOX_H - 1):
-		_puts(BOX_X + 57, BOX_Y + dy, "|", C_DIVIDER)
+func _target_preview_validity() -> Dictionary:
+	var result := {"line": [], "valid": false}
+	if _world == null or _map == null or not _map.is_in_bounds(_target_pos.x, _target_pos.y):
+		return result
+	var weapon = _world.get_equipped_ranged_weapon()
+	if weapon == null:
+		return result
+	var line: Array = _world._bresenham_line(_player.pos, _target_pos)
+	result.line = line
+	if _world._cheb(_player.pos, _target_pos) > int((weapon as ItemClass).weapon_range):
+		return result
+	for i in range(1, line.size()):
+		var pos: Vector2i = line[i]
+		if not _map.is_in_bounds(pos.x, pos.y):
+			return result
+		if not _map.is_transparent(pos.x, pos.y):
+			if pos == _target_pos:
+				result.valid = true
+			return result
+		var actor_on_tile = _map.get_blocking_entity_at(pos.x, pos.y)
+		if actor_on_tile is ActorClass and actor_on_tile != _player and (actor_on_tile as ActorClass).is_alive:
+			result.valid = pos == _target_pos
+			return result
+	result.valid = true
+	return result
 
-	# Left panel: merchant sells
-	_puts(BUY_X, BOX_Y + 2, "MERCHANT SELLS", C_STATUS)
-	if npc.trade_stock.is_empty():
-		_puts(BUY_X, BOX_Y + 4, "Nothing for sale.", C_MSG_OLD)
-	else:
-		for i in range(npc.trade_stock.size()):
-			var entry: Dictionary = npc.trade_stock[i]
-			var sl    := char(ord("a") + i)
-			var itype := str(entry.get("item_type", ""))
-			var qty   := int(entry.get("qty", 0))
-			var price := int(entry.get("price", 0))
-			var weight := _item_weight_for_type(itype)
-			var color := C_STATUS if (_trade_panel == 0 and i == _trade_buy_cursor) else C_MSG_RECENT
-			_puts(BUY_X, BOX_Y + 4 + i,
-				"%s) %-16s %3dg %8s (x%d)" % [sl, itype.replace("_", " "), price, _format_lbs(weight), qty], color)
 
-	# Right panel: player sells
-	_puts(SELL_X, BOX_Y + 2, "YOUR PACK", C_STATUS)
-	var sellable: Array = _build_sellable()
-	if sellable.is_empty():
-		_puts(SELL_X, BOX_Y + 4, "Nothing to sell.", C_MSG_OLD)
-	else:
-		for i in range(sellable.size()):
-			var item = sellable[i]
-			var sl   := char(ord("A") + i)
-			var offer: int = npc.buy_price(item)
-			var color := C_STATUS if (_trade_panel == 1 and i == _trade_sell_cursor) else C_MSG_RECENT
-			_puts(SELL_X, BOX_Y + 4 + i,
-				"%s) %-16s %3dg %8s" % [sl, (item as ItemClass).name, offer, _format_lbs(int((item as ItemClass).total_weight()))], color)
-
-	_puts(BUY_X, BOX_Y + BOX_H - 4, "Gold: %d" % _player.gold, C_GOLD)
-
-	var hint: String
-	if _trade_panel == 0:
-		hint = "[a-z] buy   [Tab] sell panel   [Esc] leave"
-	else:
-		hint = "[A-Z] sell   [Tab] buy panel   [Esc] leave"
-	_puts(BOX_X + ((BOX_W - hint.length()) >> 1), BOX_Y + BOX_H - 2, hint, C_DIVIDER)
-
+func _draw_target_line_preview() -> void:
+	var preview: Dictionary = _target_preview_validity()
+	var line: Array = preview.get("line", [])
+	if line.is_empty():
+		return
+	var line_color: Color = Color(0.90, 0.94, 1.00, 0.62) if bool(preview.get("valid", false)) else Color(0.90, 0.32, 0.22, 0.68)
+	for point in line:
+		if point == _player.pos or not _on_screen(point.x, point.y):
+			continue
+		var sp := _to_screen(point.x, point.y)
+		var glyph := "X" if point == _target_pos else "•"
+		_put_map_fg(sp.x, sp.y, glyph, line_color)
 
 func _build_sellable() -> Array:
 	var result: Array = []
@@ -3077,18 +3249,18 @@ func _inventory_section_title(section_key: String) -> String:
 func _inventory_item_detail(item) -> String:
 	if item.category == ItemClass.CATEGORY_EQUIPMENT:
 		if item.slot == ItemClass.SLOT_RANGED:
-			return "%+d atk  %s  rng %d" % [item.attack_bonus, item.ammo_type.replace("_", " "), item.ranged_range]
-		if item.attack_bonus > 0:
-			return "+%d atk" % item.attack_bonus
+			return "%s %s  %s  rng %d" % [item.damage_label(), item.enhancement_label(), item.ammo_type.replace("_", " "), item.weapon_range]
+		if item.slot == ItemClass.SLOT_WEAPON:
+			return "%s %s  rng %d" % [item.damage_label(), item.enhancement_label(), item.weapon_range]
 		if item.defense_bonus > 0:
 			return "+%d def" % item.defense_bonus
 		if item.slot == ItemClass.SLOT_LIGHT and item.burn_turns > 0:
 			return "%dt left" % item.value
 		return "equip"
+	if item.category == ItemClass.CATEGORY_AMMO:
+		return "ammo %s" % item.enhancement_label()
 	if item.category == ItemClass.CATEGORY_USABLE:
 		return item.dice_label()
-	if item.category == ItemClass.CATEGORY_AMMO:
-		return "ammo"
 	if item.category == ItemClass.CATEGORY_READABLE:
 		return "read"
 	if item.category == ItemClass.CATEGORY_TRADE and item.base_value > 0:
@@ -3148,25 +3320,7 @@ func _trade_sell(idx: int) -> void:
 
 
 func _handle_trade_mouse_click(mouse_pos: Vector2) -> void:
-	if not _mouse_in_control(mouse_pos, _trade_shell):
-		return
-	var buy_rect: Rect2 = _trade_buy_text.get_global_rect()
-	var sell_rect: Rect2 = _trade_sell_text.get_global_rect()
-	var line_height: float = float(CELL_H + 2)
-	if buy_rect.has_point(mouse_pos):
-		var buy_idx: int = int(floor((mouse_pos.y - buy_rect.position.y) / line_height)) - 2
-		if buy_idx >= 0:
-			_trade_panel = 0
-			_trade_buy_cursor = buy_idx
-			_trade_buy(buy_idx)
-			return
-	elif sell_rect.has_point(mouse_pos):
-		var sell_idx: int = int(floor((mouse_pos.y - sell_rect.position.y) / line_height)) - 2
-		if sell_idx >= 0:
-			_trade_panel = 1
-			_trade_sell_cursor = sell_idx
-			_trade_sell(sell_idx)
-			return
+	return
 
 
 func _handle_trade_input(event: InputEvent) -> void:
@@ -3289,11 +3443,12 @@ func _draw_world_map() -> void:
 	elif mount != null:
 		current_chunk_color = Color(0.95, 0.80, 0.40)
 
-	var map_px_w: float = COLS * CELL_W
-	var map_px_y: float = CELL_H * 2.0
-	var map_px_h: float = MAP_ROWS * CELL_H - map_px_y
+	var map_px_w: float = _chunk_view_px_w()
+	var map_px_y: float = _map_cell_h() * 2.0
+	var map_px_h: float = _divider_y_px() - map_px_y
 	var cell_w: float = map_px_w / float(GameState.WORLD_W)
 	var cell_h: float = map_px_h / float(GameState.WORLD_H)
+	var glyph_font_size: int = maxi(8, mini(UI_FONT_SIZE, int(floor(minf(cell_w, cell_h) * 0.95))))
 
 	for cy in range(GameState.WORLD_H):
 		for cx in range(GameState.WORLD_W):
@@ -3334,15 +3489,18 @@ func _draw_world_map() -> void:
 				draw_rect(cell_rect, Color(0.85, 0.70, 0.32, 0.18), false, 2.0)
 			elif is_current:
 				draw_rect(cell_rect, Color(0.78, 0.62, 0.22, 0.12), false, 1.0)
-			var baseline_y: float = py + cell_h * 0.60
+			var font_h: float = _font.get_height(glyph_font_size)
+			var baseline_y: float = py + floor((cell_h - font_h) * 0.5) + glyph_font_size
 			draw_string(_font, Vector2(px, baseline_y), ch,
-					HORIZONTAL_ALIGNMENT_CENTER, cell_w, UI_FONT_SIZE, color)
+					HORIZONTAL_ALIGNMENT_CENTER, cell_w, glyph_font_size, color)
 
 
 func _world_map_chunk_at_pos(mouse_pos: Vector2) -> Vector2i:
-	var map_px_w: float = COLS * CELL_W
-	var map_px_y: float = CELL_H * 2.0
-	var map_px_h: float = MAP_ROWS * CELL_H - map_px_y
+	var map_px_w: float = _chunk_view_px_w()
+	var map_px_y: float = _map_cell_h() * 2.0
+	var map_px_h: float = _divider_y_px() - map_px_y
+	if mouse_pos.x < 0.0 or mouse_pos.x >= map_px_w:
+		return Vector2i(-1, -1)
 	if mouse_pos.y < map_px_y or mouse_pos.y >= map_px_y + map_px_h:
 		return Vector2i(-1, -1)
 	var cx: int = clampi(int(floor(mouse_pos.x / (map_px_w / float(GameState.WORLD_W)))), 0, GameState.WORLD_W - 1)
@@ -3441,25 +3599,153 @@ func _handle_world_map_input(event: InputEvent) -> void:
 		queue_redraw()
 
 
-# ===========================================================================
-# Draw helpers
-# ===========================================================================
-
-func _draw_box(bx: int, by: int, bw: int, bh: int) -> void:
-	for x in range(bx, bx + bw):
-		_put(x, by, "-", C_DIVIDER)
-		_put(x, by + bh - 1, "-", C_DIVIDER)
-	for y in range(by, by + bh):
-		_put(bx, y, "|", C_DIVIDER)
-		_put(bx + bw - 1, y, "|", C_DIVIDER)
-	_put(bx, by, "+", C_DIVIDER)
-	_put(bx + bw - 1, by, "+", C_DIVIDER)
-	_put(bx, by + bh - 1, "+", C_DIVIDER)
-	_put(bx + bw - 1, by + bh - 1, "+", C_DIVIDER)
+func _put_map(x: int, y: int, ch: String, color: Color) -> void:
+	if _tileset_active():
+		_put_map_fg(x, y, ch, color)
+		return
+	_put_map_fg(x, y, ch, color)
 
 
-func _stat_line(x: int, y: int, label: String, value: String, color: Color = C_MSG_RECENT) -> void:
-	_puts(x, y, "%-10s: %s" % [label, value], color)
+func _put_map_fg(x: int, y: int, ch: String, color: Color) -> void:
+	if _tileset_active():
+		_put_map_tile(x, y, ch, color)
+		return
+	var cell_w: float = _map_cell_w()
+	var cell_h: float = _map_cell_h()
+	var metrics: Dictionary = _glyph_draw_metrics(ch)
+	var font_size: int = maxi(8, int(round(minf(cell_w, cell_h) * float(metrics.get("scale", 0.92)))))
+	var px: float = float(x) * cell_w
+	var py: float = float(y) * cell_h
+	var font_h: float = _font.get_height(font_size)
+	var baseline_y: float = py + floor((cell_h - font_h) * 0.5) + font_size + float(metrics.get("y", 0.0))
+	var glyph_w: float = _font.get_string_size(ch, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
+	var draw_x: float = px + floor((cell_w - glyph_w) * 0.5) + float(metrics.get("x", 0.0))
+	draw_string(_font, Vector2(draw_x, baseline_y), ch,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, color)
+
+
+func _glyph_draw_metrics(ch: String) -> Dictionary:
+	match ch:
+		"#":
+			return {"scale": 1.10, "x": 0.0, "y": -1.0}
+		"^":
+			return {"scale": 1.00, "x": 0.0, "y": -1.0}
+		".":
+			return {"scale": 0.92, "x": 0.0, "y": 0.0}
+		"~":
+			return {"scale": 0.98, "x": 0.0, "y": 0.0}
+		"%":
+			return {"scale": 0.96, "x": 0.0, "y": 0.0}
+		"=":
+			return {"scale": 1.00, "x": 0.0, "y": 0.0}
+		"@":
+			return {"scale": 1.02, "x": 0.0, "y": -1.0}
+		"☺", "☻":
+			return {"scale": 1.02, "x": 0.0, "y": -1.0}
+		_:
+			return {"scale": 0.92, "x": 0.0, "y": 0.0}
+
+
+func _glyph_region(ch: String) -> Rect2:
+	var cp437_index: int = _cp437_index_for_glyph(ch)
+	var col: int = posmod(cp437_index, TILESET_COLS)
+	var row: int = cp437_index / TILESET_COLS
+	return Rect2(
+		float(col * TILESET_TILE_W),
+		float(row * TILESET_TILE_H),
+		float(TILESET_TILE_W),
+		float(TILESET_TILE_H)
+	)
+
+
+func _cp437_index_for_glyph(ch: String) -> int:
+	if ch.is_empty():
+		return 63
+	var codepoint: int = ch.unicode_at(0)
+	match codepoint:
+		0x263A:
+			return 1
+		0x263B:
+			return 2
+		0x266A:
+			return 13
+		0x266B:
+			return 14
+		0x263C:
+			return 15
+		0x2591:
+			return 176
+		0x2592:
+			return 177
+		0x2593:
+			return 178
+		0x2550:
+			return 205
+		0x2551:
+			return 186
+		0x2554:
+			return 201
+		0x2557:
+			return 187
+		0x255A:
+			return 200
+		0x255D:
+			return 188
+		0x03B1:
+			return 224
+		0x0393:
+			return 226
+		0x03C0:
+			return 227
+		0x03A3:
+			return 228
+		0x03C3:
+			return 229
+		0x03C4:
+			return 231
+		0x03A6:
+			return 232
+		0x0398:
+			return 233
+		0x03A9:
+			return 234
+		0x03B4:
+			return 235
+		0x221E:
+			return 236
+		0x00B1:
+			return 241
+		0x2265:
+			return 242
+		0x2264:
+			return 243
+		0x00F7:
+			return 246
+		0x2248:
+			return 247
+		0x221A:
+			return 251
+		_:
+			if codepoint >= 0 and codepoint <= 127:
+				return codepoint
+			return 63
+
+
+func _put_map_tile(x: int, y: int, ch: String, color: Color) -> void:
+	var dest_rect := Rect2(
+		float(x) * _map_cell_w(),
+		float(y) * _map_cell_h(),
+		_map_cell_w(),
+		_map_cell_h()
+	)
+	var src_rect := _glyph_region(ch)
+	draw_texture_rect_region(_tileset, dest_rect, src_rect, color, false, true)
+
+
+func _entity_glyph(entity) -> String:
+	if entity == null:
+		return "?"
+	return str(entity.char)
 
 
 func _put(x: int, y: int, ch: String, color: Color) -> void:
