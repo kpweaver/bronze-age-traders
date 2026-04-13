@@ -500,6 +500,17 @@ time more slowly than a normal action.
     Current first-pass zoom ladder: 16, 18, 20, 24, 28, 32 px glyphs.
     Default zoom is 20 px.
 
+    BIOS GLYPH ATLAS:
+    The BIOS font now also has a generated CP437 glyph sheet at:
+      assets/fonts/Px437_IBM_BIOS_cp437_8x8_atlas.png
+    It is created by:
+      tools/generate_cp437_bios_atlas.py
+    First-pass atlas rendering is active only for the map layer when the font
+    profile is IBM BIOS and chunk visuals are in ASCII mode. Menus, HUD, title
+    screen, and character creation still render from the live font. This gives
+    us a tighter fixed-cell renderer for map glyphs without forcing the whole
+    UI off normal font rendering.
+
     TRAVEL_EVENT: Popup shown over the world map when chunk-scale travel
     reveals something important. The first version handles merchants
     (Enter/Ignore) and bandit ambushes (Enter/Flee).

@@ -1,4 +1,4 @@
-extends Node2D
+﻿extends Node2D
 
 # ---------------------------------------------------------------------------
 # Dependencies
@@ -10,7 +10,7 @@ const NpcClass     = preload("res://scripts/entities/npc.gd")
 const GameWorldClass = preload("res://scripts/game_world.gd")
 
 # ---------------------------------------------------------------------------
-# Display constants  (viewport: 1080×720, cell: 9×14 → 120×51 tiles)
+# Display constants  (viewport: 1080Ã—720, cell: 9Ã—14 â†’ 120Ã—51 tiles)
 # ---------------------------------------------------------------------------
 const COLS: int = 120
 const ROWS: int = 51
@@ -20,6 +20,7 @@ const CELL_W: float = 9.0
 const CELL_H: float = 14.0
 const TILESET_ENABLED := true
 const TILESET_PATH := "res://assets/tilesets/CGA8x8thick_mask.png"
+const ASCII_ATLAS_PATH := "res://assets/fonts/Px437_IBM_BIOS_cp437_8x8_atlas.png"
 const TILESET_COLS := 16
 const TILESET_ROWS := 16
 const TILESET_TILE_W := 8
@@ -50,7 +51,7 @@ const C_GOLD       := Color(0.90, 0.78, 0.15)
 const C_MSG_RECENT := Color(0.78, 0.68, 0.52)
 const C_MSG_OLD    := Color(0.45, 0.38, 0.28)
 
-# Overworld tile palette — biome-tuned, sun-baked
+# Overworld tile palette â€” biome-tuned, sun-baked
 const C_SAND_LIT   := Color(0.98, 0.88, 0.48)
 const C_SAND_DIM   := Color(0.55, 0.46, 0.22)
 const C_DUNE_LIT   := Color(0.94, 0.68, 0.22)
@@ -159,7 +160,7 @@ var _mount_cycle_bucket: int = -1
 var _map_zoom_idx: int = 2
 
 # ---------------------------------------------------------------------------
-# Day/night tint — applied to map tiles and entities only (UI stays lit).
+# Day/night tint â€” applied to map tiles and entities only (UI stays lit).
 # Updated every turn via _on_turn_ended.
 # ---------------------------------------------------------------------------
 var _day_tint: Color = Color.WHITE
@@ -167,9 +168,10 @@ var _day_tint: Color = Color.WHITE
 # ---------------------------------------------------------------------------
 # Game world + rendering
 # ---------------------------------------------------------------------------
-var _world  # GameWorld — untyped to avoid class_name scope issues
+var _world  # GameWorld â€” untyped to avoid class_name scope issues
 var _font: Font
 var _tileset: Texture2D
+var _ascii_atlas: Texture2D
 var _ui_theme: Theme
 var _ui_layer
 var _inventory_ui_root: Control
@@ -204,7 +206,7 @@ var _hud_status_third
 var _hud_sky_label
 var _hud_message_labels: Array = []
 
-# Convenience aliases — read-only proxies into _world.
+# Convenience aliases â€” read-only proxies into _world.
 # These let the rendering/input code below read _map, _player etc. unchanged.
 var _map:
 	get: return _world.map
@@ -227,8 +229,10 @@ var _game_over:
 # ===========================================================================
 
 func _ready() -> void:
+	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	_font  = _make_font()
 	_tileset = _load_tileset()
+	_ascii_atlas = _load_ascii_atlas()
 	_ui_theme = _make_ui_theme()
 	_world = GameWorldClass.new()
 	add_child(_world)
@@ -304,6 +308,15 @@ func _load_tileset() -> Texture2D:
 	return ImageTexture.create_from_image(image)
 
 
+func _load_ascii_atlas() -> Texture2D:
+	if not FileAccess.file_exists(ASCII_ATLAS_PATH):
+		return null
+	var image := Image.load_from_file(ASCII_ATLAS_PATH)
+	if image == null or image.is_empty():
+		return null
+	return ImageTexture.create_from_image(image)
+
+
 func _prepare_tileset_mask(image: Image) -> void:
 	var w: int = image.get_width()
 	var h: int = image.get_height()
@@ -333,6 +346,10 @@ func _tileset_mask_alpha(px: Color) -> float:
 
 func _tileset_active() -> bool:
 	return _tileset != null and GameState.use_tileset
+
+
+func _ascii_atlas_active() -> bool:
+	return not _tileset_active() and GameState.font_profile == GameState.FONT_PROFILE_BIOS and _ascii_atlas != null
 
 
 func _make_ui_theme() -> Theme:
@@ -1121,13 +1138,13 @@ func _chunk_view_px_h() -> float:
 
 
 func _map_cell_w() -> float:
-	if _tileset_active():
+	if _tileset_active() or _ascii_atlas_active():
 		return float(_map_font_size())
 	return maxf(1.0, ceil(_font.get_string_size("M", HORIZONTAL_ALIGNMENT_LEFT, -1, _map_font_size()).x))
 
 
 func _map_cell_h() -> float:
-	if _tileset_active():
+	if _tileset_active() or _ascii_atlas_active():
 		return float(_map_font_size())
 	return maxf(1.0, ceil(_font.get_height(_map_font_size())))
 
@@ -1217,6 +1234,7 @@ func _ui_line_height() -> float:
 
 func _apply_font_profile() -> void:
 	_font = _make_font()
+	_ascii_atlas = _load_ascii_atlas()
 	_ui_theme = _make_ui_theme()
 	if _hud_ui_root != null:
 		_hud_ui_root.theme = _ui_theme
@@ -1763,51 +1781,51 @@ func _after_auto_move_step(label: String) -> void:
 # ---------------------------------------------------------------------------
 # Day/night tint computation
 # Anchor colours:                  time_of_day value
-#   Midnight  (0.00) — deep blue   0.00
-#   Pre-dawn  (0.17) — dark indigo 0.17  (04:00)
-#   Dawn      (0.25) — warm amber  0.25  (06:00)
-#   Morning   (0.33) — soft gold   0.33  (08:00)
-#   Midday    (0.50) — full white  0.50  (12:00)
-#   Afternoon (0.67) — soft gold   0.67  (16:00)
-#   Dusk      (0.75) — warm amber  0.75  (18:00)
-#   Night     (0.83) — dark indigo 0.83  (20:00)
-#   Midnight  (1.00) — deep blue   (wraps)
+#   Midnight  (0.00) â€” deep blue   0.00
+#   Pre-dawn  (0.17) â€” dark indigo 0.17  (04:00)
+#   Dawn      (0.25) â€” warm amber  0.25  (06:00)
+#   Morning   (0.33) â€” soft gold   0.33  (08:00)
+#   Midday    (0.50) â€” full white  0.50  (12:00)
+#   Afternoon (0.67) â€” soft gold   0.67  (16:00)
+#   Dusk      (0.75) â€” warm amber  0.75  (18:00)
+#   Night     (0.83) â€” dark indigo 0.83  (20:00)
+#   Midnight  (1.00) â€” deep blue   (wraps)
 # ---------------------------------------------------------------------------
 func _compute_day_tint() -> Color:
 	# Only the overworld is lit by the sun.  Underground is always the same dim.
 	if _world.debug_hub_active or _world.depth > 0:
 		if _tileset_active():
-			return Color(0.62, 0.64, 0.74)  # tileset dungeon — cooler, readable stone-dark
-		return Color(0.55, 0.50, 0.45)  # dungeon — torchlight amber-dim
+			return Color(0.62, 0.64, 0.74)  # tileset dungeon â€” cooler, readable stone-dark
+		return Color(0.55, 0.50, 0.45)  # dungeon â€” torchlight amber-dim
 
 	var t: float = _world.time_of_day   # 0.0 = midnight, 0.5 = noon
 
-	# Four anchor points that repeat symmetrically (dawn ↔ dusk).
+	# Four anchor points that repeat symmetrically (dawn â†” dusk).
 	# Each anchor: [time, Color].
 	var anchors: Array
 	if _tileset_active():
 		anchors = [
-			[0.00, Color(0.44, 0.58, 0.96)],  # midnight  — stronger moonlit blue
-			[0.17, Color(0.50, 0.62, 1.00)],  # pre-dawn  — cold blue
-			[0.25, Color(0.86, 0.66, 0.44)],  # dawn      — warm amber-blue transition
-			[0.33, Color(0.95, 0.85, 0.65)],  # morning   — golden
-			[0.50, Color(1.00, 1.00, 1.00)],  # midday    — full white
-			[0.67, Color(0.95, 0.85, 0.65)],  # afternoon — golden
-			[0.75, Color(0.82, 0.60, 0.40)],  # dusk      — amber-blue transition
-			[0.83, Color(0.50, 0.62, 1.00)],  # nightfall — cold blue
-			[1.00, Color(0.44, 0.58, 0.96)],  # midnight  — wraps back
+			[0.00, Color(0.44, 0.58, 0.96)],  # midnight  â€” stronger moonlit blue
+			[0.17, Color(0.50, 0.62, 1.00)],  # pre-dawn  â€” cold blue
+			[0.25, Color(0.86, 0.66, 0.44)],  # dawn      â€” warm amber-blue transition
+			[0.33, Color(0.95, 0.85, 0.65)],  # morning   â€” golden
+			[0.50, Color(1.00, 1.00, 1.00)],  # midday    â€” full white
+			[0.67, Color(0.95, 0.85, 0.65)],  # afternoon â€” golden
+			[0.75, Color(0.82, 0.60, 0.40)],  # dusk      â€” amber-blue transition
+			[0.83, Color(0.50, 0.62, 1.00)],  # nightfall â€” cold blue
+			[1.00, Color(0.44, 0.58, 0.96)],  # midnight  â€” wraps back
 		]
 	else:
 		anchors = [
-			[0.00, Color(0.18, 0.20, 0.40)],  # midnight  — deep blue-black
-			[0.17, Color(0.22, 0.22, 0.48)],  # pre-dawn  — indigo dark
-			[0.25, Color(0.88, 0.60, 0.35)],  # dawn      — warm amber
-			[0.33, Color(0.95, 0.85, 0.65)],  # morning   — golden
-			[0.50, Color(1.00, 1.00, 1.00)],  # midday    — full white
-			[0.67, Color(0.95, 0.85, 0.65)],  # afternoon — golden
-			[0.75, Color(0.88, 0.58, 0.32)],  # dusk      — amber
-			[0.83, Color(0.22, 0.22, 0.48)],  # nightfall — indigo dark
-			[1.00, Color(0.18, 0.20, 0.40)],  # midnight  — wraps back
+			[0.00, Color(0.18, 0.20, 0.40)],  # midnight  â€” deep blue-black
+			[0.17, Color(0.22, 0.22, 0.48)],  # pre-dawn  â€” indigo dark
+			[0.25, Color(0.88, 0.60, 0.35)],  # dawn      â€” warm amber
+			[0.33, Color(0.95, 0.85, 0.65)],  # morning   â€” golden
+			[0.50, Color(1.00, 1.00, 1.00)],  # midday    â€” full white
+			[0.67, Color(0.95, 0.85, 0.65)],  # afternoon â€” golden
+			[0.75, Color(0.88, 0.58, 0.32)],  # dusk      â€” amber
+			[0.83, Color(0.22, 0.22, 0.48)],  # nightfall â€” indigo dark
+			[1.00, Color(0.18, 0.20, 0.40)],  # midnight  â€” wraps back
 		]
 
 	# Linear interpolation between the two surrounding anchors.
@@ -2021,7 +2039,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			_handle_dialogue_input(event)
 			return
 
-	# Escape — always valid.
+	# Escape â€” always valid.
 	if event.physical_keycode == KEY_ESCAPE:
 		_screen = Screen.ESCAPE
 		_escape_cursor = 0
@@ -2029,7 +2047,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		queue_redraw()
 		return
 
-	# ? (shift+/) — help screen.
+	# ? (shift+/) â€” help screen.
 	if event.shift_pressed and event.physical_keycode == KEY_SLASH:
 		_screen = Screen.HELP
 		get_viewport().set_input_as_handled()
@@ -2510,7 +2528,7 @@ func _handle_inventory_input(event: InputEvent) -> void:
 		queue_redraw()
 		return
 
-	# w/b/f/h/l — unequip slot (unshifted only).
+	# w/b/f/h/l â€” unequip slot (unshifted only).
 	if not event.shift_pressed:
 		var unequip_slot := ""
 		match key:
@@ -2528,7 +2546,7 @@ func _handle_inventory_input(event: InputEvent) -> void:
 				queue_redraw()
 			return
 
-	# a–t — use / equip / read depending on item category (unshifted only).
+	# aâ€“t â€” use / equip / read depending on item category (unshifted only).
 	if not event.shift_pressed and key >= KEY_A and key <= KEY_Z:
 		var idx: int = key - KEY_A
 		var display_items: Array = _inventory_display_items()
@@ -3153,7 +3171,7 @@ func _draw_hover_path_preview() -> void:
 		if not _on_screen(step.x, step.y):
 			continue
 		var sp := _to_screen(step.x, step.y)
-		var glyph := "X" if step == _hover_pos else "•"
+		var glyph := "X" if step == _hover_pos else "â€¢"
 		var color := Color(0.96, 0.96, 0.92, 0.86) if step == _hover_pos else Color(0.90, 0.90, 0.86, 0.62)
 		_put_map_fg(sp.x, sp.y, glyph, color)
 
@@ -3195,7 +3213,7 @@ func _draw_target_line_preview() -> void:
 		if point == _player.pos or not _on_screen(point.x, point.y):
 			continue
 		var sp := _to_screen(point.x, point.y)
-		var glyph := "X" if point == _target_pos else "•"
+		var glyph := "X" if point == _target_pos else "â€¢"
 		_put_map_fg(sp.x, sp.y, glyph, line_color)
 
 func _build_sellable() -> Array:
@@ -3489,10 +3507,24 @@ func _draw_world_map() -> void:
 				draw_rect(cell_rect, Color(0.85, 0.70, 0.32, 0.18), false, 2.0)
 			elif is_current:
 				draw_rect(cell_rect, Color(0.78, 0.62, 0.22, 0.12), false, 1.0)
-			var font_h: float = _font.get_height(glyph_font_size)
-			var baseline_y: float = py + floor((cell_h - font_h) * 0.5) + glyph_font_size
-			draw_string(_font, Vector2(px, baseline_y), ch,
-					HORIZONTAL_ALIGNMENT_CENTER, cell_w, glyph_font_size, color)
+			_draw_world_map_glyph(cell_rect, ch, color, glyph_font_size)
+
+
+func _draw_world_map_glyph(cell_rect: Rect2, ch: String, color: Color, glyph_font_size: int) -> void:
+	if _ascii_atlas_active():
+		var glyph_size: float = floor(minf(cell_rect.size.x, cell_rect.size.y) * 0.90)
+		var dest_rect := Rect2(
+			cell_rect.position.x + floor((cell_rect.size.x - glyph_size) * 0.5),
+			cell_rect.position.y + floor((cell_rect.size.y - glyph_size) * 0.5),
+			glyph_size,
+			glyph_size
+		)
+		draw_texture_rect_region(_ascii_atlas, dest_rect, _glyph_region(ch), color, false, true)
+		return
+	var font_h: float = _font.get_height(glyph_font_size)
+	var baseline_y: float = cell_rect.position.y + floor((cell_rect.size.y - font_h) * 0.5) + glyph_font_size
+	draw_string(_font, Vector2(cell_rect.position.x, baseline_y), ch,
+			HORIZONTAL_ALIGNMENT_CENTER, cell_rect.size.x, glyph_font_size, color)
 
 
 func _world_map_chunk_at_pos(mouse_pos: Vector2) -> Vector2i:
@@ -3610,6 +3642,9 @@ func _put_map_fg(x: int, y: int, ch: String, color: Color) -> void:
 	if _tileset_active():
 		_put_map_tile(x, y, ch, color)
 		return
+	if _ascii_atlas_active():
+		_put_map_atlas_glyph(x, y, ch, color)
+		return
 	var cell_w: float = _map_cell_w()
 	var cell_h: float = _map_cell_h()
 	var metrics: Dictionary = _glyph_draw_metrics(ch)
@@ -3622,6 +3657,20 @@ func _put_map_fg(x: int, y: int, ch: String, color: Color) -> void:
 	var draw_x: float = px + floor((cell_w - glyph_w) * 0.5) + float(metrics.get("x", 0.0))
 	draw_string(_font, Vector2(draw_x, baseline_y), ch,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, color)
+
+
+func _put_map_atlas_glyph(x: int, y: int, ch: String, color: Color) -> void:
+	var cell_w: float = _map_cell_w()
+	var cell_h: float = _map_cell_h()
+	var metrics: Dictionary = _glyph_draw_metrics(ch)
+	var glyph_size: float = floor(minf(cell_w, cell_h) * float(metrics.get("scale", 0.92)))
+	var dest_rect := Rect2(
+		float(x) * cell_w + floor((cell_w - glyph_size) * 0.5) + float(metrics.get("x", 0.0)),
+		float(y) * cell_h + floor((cell_h - glyph_size) * 0.5) + float(metrics.get("y", 0.0)),
+		glyph_size,
+		glyph_size
+	)
+	draw_texture_rect_region(_ascii_atlas, dest_rect, _glyph_region(ch), color, false, true)
 
 
 func _glyph_draw_metrics(ch: String) -> Dictionary:
@@ -3638,9 +3687,15 @@ func _glyph_draw_metrics(ch: String) -> Dictionary:
 			return {"scale": 0.96, "x": 0.0, "y": 0.0}
 		"=":
 			return {"scale": 1.00, "x": 0.0, "y": 0.0}
+		"═":
+			return {"scale": 1.00, "x": 0.0, "y": 0.0}
+		"║":
+			return {"scale": 1.00, "x": 0.0, "y": 0.0}
+		"╔", "╗", "╚", "╝":
+			return {"scale": 1.00, "x": 0.0, "y": 0.0}
 		"@":
 			return {"scale": 1.02, "x": 0.0, "y": -1.0}
-		"☺", "☻":
+		"â˜º", "â˜»":
 			return {"scale": 1.02, "x": 0.0, "y": -1.0}
 		_:
 			return {"scale": 0.92, "x": 0.0, "y": 0.0}
@@ -3667,6 +3722,8 @@ func _cp437_index_for_glyph(ch: String) -> int:
 			return 1
 		0x263B:
 			return 2
+		0x2022:
+			return 7
 		0x266A:
 			return 13
 		0x266B:
@@ -3760,3 +3817,4 @@ func _puts(x: int, y: int, text: String, color: Color) -> void:
 
 func _puts_centered(row: int, text: String, color: Color) -> void:
 	_puts((COLS - text.length()) >> 1, row, text, color)
+
