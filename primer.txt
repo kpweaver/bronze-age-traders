@@ -12,32 +12,35 @@
 This document explains how the game is structured and where to find things when
 you want to make changes. Read it top-to-bottom once, then use it as a reference.
 
-Tileset migration note:
-  A first tileset migration sketch now lives in tileset_plan.txt. The dropped
-  Alloy_curses_12x12.png sheet appears to be a 16x16 CP437-style atlas with
-  12x12 square cells, which makes it a strong candidate for replacing the
-  local chunk renderer later without rewriting game logic or Control-based UI.
-  There is now also a first prototype in scripts/ascii_map.gd: local chunk
-  rendering can draw through the tileset pipeline, while menus, HUD, title,
-  character creation, and the world map remain font-based.
-  Content is now future-proofed for an Angband-style visual toggle:
-    char         = ASCII fallback glyph
-    tileset_char = optional CP437 glyph used only when chunk tileset mode is on
-  The settings screen exposes this as "Chunk visuals: ASCII / TILESET".
-  Current default is ASCII mode, and the local chunk view now uses the same
-  foreground/background cell model there too: terrain backgrounds are filled
-  per-cell, terrain glyphs are drawn on top, and visible entities suppress the
-  terrain glyph underneath them so actors, stairs, and items sit inside the
-  tile instead of punching out a black box.
+TileMap renderer note:
+  The chunk map and world map now render through layered TileMapLayer nodes
+  instead of the old draw_string()-style console renderer. This is a view-layer
+  refactor only: map generation, FOV, pathfinding, combat, inventory, saving,
+  and AI still operate on the same underlying grid/world data.
+
+  The active visual stack in scripts/ascii_map.gd is:
+    background TileMapLayer
+    terrain glyph TileMapLayer
+    entity glyph TileMapLayer
+    overlay background/glyph TileMapLayers
+
+  Per-cell color is applied at runtime through TileData.modulate. Tiles come
+  from the CP437 mask atlas / tileset assets. HUD, menus, title screen, and
+  character creation still use Godot font rendering.
+
+  Content remains future-proofed for alternate glyph languages:
+    char         = live/default glyph
+    tileset_char = optional future override glyph
 
 
 ────────────────────────────────────────────────────────────────────────────────
   THE BIG PICTURE
 ────────────────────────────────────────────────────────────────────────────────
 
-The game is a turn-based roguelike built in Godot 4, using GDScript. Everything
-renders as ASCII characters (letters, symbols) on a grid, mimicking an old
-terminal. The visual effect is deliberate — it's the aesthetic.
+The game is a turn-based roguelike built in Godot 4, using GDScript. The
+simulation still thinks in ASCII/CP437-like glyphs on a grid, but the actual
+chunk map and world map now render through Godot TileMapLayer nodes instead of
+direct text drawing. The visual effect is deliberate — it's the aesthetic.
 
 The engine handles drawing and input. All the actual game logic is in .gd files
 (GDScript), which live in three main folders:

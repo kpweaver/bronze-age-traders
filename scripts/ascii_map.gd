@@ -8,6 +8,7 @@ const ActorClass   = preload("res://scripts/entities/actor.gd")
 const ItemClass    = preload("res://scripts/entities/item.gd")
 const NpcClass     = preload("res://scripts/entities/npc.gd")
 const GameWorldClass = preload("res://scripts/game_world.gd")
+const ModulateTileMapLayerClass = preload("res://scripts/render/modulate_tile_map_layer.gd")
 
 # ---------------------------------------------------------------------------
 # Display constants  (viewport: 1080Ã—720, cell: 9Ã—14 â†’ 120Ã—51 tiles)
@@ -19,7 +20,7 @@ const UI_FONT_SIZE: int = 16   # overlay / status bar text
 const CELL_W: float = 9.0
 const CELL_H: float = 14.0
 const TILESET_ENABLED := true
-const TILESET_PATH := "res://assets/tilesets/CGA8x8thick_mask.png"
+const TILESET_PATH := "res://assets/tilesets/CGA8x8thick_mask_centered.png"
 const ASCII_ATLAS_PATH := "res://assets/fonts/Px437_IBM_BIOS_cp437_8x8_atlas.png"
 const TILESET_COLS := 16
 const TILESET_ROWS := 16
@@ -29,6 +30,8 @@ const TILESET_BG_OVERDRAW := 1.0
 const ASCII_BG_OVERDRAW_X := 0.5
 const ASCII_BG_OVERDRAW_Y := 0.5
 const HUD_SIDEBAR_W := 320.0
+const TILE_SOURCE_ID := 0
+const FILL_SOURCE_ID := 1
 
 const MAP_ROWS: int      = 44
 const DIVIDER_ROW: int   = 44
@@ -172,6 +175,18 @@ var _world  # GameWorld â€” untyped to avoid class_name scope issues
 var _font: Font
 var _tileset: Texture2D
 var _ascii_atlas: Texture2D
+var _glyph_tileset: TileSet
+var _fill_tileset: TileSet
+var _chunk_tile_root: Node2D
+var _chunk_bg_layer
+var _chunk_fg_layer
+var _chunk_entity_layer
+var _chunk_overlay_bg_layer
+var _chunk_overlay_fg_layer
+var _world_tile_root: Node2D
+var _world_bg_layer
+var _world_fg_layer
+var _world_overlay_layer
 var _ui_theme: Theme
 var _ui_layer
 var _inventory_ui_root: Control
@@ -233,9 +248,11 @@ func _ready() -> void:
 	_font  = _make_font()
 	_tileset = _load_tileset()
 	_ascii_atlas = _load_ascii_atlas()
+	_build_tilemap_tilesets()
 	_ui_theme = _make_ui_theme()
 	_world = GameWorldClass.new()
 	add_child(_world)
+	_build_tilemap_layers()
 	_attach_ui_layer()
 	_build_hud_ui()
 	_build_inventory_ui()
@@ -297,9 +314,6 @@ func _make_font() -> Font:
 func _load_tileset() -> Texture2D:
 	if not TILESET_ENABLED or not FileAccess.file_exists(TILESET_PATH):
 		return null
-	var imported_texture := load(TILESET_PATH)
-	if imported_texture is Texture2D:
-		return imported_texture as Texture2D
 	var image := Image.load_from_file(TILESET_PATH)
 	if image == null or image.is_empty():
 		return null
@@ -315,6 +329,66 @@ func _load_ascii_atlas() -> Texture2D:
 	if image == null or image.is_empty():
 		return null
 	return ImageTexture.create_from_image(image)
+
+
+func _build_tilemap_tilesets() -> void:
+	_glyph_tileset = TileSet.new()
+	_glyph_tileset.tile_size = Vector2i(TILESET_TILE_W, TILESET_TILE_H)
+	var glyph_source := TileSetAtlasSource.new()
+	glyph_source.texture = _tileset if _tileset != null else _ascii_atlas
+	glyph_source.texture_region_size = Vector2i(TILESET_TILE_W, TILESET_TILE_H)
+	for row in range(TILESET_ROWS):
+		for col in range(TILESET_COLS):
+			glyph_source.create_tile(Vector2i(col, row))
+	_glyph_tileset.add_source(glyph_source, TILE_SOURCE_ID)
+
+	_fill_tileset = TileSet.new()
+	_fill_tileset.tile_size = Vector2i(TILESET_TILE_W, TILESET_TILE_H)
+	var fill_image := Image.create(TILESET_TILE_W, TILESET_TILE_H, false, Image.FORMAT_RGBA8)
+	fill_image.fill(Color.WHITE)
+	var fill_texture := ImageTexture.create_from_image(fill_image)
+	var fill_source := TileSetAtlasSource.new()
+	fill_source.texture = fill_texture
+	fill_source.texture_region_size = Vector2i(TILESET_TILE_W, TILESET_TILE_H)
+	fill_source.create_tile(Vector2i.ZERO)
+	_fill_tileset.add_source(fill_source, FILL_SOURCE_ID)
+
+
+func _make_tile_layer(tile_set: TileSet, z_index: int) -> ModulateTileMapLayerClass:
+	var layer = ModulateTileMapLayerClass.new()
+	layer.tile_set = tile_set
+	layer.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	layer.z_index = z_index
+	return layer
+
+
+func _build_tilemap_layers() -> void:
+	_chunk_tile_root = Node2D.new()
+	_chunk_tile_root.name = "ChunkTileRoot"
+	_chunk_tile_root.z_index = 1
+	add_child(_chunk_tile_root)
+
+	_chunk_bg_layer = _make_tile_layer(_fill_tileset, 0)
+	_chunk_fg_layer = _make_tile_layer(_glyph_tileset, 1)
+	_chunk_entity_layer = _make_tile_layer(_glyph_tileset, 2)
+	_chunk_overlay_bg_layer = _make_tile_layer(_fill_tileset, 3)
+	_chunk_overlay_fg_layer = _make_tile_layer(_glyph_tileset, 4)
+	_chunk_tile_root.add_child(_chunk_bg_layer)
+	_chunk_tile_root.add_child(_chunk_fg_layer)
+	_chunk_tile_root.add_child(_chunk_entity_layer)
+	_chunk_tile_root.add_child(_chunk_overlay_bg_layer)
+	_chunk_tile_root.add_child(_chunk_overlay_fg_layer)
+
+	_world_tile_root = Node2D.new()
+	_world_tile_root.name = "WorldTileRoot"
+	_world_tile_root.z_index = 1
+	add_child(_world_tile_root)
+	_world_bg_layer = _make_tile_layer(_fill_tileset, 0)
+	_world_fg_layer = _make_tile_layer(_glyph_tileset, 1)
+	_world_overlay_layer = _make_tile_layer(_fill_tileset, 2)
+	_world_tile_root.add_child(_world_bg_layer)
+	_world_tile_root.add_child(_world_fg_layer)
+	_world_tile_root.add_child(_world_overlay_layer)
 
 
 func _prepare_tileset_mask(image: Image) -> void:
@@ -350,6 +424,10 @@ func _tileset_active() -> bool:
 
 func _ascii_atlas_active() -> bool:
 	return not _tileset_active() and GameState.font_profile == GameState.FONT_PROFILE_BIOS and _ascii_atlas != null
+
+
+func _use_tilemap_renderer() -> bool:
+	return _glyph_tileset != null and _fill_tileset != null
 
 
 func _make_ui_theme() -> Theme:
@@ -1304,21 +1382,6 @@ func _refresh_menu_ui() -> void:
 				"[G] God mode:           %s" % ("ON" if GameState.god_mode else "OFF"),
 				func():
 					GameState.god_mode = not GameState.god_mode
-					_refresh_menu_ui()
-			, false, true))
-			_menu_button_box.add_child(_make_menu_button(
-				"[V] Chunk visuals:      %s" % ("TILESET" if _tileset_active() else "ASCII"),
-				func():
-					GameState.use_tileset = not GameState.use_tileset
-					_update_camera()
-					_refresh_menu_ui()
-					queue_redraw()
-			, false, true))
-			_menu_button_box.add_child(_make_menu_button(
-				"[F] Font:               %s" % GameState.current_font_label(),
-				func():
-					GameState.toggle_font_profile()
-					_apply_font_profile()
 					_refresh_menu_ui()
 			, false, true))
 			_menu_footer_label.text = "Esc: back"
@@ -2649,13 +2712,6 @@ func _handle_settings_input(event: InputEvent) -> void:
 			KEY_G:
 				GameState.god_mode = not GameState.god_mode
 				queue_redraw()
-			KEY_F:
-				GameState.toggle_font_profile()
-				_apply_font_profile()
-			KEY_V:
-				GameState.use_tileset = not GameState.use_tileset
-				_update_camera()
-				queue_redraw()
 
 
 func _handle_settings_mouse_click(mouse_pos: Vector2) -> void:
@@ -2886,10 +2942,10 @@ func _handle_travel_event_mouse_click(mouse_pos: Vector2) -> void:
 func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, get_viewport_rect().size), C_BG)
 	if _screen == Screen.WORLD_MAP or _screen == Screen.TRAVEL_EVENT:
+		_sync_world_tilemaps()
 		_draw_world_map()
 		return
-	_draw_map()
-	_draw_entities()
+	_sync_chunk_tilemaps()
 	if _screen == Screen.NONE:
 		_draw_hover_path_preview()
 	elif _screen == Screen.TARGET:
@@ -2971,6 +3027,133 @@ func _draw_map() -> void:
 				_draw_tileset_cell(vx, vy, tile, ch, tinted, lit, occupied_cells.has(Vector2i(vx, vy)))
 			else:
 				_draw_ascii_cell(vx, vy, tile, ch, tinted, lit, occupied_cells.has(Vector2i(vx, vy)))
+
+
+func _sync_chunk_tilemaps() -> void:
+	if not _use_tilemap_renderer():
+		_draw_map()
+		_draw_entities()
+		return
+	_chunk_tile_root.visible = true
+	_world_tile_root.visible = false
+	var scale_value: float = _map_font_size() / float(TILESET_TILE_W)
+	_chunk_tile_root.position = Vector2.ZERO
+	_chunk_tile_root.scale = Vector2(scale_value, scale_value)
+	_chunk_bg_layer.clear_with_modulates()
+	_chunk_fg_layer.clear_with_modulates()
+	_chunk_entity_layer.clear_with_modulates()
+	_chunk_overlay_bg_layer.clear_with_modulates()
+	_chunk_overlay_fg_layer.clear_with_modulates()
+
+	var occupied_cells: Dictionary = _visible_entity_screen_positions()
+	for vy in range(_map_visible_rows()):
+		for vx in range(_map_visible_cols()):
+			var mx := vx + _cam_x
+			var my := vy + _cam_y
+			if not _map.is_in_bounds(mx, my):
+				continue
+			var coords := Vector2i(vx, vy)
+			if not _map.explored[my][mx]:
+				_chunk_bg_layer.set_cell_with_modulate(coords, FILL_SOURCE_ID, Vector2i.ZERO, C_UNEXPLORED_TILESET)
+				continue
+			var tile: int = _map.tiles[my][mx]
+			var lit: bool = _map.visible[my][mx]
+			var ch: String = _map.get_glyph_override(mx, my)
+			var base_color: Color
+			if ch == "":
+				match tile:
+					GameMapClass.TILE_WALL:
+						ch = "#" if _map.map_type == GameMapClass.MAP_DUNGEON else "^"
+						base_color = C_WALL_LIT if lit else _tile_dim_color(tile)
+					GameMapClass.TILE_FLOOR:
+						ch = "."
+						base_color = C_FLOOR_LIT if lit else _tile_dim_color(tile)
+					GameMapClass.TILE_SAND:
+						ch = "."
+						base_color = C_SAND_LIT if lit else _tile_dim_color(tile)
+					GameMapClass.TILE_DUNE:
+						ch = "^"
+						base_color = C_DUNE_LIT if lit else _tile_dim_color(tile)
+					GameMapClass.TILE_ROCK:
+						ch = "#"
+						base_color = C_ROCK_LIT if lit else _tile_dim_color(tile)
+					GameMapClass.TILE_WATER:
+						ch = "~"
+						base_color = C_WATER_LIT if lit else _tile_dim_color(tile)
+					GameMapClass.TILE_GRASS:
+						ch = "\""
+						base_color = C_GRASS_LIT if lit else _tile_dim_color(tile)
+					GameMapClass.TILE_ROAD:
+						ch = "\u2591"
+						base_color = C_ROAD_LIT if lit else _tile_dim_color(tile)
+					_:
+						ch = "?"
+						base_color = Color.WHITE
+			else:
+				base_color = C_WALL_LIT if lit else _tile_dim_color(tile)
+
+			var fill_color := _tileset_fill_color(tile, base_color * _day_tint, lit)
+			_chunk_bg_layer.set_cell_with_modulate(coords, FILL_SOURCE_ID, Vector2i.ZERO, fill_color)
+			if not occupied_cells.has(coords):
+				_chunk_fg_layer.set_cell_with_modulate(coords, TILE_SOURCE_ID, _glyph_atlas_coords(ch), _tileset_glyph_tint(base_color * _day_tint, lit))
+
+	var cell_map: Dictionary = {}
+	for e in _map.entities:
+		if not _on_screen(e.pos.x, e.pos.y) or not _map.visible[e.pos.y][e.pos.x]:
+			continue
+		if e is ActorClass and not (e as ActorClass).is_alive:
+			continue
+		var sp := _to_screen(e.pos.x, e.pos.y)
+		var key := Vector2i(sp.x, sp.y)
+		if not cell_map.has(key):
+			cell_map[key] = []
+		(cell_map[key] as Array).append(e)
+
+	for key in cell_map:
+		var e = _display_entity_for_cell(cell_map[key] as Array)
+		if e == null:
+			continue
+		_chunk_entity_layer.set_cell_with_modulate(
+			key,
+			TILE_SOURCE_ID,
+			_glyph_atlas_coords(_entity_glyph(e)),
+			_tileset_glyph_tint(e.color * _day_tint, true)
+		)
+
+	if _screen == Screen.LOOK and _on_screen(_look_pos.x, _look_pos.y):
+		var sp := _to_screen(_look_pos.x, _look_pos.y)
+		_chunk_overlay_bg_layer.set_cell_with_modulate(Vector2i(sp.x, sp.y), FILL_SOURCE_ID, Vector2i.ZERO, Color(0.20, 0.75, 0.90, 0.40))
+	elif _screen == Screen.TARGET and _on_screen(_target_pos.x, _target_pos.y):
+		var tsp := _to_screen(_target_pos.x, _target_pos.y)
+		_chunk_overlay_bg_layer.set_cell_with_modulate(Vector2i(tsp.x, tsp.y), FILL_SOURCE_ID, Vector2i.ZERO, Color(0.92, 0.28, 0.12, 0.42))
+	elif _screen == Screen.NONE and _hover_active and _on_screen(_hover_pos.x, _hover_pos.y) and _auto_move_mode == AutoMoveMode.NONE:
+		var hsp := _to_screen(_hover_pos.x, _hover_pos.y)
+		_chunk_overlay_bg_layer.set_cell_with_modulate(Vector2i(hsp.x, hsp.y), FILL_SOURCE_ID, Vector2i.ZERO, Color(0.85, 0.72, 0.20, 0.24))
+
+	if _screen == Screen.NONE and _auto_move_mode == AutoMoveMode.NONE:
+		for step in _hover_path:
+			if not _on_screen(step.x, step.y):
+				continue
+			var sp := _to_screen(step.x, step.y)
+			var glyph := "X" if step == _hover_pos else "•"
+			var color := Color(0.96, 0.96, 0.92, 0.86) if step == _hover_pos else Color(0.90, 0.90, 0.86, 0.62)
+			_chunk_overlay_fg_layer.set_cell_with_modulate(Vector2i(sp.x, sp.y), TILE_SOURCE_ID, _glyph_atlas_coords(glyph), color)
+	elif _screen == Screen.TARGET:
+		var preview: Dictionary = _target_preview_validity()
+		var line: Array = preview.get("line", [])
+		var line_color: Color = Color(0.90, 0.94, 1.00, 0.62) if bool(preview.get("valid", false)) else Color(0.90, 0.32, 0.22, 0.68)
+		for point in line:
+			if point == _player.pos or not _on_screen(point.x, point.y):
+				continue
+			var sp := _to_screen(point.x, point.y)
+			var glyph := "X" if point == _target_pos else "•"
+			_chunk_overlay_fg_layer.set_cell_with_modulate(Vector2i(sp.x, sp.y), TILE_SOURCE_ID, _glyph_atlas_coords(glyph), line_color)
+
+	_chunk_bg_layer.notify_runtime_tile_data_update()
+	_chunk_fg_layer.notify_runtime_tile_data_update()
+	_chunk_entity_layer.notify_runtime_tile_data_update()
+	_chunk_overlay_bg_layer.notify_runtime_tile_data_update()
+	_chunk_overlay_fg_layer.notify_runtime_tile_data_update()
 
 
 func _draw_entities() -> void:
@@ -3121,6 +3304,8 @@ func _world_map_look_label() -> String:
 # Overlay: look mode
 # ---------------------------------------------------------------------------
 func _draw_look_cursor() -> void:
+	if _use_tilemap_renderer():
+		return
 	var sp := _to_screen(_look_pos.x, _look_pos.y)
 	draw_rect(
 		Rect2(sp.x * _map_cell_w(), sp.y * _map_cell_h(), _map_cell_w(), _map_cell_h()),
@@ -3129,6 +3314,8 @@ func _draw_look_cursor() -> void:
 
 
 func _draw_target_cursor() -> void:
+	if _use_tilemap_renderer():
+		return
 	if not _on_screen(_target_pos.x, _target_pos.y):
 		return
 	var sp := _to_screen(_target_pos.x, _target_pos.y)
@@ -3139,6 +3326,8 @@ func _draw_target_cursor() -> void:
 
 
 func _draw_hover_cursor() -> void:
+	if _use_tilemap_renderer():
+		return
 	if _auto_move_mode != AutoMoveMode.NONE or not _hover_active or not _on_screen(_hover_pos.x, _hover_pos.y):
 		return
 	var sp := _to_screen(_hover_pos.x, _hover_pos.y)
@@ -3165,6 +3354,8 @@ func _refresh_hover_path_preview() -> void:
 
 
 func _draw_hover_path_preview() -> void:
+	if _use_tilemap_renderer():
+		return
 	if _auto_move_mode != AutoMoveMode.NONE or _hover_path.is_empty():
 		return
 	for step in _hover_path:
@@ -3204,6 +3395,8 @@ func _target_preview_validity() -> Dictionary:
 
 
 func _draw_target_line_preview() -> void:
+	if _use_tilemap_renderer():
+		return
 	var preview: Dictionary = _target_preview_validity()
 	var line: Array = preview.get("line", [])
 	if line.is_empty():
@@ -3447,11 +3640,24 @@ func _biome_color(biome: int) -> Color:
 		_:                            return Color(0.4, 0.4, 0.4)
 
 
-func _draw_world_map() -> void:
-	var title_str := "-=[ WORLD MAP - LOOK ]=-" if _world_look_mode else "-=[ WORLD MAP ]=-"
-	_puts_centered(0, title_str, C_STATUS)
-	var world_move_hint := "Chunk Travel: %d" % _world.get_world_map_travel_cost(_chunk)
-	_puts(COLS - world_move_hint.length() - 2, 0, world_move_hint, C_DIVIDER)
+func _sync_world_tilemaps() -> void:
+	if not _use_tilemap_renderer():
+		_chunk_tile_root.visible = false
+		_world_tile_root.visible = false
+		return
+	_chunk_tile_root.visible = false
+	_world_tile_root.visible = true
+	var map_px_w: float = _chunk_view_px_w()
+	var map_px_y: float = _map_cell_h() * 2.0
+	var map_px_h: float = _divider_y_px() - map_px_y
+	var cell_w: float = map_px_w / float(GameState.WORLD_W)
+	var cell_h: float = map_px_h / float(GameState.WORLD_H)
+	_world_tile_root.position = Vector2(0.0, map_px_y)
+	_world_tile_root.scale = Vector2(cell_w / float(TILESET_TILE_W), cell_h / float(TILESET_TILE_H))
+	_world_bg_layer.clear_with_modulates()
+	_world_fg_layer.clear_with_modulates()
+	_world_overlay_layer.clear_with_modulates()
+
 	var mount = _world.get_player_mount()
 	var current_chunk_char: String = "@"
 	var current_chunk_color: Color = Color(0.80, 0.72, 0.55)
@@ -3461,38 +3667,29 @@ func _draw_world_map() -> void:
 	elif mount != null:
 		current_chunk_color = Color(0.95, 0.80, 0.40)
 
-	var map_px_w: float = _chunk_view_px_w()
-	var map_px_y: float = _map_cell_h() * 2.0
-	var map_px_h: float = _divider_y_px() - map_px_y
-	var cell_w: float = map_px_w / float(GameState.WORLD_W)
-	var cell_h: float = map_px_h / float(GameState.WORLD_H)
-	var glyph_font_size: int = maxi(8, mini(UI_FONT_SIZE, int(floor(minf(cell_w, cell_h) * 0.95))))
-
 	for cy in range(GameState.WORLD_H):
 		for cx in range(GameState.WORLD_W):
+			var coords := Vector2i(cx, cy)
 			var this_chunk := Vector2i(cx, cy)
-			var px: float = cx * cell_w
-			var py: float = map_px_y + cy * cell_h
 			var is_current: bool = this_chunk == _chunk
 			var is_lk_curs: bool = _world_look_mode and this_chunk == _world_look_cursor
-
 			var ch: String
 			var color: Color
 			var village: Variant = _world.get_village_at_chunk(cx, cy)
 
 			if village != null:
-				ch    = "*"
+				ch = "*"
 				color = C_VILLAGE_WM
 			elif _world.is_road_chunk(cx, cy):
-				ch    = "="
+				ch = "="
 				color = Color(0.70, 0.55, 0.32)
 			else:
 				var biome: int = _world.get_chunk_biome(this_chunk)
-				ch    = _biome_char(biome)
+				ch = _biome_char(biome)
 				color = _biome_color(biome)
 
 			if is_current:
-				ch    = current_chunk_char
+				ch = current_chunk_char
 				color = Color(0.95, 0.80, 0.40) if is_lk_curs else current_chunk_color
 
 			var cell_bg: Color = color.lerp(C_BG, 0.70)
@@ -3501,30 +3698,23 @@ func _draw_world_map() -> void:
 			elif is_current:
 				cell_bg = Color(0.17, 0.13, 0.08, 0.92)
 
-			var cell_rect := Rect2(px, py, cell_w, cell_h)
-			draw_rect(cell_rect, cell_bg)
+			_world_bg_layer.set_cell_with_modulate(coords, FILL_SOURCE_ID, Vector2i.ZERO, cell_bg)
+			_world_fg_layer.set_cell_with_modulate(coords, TILE_SOURCE_ID, _glyph_atlas_coords(ch), color)
 			if is_lk_curs:
-				draw_rect(cell_rect, Color(0.85, 0.70, 0.32, 0.18), false, 2.0)
+				_world_overlay_layer.set_cell_with_modulate(coords, FILL_SOURCE_ID, Vector2i.ZERO, Color(0.85, 0.70, 0.32, 0.18))
 			elif is_current:
-				draw_rect(cell_rect, Color(0.78, 0.62, 0.22, 0.12), false, 1.0)
-			_draw_world_map_glyph(cell_rect, ch, color, glyph_font_size)
+				_world_overlay_layer.set_cell_with_modulate(coords, FILL_SOURCE_ID, Vector2i.ZERO, Color(0.78, 0.62, 0.22, 0.12))
+
+	_world_bg_layer.notify_runtime_tile_data_update()
+	_world_fg_layer.notify_runtime_tile_data_update()
+	_world_overlay_layer.notify_runtime_tile_data_update()
 
 
-func _draw_world_map_glyph(cell_rect: Rect2, ch: String, color: Color, glyph_font_size: int) -> void:
-	if _ascii_atlas_active():
-		var glyph_size: float = floor(minf(cell_rect.size.x, cell_rect.size.y) * 0.90)
-		var dest_rect := Rect2(
-			cell_rect.position.x + floor((cell_rect.size.x - glyph_size) * 0.5),
-			cell_rect.position.y + floor((cell_rect.size.y - glyph_size) * 0.5),
-			glyph_size,
-			glyph_size
-		)
-		draw_texture_rect_region(_ascii_atlas, dest_rect, _glyph_region(ch), color, false, true)
-		return
-	var font_h: float = _font.get_height(glyph_font_size)
-	var baseline_y: float = cell_rect.position.y + floor((cell_rect.size.y - font_h) * 0.5) + glyph_font_size
-	draw_string(_font, Vector2(cell_rect.position.x, baseline_y), ch,
-			HORIZONTAL_ALIGNMENT_CENTER, cell_rect.size.x, glyph_font_size, color)
+func _draw_world_map() -> void:
+	var title_str := "-=[ WORLD MAP - LOOK ]=-" if _world_look_mode else "-=[ WORLD MAP ]=-"
+	_puts_centered(0, title_str, C_STATUS)
+	var world_move_hint := "Chunk Travel: %d" % _world.get_world_map_travel_cost(_chunk)
+	_puts(COLS - world_move_hint.length() - 2, 0, world_move_hint, C_DIVIDER)
 
 
 func _world_map_chunk_at_pos(mouse_pos: Vector2) -> Vector2i:
@@ -3711,6 +3901,11 @@ func _glyph_region(ch: String) -> Rect2:
 		float(TILESET_TILE_W),
 		float(TILESET_TILE_H)
 	)
+
+
+func _glyph_atlas_coords(ch: String) -> Vector2i:
+	var cp437_index: int = _cp437_index_for_glyph(ch)
+	return Vector2i(posmod(cp437_index, TILESET_COLS), cp437_index / TILESET_COLS)
 
 
 func _cp437_index_for_glyph(ch: String) -> int:

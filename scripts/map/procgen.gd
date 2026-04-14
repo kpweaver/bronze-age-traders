@@ -1064,7 +1064,7 @@ static func _place_light_fixture(map, x: int, y: int, nm: String) -> void:
 	for e in map.entities:
 		if e.pos == Vector2i(x, y):
 			return
-	var fixture = EntityClass.new(Vector2i(x, y), "*", Color(1.0, 0.65, 0.10), nm, false)
+	var fixture = EntityClass.new(Vector2i(x, y), "☼", Color(1.0, 0.65, 0.10), nm, false)
 	fixture.light_radius = 6
 	map.add_entity(fixture)
 
