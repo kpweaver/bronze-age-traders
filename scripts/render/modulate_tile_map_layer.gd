@@ -15,6 +15,11 @@ func set_cell_with_modulate(coords: Vector2i, source_id: int, atlas_coords: Vect
 	cell_modulates[coords] = color
 
 
+func erase_cell_with_modulate(coords: Vector2i) -> void:
+	erase_cell(coords)
+	cell_modulates.erase(coords)
+
+
 func _use_tile_data_runtime_update(coords: Vector2i) -> bool:
 	return cell_modulates.has(coords)
 

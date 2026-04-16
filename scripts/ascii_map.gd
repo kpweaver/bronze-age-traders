@@ -163,6 +163,34 @@ var _mount_cycle_bucket: int = -1
 var _map_zoom_idx: int = 2
 
 # ---------------------------------------------------------------------------
+# World-map incremental sync state — tracks what was last painted so only
+# changed cells are repainted rather than the full 60×36 grid each redraw.
+# ---------------------------------------------------------------------------
+var _wm_last_scale: Vector2 = Vector2.ZERO  # detects viewport resize; reset forces full repaint
+var _wm_prev_chunk: Vector2i = Vector2i(-99, -99)
+var _wm_prev_look_cursor: Vector2i = Vector2i(-99, -99)
+var _wm_prev_look_mode: bool = false
+
+# ---------------------------------------------------------------------------
+# Chunk-map entity layer incremental sync — tracks which screen cells had
+# entities last frame so only those cells need to be cleared, not all cells.
+# When the camera moves all screen-space positions shift, so we fall back to
+# a full entity layer clear on camera-move turns.
+# ---------------------------------------------------------------------------
+var _prev_entity_cells: Array[Vector2i] = []
+var _prev_cam_x: int = -9999
+var _prev_cam_y: int = -9999
+
+# ---------------------------------------------------------------------------
+# Attack animation state — bump ghosts run sequentially via _anim_queue so
+# the player animation always completes before the enemy animation begins.
+# ---------------------------------------------------------------------------
+var _bump_ghosts: Dictionary = {}         # Vector2i(screen_x, screen_y) → Label
+var _bump_suppressed: Dictionary = {}     # screen cells whose entity tile is hidden during animation
+var _anim_queue: Array = []              # pending Callables, played one at a time
+var _anim_busy: bool = false             # true while a bump animation is in flight
+
+# ---------------------------------------------------------------------------
 # Day/night tint â€” applied to map tiles and entities only (UI stays lit).
 # Updated every turn via _on_turn_ended.
 # ---------------------------------------------------------------------------
@@ -187,6 +215,7 @@ var _world_tile_root: Node2D
 var _world_bg_layer
 var _world_fg_layer
 var _world_overlay_layer
+var _anim_layer: Node2D  # ephemeral bump/flash nodes live here; cleared each attack
 var _ui_theme: Theme
 var _ui_layer
 var _inventory_ui_root: Control
@@ -259,10 +288,13 @@ func _ready() -> void:
 	_build_menu_ui()
 	_build_trade_ui()
 	_layout_hud_ui()
+	get_viewport().size_changed.connect(_layout_hud_ui)
 	set_process(true)
 	_world.turn_ended.connect(_on_turn_ended)
 	_world.map_changed.connect(_on_map_changed)
 	_world.attribute_points_changed.connect(_on_attribute_points_changed)
+	_world.entity_attacked.connect(_on_entity_attacked)
+	_world.entity_fired.connect(_on_entity_fired)
 	if GameState.load_save:
 		_world.load_from_save()
 		GameState.load_save = false
@@ -280,7 +312,6 @@ func _exit_tree() -> void:
 
 
 func _process(delta: float) -> void:
-	_refresh_hud_ui()
 	_sync_inventory_ui_visibility()
 	_sync_menu_ui_visibility()
 	_sync_trade_ui_visibility()
@@ -390,6 +421,11 @@ func _build_tilemap_layers() -> void:
 	_world_tile_root.add_child(_world_fg_layer)
 	_world_tile_root.add_child(_world_overlay_layer)
 
+	_anim_layer = Node2D.new()
+	_anim_layer.name = "AnimLayer"
+	_anim_layer.z_index = 2  # above tile roots (z=1), below CanvasLayer UI
+	add_child(_anim_layer)
+
 
 func _prepare_tileset_mask(image: Image) -> void:
 	var w: int = image.get_width()
@@ -427,7 +463,7 @@ func _ascii_atlas_active() -> bool:
 
 
 func _use_tilemap_renderer() -> bool:
-	return _glyph_tileset != null and _fill_tileset != null
+	return _glyph_tileset != null and _fill_tileset != null and GameState.use_tileset
 
 
 func _make_ui_theme() -> Theme:
@@ -651,6 +687,138 @@ func _on_attribute_points_changed(_n: int) -> void:
 	_stop_auto_move()
 	_open_attribute_overlay_if_needed()
 	queue_redraw()
+
+
+func _on_entity_attacked(attacker_pos: Vector2i, target_pos: Vector2i, glyph: String, color: Color) -> void:
+	if _anim_layer == null or not _on_screen(attacker_pos.x, attacker_pos.y):
+		return
+	_anim_queue.append(func(): _play_bump_anim(attacker_pos, target_pos, glyph, color))
+	if not _anim_busy:
+		_next_anim()
+
+
+func _next_anim() -> void:
+	if _anim_queue.is_empty():
+		_anim_busy = false
+		return
+	_anim_busy = true
+	(_anim_queue.pop_front() as Callable).call()
+
+
+func _play_bump_anim(attacker_pos: Vector2i, target_pos: Vector2i, glyph: String, color: Color) -> void:
+	var cell_px: float = float(_map_font_size())
+
+	# Bump ghost — attacker glyph slides toward the target tile then springs back.
+	var sp     := _to_screen(attacker_pos.x, attacker_pos.y)
+	var sp_key := Vector2i(sp.x, sp.y)
+	var origin_px := Vector2(float(sp.x), float(sp.y)) * cell_px
+	var bump_dir  := Vector2(target_pos - attacker_pos).normalized()
+
+	# Fast attacks cancel the previous ghost rather than stacking.
+	if _bump_ghosts.has(sp_key):
+		(_bump_ghosts[sp_key] as Label).queue_free()
+		_bump_ghosts.erase(sp_key)
+		_bump_suppressed.erase(sp_key)
+
+	# Hide the real entity tile so only the sliding ghost is visible.
+	_bump_suppressed[sp_key] = true
+	if _use_tilemap_renderer():
+		_chunk_entity_layer.erase_cell_with_modulate(sp_key)
+
+	var ghost := Label.new()
+	ghost.text = glyph
+	ghost.add_theme_font_override("font", _font)
+	ghost.add_theme_font_size_override("font_size", _map_font_size())
+	ghost.add_theme_color_override("font_color", color)
+	ghost.size = Vector2(cell_px, cell_px)
+	ghost.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	ghost.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	ghost.position = origin_px
+	_anim_layer.add_child(ghost)
+	_bump_ghosts[sp_key] = ghost
+
+	var tw := ghost.create_tween()
+	tw.tween_property(ghost, "position", origin_px + bump_dir * (cell_px * 0.50), 0.06)
+	tw.tween_property(ghost, "position", origin_px, 0.06)
+	tw.tween_callback(func():
+		_bump_ghosts.erase(sp_key)
+		_bump_suppressed.erase(sp_key)
+		ghost.queue_free()
+		queue_redraw()  # restore the entity tile
+		_next_anim()    # advance the queue
+	)
+
+	# Hit flash — warm bloom on the target cell that fades out quickly.
+	if _on_screen(target_pos.x, target_pos.y):
+		var tsp      := _to_screen(target_pos.x, target_pos.y)
+		var target_px := Vector2(float(tsp.x), float(tsp.y)) * cell_px
+		var flash    := ColorRect.new()
+		flash.size     = Vector2(cell_px, cell_px)
+		flash.color    = Color(1.0, 0.80, 0.35, 0.50)
+		flash.position = target_px
+		_anim_layer.add_child(flash)
+		var ftw := flash.create_tween()
+		ftw.tween_property(flash, "color:a", 0.0, 0.10)
+		ftw.tween_callback(flash.queue_free)
+
+
+func _on_entity_fired(attacker_pos: Vector2i, target_pos: Vector2i, proj_char: String, proj_color: Color) -> void:
+	if _anim_layer == null:
+		return
+	_anim_queue.append(func(): _play_projectile_anim(attacker_pos, target_pos, proj_char, proj_color))
+	if not _anim_busy:
+		_next_anim()
+
+
+func _play_projectile_anim(attacker_pos: Vector2i, target_pos: Vector2i, proj_char: String, proj_color: Color) -> void:
+	var cell_px := float(_map_font_size())
+
+	# Map positions to screen positions; clamp to on-screen endpoints if needed.
+	var sp_a := _to_screen(attacker_pos.x, attacker_pos.y)
+	var sp_t := _to_screen(target_pos.x, target_pos.y)
+	var start_px := Vector2(float(sp_a.x), float(sp_a.y)) * cell_px
+	var end_px   := Vector2(float(sp_t.x), float(sp_t.y)) * cell_px
+
+	# Quadratic bezier arc: control point is the midpoint raised upward in
+	# screen space to simulate a ballistic trajectory.
+	var mid_px: Vector2 = (start_px + end_px) * 0.5 + Vector2(0.0, -cell_px * 0.6)
+
+	# Duration scales with distance — snappy over short range, readable over long.
+	var dist_cells: float = (end_px - start_px).length() / cell_px
+	var duration: float = clampf(dist_cells * 0.025, 0.10, 0.28)
+
+	var proj := Label.new()
+	proj.text = proj_char
+	proj.add_theme_font_override("font", _font)
+	proj.add_theme_font_size_override("font_size", _map_font_size())
+	proj.add_theme_color_override("font_color", proj_color)
+	proj.size = Vector2(cell_px, cell_px)
+	proj.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	proj.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	proj.position = start_px
+	_anim_layer.add_child(proj)
+
+	var tw := proj.create_tween()
+	tw.tween_method(func(t: float) -> void:
+		var u := 1.0 - t
+		proj.position = u * u * start_px + 2.0 * u * t * mid_px + t * t * end_px
+	, 0.0, 1.0, duration)
+	tw.tween_callback(func() -> void:
+		proj.queue_free()
+		# Hit flash at the target cell.
+		if _on_screen(target_pos.x, target_pos.y):
+			var tsp := _to_screen(target_pos.x, target_pos.y)
+			var target_px := Vector2(float(tsp.x), float(tsp.y)) * cell_px
+			var flash := ColorRect.new()
+			flash.size    = Vector2(cell_px, cell_px)
+			flash.color   = Color(1.0, 0.80, 0.35, 0.65)
+			flash.position = target_px
+			_anim_layer.add_child(flash)
+			var ftw := flash.create_tween()
+			ftw.tween_property(flash, "color:a", 0.0, 0.12)
+			ftw.tween_callback(flash.queue_free)
+		_next_anim()
+	)
 
 
 func _open_attribute_overlay_if_needed() -> void:
@@ -1325,7 +1493,6 @@ func _apply_font_profile() -> void:
 	_map_zoom_idx = clampi(_map_zoom_idx, 0, GameState.current_map_zoom_sizes().size() - 1)
 	_update_camera()
 	_layout_hud_ui()
-	_refresh_hud_ui()
 	if _screen == Screen.INVENTORY:
 		_refresh_inventory_ui()
 	if _screen in [Screen.ESCAPE, Screen.CHARACTER, Screen.SETTINGS, Screen.ATTRIBUTE_PICK, Screen.DISAMBIGUATE, Screen.HELP, Screen.READER, Screen.DIALOGUE, Screen.TRAVEL_EVENT]:
@@ -1593,7 +1760,6 @@ func _refresh_trade_ui() -> void:
 func _refresh_hud_ui() -> void:
 	if _hud_ui_root == null or _world == null or _player == null:
 		return
-	_layout_hud_ui()
 	var hp_frac: float = float(_player.hp) / float(_player.max_hp)
 	var wpn = _player.equipped.get(ItemClass.SLOT_WEAPON)
 	var wpn_str := ("WPN %s" % (wpn as ItemClass).name) if wpn != null else ""
@@ -2396,10 +2562,6 @@ func _open_ranged_targeting() -> void:
 			_target_pos.y = clampi(_target_pos.y, 0, _map.height - 1)
 	_screen = Screen.TARGET
 	_hover_active = false
-	var vis_cols: int = _map_visible_cols()
-	var vis_rows: int = _map_visible_rows()
-	_cam_x = clampi(_target_pos.x - (vis_cols >> 1), 0, maxi(0, _map.width - vis_cols))
-	_cam_y = clampi(_target_pos.y - (vis_rows >> 1), 0, maxi(0, _map.height - vis_rows))
 	queue_redraw()
 
 
@@ -2416,7 +2578,6 @@ func _close_targeting() -> void:
 	_target_candidates.clear()
 	_target_candidate_index = 0
 	_target_pos = Vector2i.ZERO
-	_update_camera()
 	queue_redraw()
 
 
@@ -2426,10 +2587,6 @@ func _cycle_target_candidate(step: int) -> void:
 		return
 	_target_candidate_index = wrapi(_target_candidate_index + step, 0, _target_candidates.size())
 	_target_pos = (_target_candidates[_target_candidate_index] as ActorClass).pos
-	var vis_cols: int = _map_visible_cols()
-	var vis_rows: int = _map_visible_rows()
-	_cam_x = clampi(_target_pos.x - (vis_cols >> 1), 0, maxi(0, _map.width - vis_cols))
-	_cam_y = clampi(_target_pos.y - (vis_rows >> 1), 0, maxi(0, _map.height - vis_rows))
 	queue_redraw()
 
 
@@ -2462,10 +2619,6 @@ func _handle_target_input(event: InputEvent) -> void:
 	_target_pos += delta
 	_target_pos.x = clampi(_target_pos.x, 0, _map.width - 1)
 	_target_pos.y = clampi(_target_pos.y, 0, _map.height - 1)
-	var vis_cols: int = _map_visible_cols()
-	var vis_rows: int = _map_visible_rows()
-	_cam_x = clampi(_target_pos.x - (vis_cols >> 1), 0, maxi(0, _map.width - vis_cols))
-	_cam_y = clampi(_target_pos.y - (vis_rows >> 1), 0, maxi(0, _map.height - vis_rows))
 	queue_redraw()
 
 
@@ -2940,6 +3093,7 @@ func _handle_travel_event_mouse_click(mouse_pos: Vector2) -> void:
 # ===========================================================================
 
 func _draw() -> void:
+	_refresh_hud_ui()
 	draw_rect(Rect2(Vector2.ZERO, get_viewport_rect().size), C_BG)
 	if _screen == Screen.WORLD_MAP or _screen == Screen.TRAVEL_EVENT:
 		_sync_world_tilemaps()
@@ -3041,7 +3195,18 @@ func _sync_chunk_tilemaps() -> void:
 	_chunk_tile_root.scale = Vector2(scale_value, scale_value)
 	_chunk_bg_layer.clear_with_modulates()
 	_chunk_fg_layer.clear_with_modulates()
-	_chunk_entity_layer.clear_with_modulates()
+	# Entity layer: full clear only when camera moved (all screen-space coords shifted).
+	# Otherwise erase only cells that previously held entities — saves O(visible_cells)
+	# set_cell calls on stationary turns (waiting, inventory open, etc.).
+	var cam_moved: bool = (_cam_x != _prev_cam_x or _cam_y != _prev_cam_y)
+	if cam_moved:
+		_chunk_entity_layer.clear_with_modulates()
+		_prev_entity_cells.clear()
+	else:
+		for coords in _prev_entity_cells:
+			_chunk_entity_layer.erase_cell_with_modulate(coords)
+	_prev_cam_x = _cam_x
+	_prev_cam_y = _cam_y
 	_chunk_overlay_bg_layer.clear_with_modulates()
 	_chunk_overlay_fg_layer.clear_with_modulates()
 
@@ -3101,15 +3266,17 @@ func _sync_chunk_tilemaps() -> void:
 	for e in _map.entities:
 		if not _on_screen(e.pos.x, e.pos.y) or not _map.visible[e.pos.y][e.pos.x]:
 			continue
-		if e is ActorClass and not (e as ActorClass).is_alive:
-			continue
 		var sp := _to_screen(e.pos.x, e.pos.y)
 		var key := Vector2i(sp.x, sp.y)
 		if not cell_map.has(key):
 			cell_map[key] = []
 		(cell_map[key] as Array).append(e)
 
+	var new_entity_cells: Array[Vector2i] = []
 	for key in cell_map:
+		# Skip cells whose tile is owned by an in-progress bump animation.
+		if _bump_suppressed.has(key):
+			continue
 		var e = _display_entity_for_cell(cell_map[key] as Array)
 		if e == null:
 			continue
@@ -3119,6 +3286,8 @@ func _sync_chunk_tilemaps() -> void:
 			_glyph_atlas_coords(_entity_glyph(e)),
 			_tileset_glyph_tint(e.color * _day_tint, true)
 		)
+		new_entity_cells.append(key)
+	_prev_entity_cells = new_entity_cells
 
 	if _screen == Screen.LOOK and _on_screen(_look_pos.x, _look_pos.y):
 		var sp := _to_screen(_look_pos.x, _look_pos.y)
@@ -3213,7 +3382,7 @@ func _sky_track() -> String:
 	const TRACK_LEN: int = 17
 	var t: float = _world.time_of_day
 	var is_night: bool = _world.is_night
-	var body: String = "o" if is_night else "*"
+	var body: String = "o" if is_night else "☼"
 	var travel_t: float
 	if is_night:
 		travel_t = (t + 0.20) / 0.40 if t < 0.20 else (t - 0.80) / 0.40
@@ -3652,11 +3821,9 @@ func _sync_world_tilemaps() -> void:
 	var map_px_h: float = _divider_y_px() - map_px_y
 	var cell_w: float = map_px_w / float(GameState.WORLD_W)
 	var cell_h: float = map_px_h / float(GameState.WORLD_H)
+	var new_scale := Vector2(cell_w / float(TILESET_TILE_W), cell_h / float(TILESET_TILE_H))
 	_world_tile_root.position = Vector2(0.0, map_px_y)
-	_world_tile_root.scale = Vector2(cell_w / float(TILESET_TILE_W), cell_h / float(TILESET_TILE_H))
-	_world_bg_layer.clear_with_modulates()
-	_world_fg_layer.clear_with_modulates()
-	_world_overlay_layer.clear_with_modulates()
+	_world_tile_root.scale = new_scale
 
 	var mount = _world.get_player_mount()
 	var current_chunk_char: String = "@"
@@ -3667,54 +3834,89 @@ func _sync_world_tilemaps() -> void:
 	elif mount != null:
 		current_chunk_color = Color(0.95, 0.80, 0.40)
 
-	for cy in range(GameState.WORLD_H):
-		for cx in range(GameState.WORLD_W):
-			var coords := Vector2i(cx, cy)
-			var this_chunk := Vector2i(cx, cy)
-			var is_current: bool = this_chunk == _chunk
-			var is_lk_curs: bool = _world_look_mode and this_chunk == _world_look_cursor
-			var ch: String
-			var color: Color
-			var village: Variant = _world.get_village_at_chunk(cx, cy)
+	# Full repaint when viewport scale changed (resize) or first time showing.
+	var scale_changed: bool = new_scale != _wm_last_scale
+	if scale_changed:
+		_world_bg_layer.clear_with_modulates()
+		_world_fg_layer.clear_with_modulates()
+		_world_overlay_layer.clear_with_modulates()
+		for cy in range(GameState.WORLD_H):
+			for cx in range(GameState.WORLD_W):
+				_wm_paint_cell(cx, cy, current_chunk_char, current_chunk_color)
+		_wm_last_scale = new_scale
+	else:
+		# Incremental: repaint only the cells that could have changed.
+		# Collect unique coords to touch using a temp Dictionary as a set.
+		var dirty: Dictionary = {}
+		dirty[_chunk] = true
+		dirty[_wm_prev_chunk] = true
+		if _world_look_mode or _wm_prev_look_mode:
+			dirty[_world_look_cursor] = true
+			dirty[_wm_prev_look_cursor] = true
+		for coords: Vector2i in dirty:
+			if coords.x >= 0 and coords.y >= 0 and coords.x < GameState.WORLD_W and coords.y < GameState.WORLD_H:
+				_wm_paint_cell(coords.x, coords.y, current_chunk_char, current_chunk_color)
 
-			if village != null:
-				ch = "*"
-				color = C_VILLAGE_WM
-			elif _world.is_road_chunk(cx, cy):
-				ch = "="
-				color = Color(0.70, 0.55, 0.32)
-			else:
-				var biome: int = _world.get_chunk_biome(this_chunk)
-				ch = _biome_char(biome)
-				color = _biome_color(biome)
-
-			if is_current:
-				ch = current_chunk_char
-				color = Color(0.95, 0.80, 0.40) if is_lk_curs else current_chunk_color
-
-			var cell_bg: Color = color.lerp(C_BG, 0.70)
-			if is_lk_curs:
-				cell_bg = Color(0.20, 0.16, 0.10, 0.96)
-			elif is_current:
-				cell_bg = Color(0.17, 0.13, 0.08, 0.92)
-
-			_world_bg_layer.set_cell_with_modulate(coords, FILL_SOURCE_ID, Vector2i.ZERO, cell_bg)
-			_world_fg_layer.set_cell_with_modulate(coords, TILE_SOURCE_ID, _glyph_atlas_coords(ch), color)
-			if is_lk_curs:
-				_world_overlay_layer.set_cell_with_modulate(coords, FILL_SOURCE_ID, Vector2i.ZERO, Color(0.85, 0.70, 0.32, 0.18))
-			elif is_current:
-				_world_overlay_layer.set_cell_with_modulate(coords, FILL_SOURCE_ID, Vector2i.ZERO, Color(0.78, 0.62, 0.22, 0.12))
+	_wm_prev_chunk = _chunk
+	_wm_prev_look_cursor = _world_look_cursor
+	_wm_prev_look_mode = _world_look_mode
 
 	_world_bg_layer.notify_runtime_tile_data_update()
 	_world_fg_layer.notify_runtime_tile_data_update()
 	_world_overlay_layer.notify_runtime_tile_data_update()
 
 
+# Paint a single world-map cell. Called for both full and incremental repaints.
+func _wm_paint_cell(cx: int, cy: int, current_chunk_char: String, current_chunk_color: Color) -> void:
+	var coords := Vector2i(cx, cy)
+	var this_chunk := Vector2i(cx, cy)
+	var is_current: bool = this_chunk == _chunk
+	var is_lk_curs: bool = _world_look_mode and this_chunk == _world_look_cursor
+	var ch: String
+	var color: Color
+	var village: Variant = _world.get_village_at_chunk(cx, cy)
+
+	if village != null:
+		ch = "*"
+		color = C_VILLAGE_WM
+	elif _world.is_road_chunk(cx, cy):
+		ch = "="
+		color = Color(0.70, 0.55, 0.32)
+	else:
+		var biome: int = _world.get_chunk_biome(this_chunk)
+		ch = _biome_char(biome)
+		color = _biome_color(biome)
+
+	if is_current:
+		ch = current_chunk_char
+		color = Color(0.95, 0.80, 0.40) if is_lk_curs else current_chunk_color
+
+	var cell_bg: Color = color.lerp(C_BG, 0.70)
+	if is_lk_curs:
+		cell_bg = Color(0.20, 0.16, 0.10, 0.96)
+	elif is_current:
+		cell_bg = Color(0.17, 0.13, 0.08, 0.92)
+
+	_world_bg_layer.set_cell_with_modulate(coords, FILL_SOURCE_ID, Vector2i.ZERO, cell_bg)
+	_world_fg_layer.set_cell_with_modulate(coords, TILE_SOURCE_ID, _glyph_atlas_coords(ch), color)
+	_world_overlay_layer.erase_cell_with_modulate(coords)
+	if is_lk_curs:
+		_world_overlay_layer.set_cell_with_modulate(coords, FILL_SOURCE_ID, Vector2i.ZERO, Color(0.85, 0.70, 0.32, 0.18))
+	elif is_current:
+		_world_overlay_layer.set_cell_with_modulate(coords, FILL_SOURCE_ID, Vector2i.ZERO, Color(0.78, 0.62, 0.22, 0.12))
+
+
 func _draw_world_map() -> void:
 	var title_str := "-=[ WORLD MAP - LOOK ]=-" if _world_look_mode else "-=[ WORLD MAP ]=-"
-	_puts_centered(0, title_str, C_STATUS)
+	var map_px_w: float = _chunk_view_px_w()
+	var row_y: float = UI_FONT_SIZE  # same baseline as _puts at row 0
+	var title_px_w: float = _font.get_string_size(title_str, HORIZONTAL_ALIGNMENT_LEFT, -1, UI_FONT_SIZE).x
+	draw_string(_font, Vector2((map_px_w - title_px_w) * 0.5, row_y),
+			title_str, HORIZONTAL_ALIGNMENT_LEFT, -1, UI_FONT_SIZE, C_STATUS)
 	var world_move_hint := "Chunk Travel: %d" % _world.get_world_map_travel_cost(_chunk)
-	_puts(COLS - world_move_hint.length() - 2, 0, world_move_hint, C_DIVIDER)
+	var hint_px_w: float = _font.get_string_size(world_move_hint, HORIZONTAL_ALIGNMENT_LEFT, -1, UI_FONT_SIZE).x
+	draw_string(_font, Vector2(map_px_w - hint_px_w - CELL_W, row_y),
+			world_move_hint, HORIZONTAL_ALIGNMENT_LEFT, -1, UI_FONT_SIZE, C_DIVIDER)
 
 
 func _world_map_chunk_at_pos(mouse_pos: Vector2) -> Vector2i:
@@ -3885,7 +4087,7 @@ func _glyph_draw_metrics(ch: String) -> Dictionary:
 			return {"scale": 1.00, "x": 0.0, "y": 0.0}
 		"@":
 			return {"scale": 1.02, "x": 0.0, "y": -1.0}
-		"â˜º", "â˜»":
+		"☺", "☻":
 			return {"scale": 1.02, "x": 0.0, "y": -1.0}
 		_:
 			return {"scale": 0.92, "x": 0.0, "y": 0.0}
@@ -3997,6 +4199,8 @@ func _put_map_tile(x: int, y: int, ch: String, color: Color) -> void:
 func _entity_glyph(entity) -> String:
 	if entity == null:
 		return "?"
+	if _tileset_active() and entity.tileset_char != "":
+		return entity.tileset_char
 	return str(entity.char)
 
 
