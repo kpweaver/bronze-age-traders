@@ -828,6 +828,10 @@ static func _place_village(map, world_seed: int, world_x: int, world_y: int) -> 
 			door_y = by_ if sin(face) < 0.0 else by_ + bh - 1
 		if map.is_in_bounds(door_x, door_y):
 			map.tiles[door_y][door_x] = GameMapClass.TILE_SAND
+			# Do NOT mark the door tile permanent_light — the flood must only start
+			# from interior tiles the player can directly see through the opening,
+			# not from the door tile being visible at a sideways angle.
+			_place_door_torches(map, door_x, door_y, bx, by_, bw, bh)
 
 		# Furnish the building based on its type.
 		match btype:
@@ -1057,32 +1061,56 @@ static func _furnish_commercial(map, rng: RandomNumberGenerator, bx: int, by_: i
 # ---------------------------------------------------------------------------
 
 # Helper: create a brazier/torch Entity with light_radius set.
-static func _place_light_fixture(map, x: int, y: int, nm: String) -> void:
+static func _place_light_fixture(map, x: int, y: int, nm: String, radius: int = 6) -> void:
 	if not map.is_in_bounds(x, y):
+		return
+	# Only place on open exterior tiles — never inside building walls or floors.
+	var tile: int = map.tiles[y][x]
+	if tile == GameMapClass.TILE_WALL or tile == GameMapClass.TILE_FLOOR:
 		return
 	# Don't stack on top of actors or other fixtures.
 	for e in map.entities:
 		if e.pos == Vector2i(x, y):
 			return
-	var fixture = EntityClass.new(Vector2i(x, y), "☼", Color(1.0, 0.65, 0.10), nm, false)
-	fixture.light_radius = 6
+	var fixture = EntityClass.new(Vector2i(x, y), "*", Color(1.0, 0.65, 0.10), nm, false)
+	fixture.light_radius = radius
 	map.add_entity(fixture)
 
 
-# Place braziers in the village central plaza — permanent light sources.
+# Place a single central hearth in the village plaza as a community focal point.
 static func _place_village_lights(map, rng: RandomNumberGenerator) -> void:
 	var cx: int = map.width  >> 1
 	var cy: int = map.height >> 1
-	# Four braziers in a loose square around the plaza centre.
-	var offsets: Array = [Vector2i(-4, -4), Vector2i(4, -4), Vector2i(-4, 4), Vector2i(4, 4)]
-	for off: Vector2i in offsets:
-		var px: int = cx + off.x
-		var py: int = cy + off.y
-		if map.is_in_bounds(px, py) and map.tiles[py][px] == GameMapClass.TILE_SAND:
-			_place_light_fixture(map, px, py, "brazier")
-	# One central brazier in the plaza.
 	if map.is_in_bounds(cx, cy) and map.tiles[cy][cx] != GameMapClass.TILE_WALL:
-		_place_light_fixture(map, cx, cy, "brazier")
+		_place_light_fixture(map, cx, cy, "hearth")
+
+
+# Place torches just outside the building footprint, flanking the door opening.
+# Torches are offset one tile beyond the exterior wall face so they don't sit
+# inside the structural frame.
+static func _place_door_torches(map, door_x: int, door_y: int, bx: int, by_: int, bw: int, bh: int) -> void:
+	var left: Vector2i
+	var right: Vector2i
+	if door_x == bx:
+		# Left wall — torches one step further left, flanking vertically.
+		left  = Vector2i(bx - 1, door_y - 1)
+		right = Vector2i(bx - 1, door_y + 1)
+	elif door_x == bx + bw - 1:
+		# Right wall — torches one step further right.
+		left  = Vector2i(bx + bw, door_y - 1)
+		right = Vector2i(bx + bw, door_y + 1)
+	elif door_y == by_:
+		# Top wall — torches one step further up, flanking horizontally.
+		left  = Vector2i(door_x - 1, by_ - 1)
+		right = Vector2i(door_x + 1, by_ - 1)
+	else:
+		# Bottom wall — torches one step further down.
+		left  = Vector2i(door_x - 1, by_ + bh)
+		right = Vector2i(door_x + 1, by_ + bh)
+	# Radius 2: illuminates the entrance area but dist² of first interior tile
+	# (5) exceeds radius² (4), so light cannot bleed through the doorway.
+	_place_light_fixture(map, left.x,  left.y,  "torch", 2)
+	_place_light_fixture(map, right.x, right.y, "torch", 2)
 
 
 # Place 1–2 road torches per chunk, on non-road tiles immediately beside the road.

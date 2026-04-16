@@ -7,6 +7,8 @@ extends Node
 signal turn_ended(turn_number: int)  # emitted every turn — hook day/night, events, etc.
 signal map_changed()                  # emitted on any floor/chunk transition or new game
 signal attribute_points_changed(unspent_points: int)
+signal entity_attacked(attacker_pos: Vector2i, target_pos: Vector2i, glyph: String, color: Color)
+signal entity_fired(attacker_pos: Vector2i, target_pos: Vector2i, projectile_char: String, projectile_color: Color)
 
 # ---------------------------------------------------------------------------
 # Dependencies
@@ -399,6 +401,7 @@ func do_player_turn(dir: Vector2i, force_attack: bool = false) -> void:
 
 
 func _player_attack_target(target: ActorClass) -> void:
+	entity_attacked.emit(player.pos, target.pos, str(player.char), player.color)
 	add_msg(player.attack(target))
 	if not GameState.god_mode:
 		player.fatigue = mini(player.fatigue + 2, ActorClass.FATIGUE_MAX)
@@ -484,6 +487,7 @@ func fire_ranged_at(target_pos: Vector2i) -> void:
 		return
 
 	_consume_ammo(ammo)
+	entity_fired.emit(player.pos, target_pos, str((ammo as ItemClass).char), (ammo as ItemClass).color)
 	var hit_actor = _first_actor_on_line(player.pos, target_pos)
 	if hit_actor == null:
 		add_msg("You loose a shot into empty ground.")
@@ -568,6 +572,12 @@ func do_enemy_turns() -> void:
 			(e.ai as WanderAIClass).world_is_night = night
 		elif e.ai is DocileAIClass:
 			(e.ai as DocileAIClass).world_is_night = night
+		# Emit before the turn so the renderer can start the bump animation.
+		if e.ai is HostileAIClass:
+			var ddx: int = player.pos.x - e.pos.x
+			var ddy: int = player.pos.y - e.pos.y
+			if maxi(absi(ddx), absi(ddy)) <= 1:
+				entity_attacked.emit(e.pos, player.pos, str(e.char), e.color)
 		var msg: String = e.ai.take_turn(player, map)
 		if msg != "":
 			add_msg(msg)
