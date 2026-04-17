@@ -223,7 +223,7 @@ const DATA: Dictionary = {
 	# wander_radius is larger than village NPCs so they roam freely.
 	# -----------------------------------------------------------------------
 	"gazelle": {
-		"name": "gazelle", "char": "δ", "tileset_char": "δ",
+		"name": "gazelle", "char": "g", "tileset_char": "g",
 		"cr": 0.85, "cg": 0.73, "cb": 0.38,
 		"str": 8, "dex": 16, "con": 10, "int": 2, "wis": 12, "cha": 6,
 		"base_hp": 6, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
@@ -243,7 +243,7 @@ const DATA: Dictionary = {
 		"spawn_weight": 0,  # spawned by procgen, not village pools
 	},
 	"onager": {
-		"name": "onager", "char": "σ", "tileset_char": "σ",
+		"name": "onager", "char": "o", "tileset_char": "o",
 		"cr": 0.72, "cg": 0.60, "cb": 0.42,
 		"str": 13, "dex": 12, "con": 13, "int": 2, "wis": 10, "cha": 5,
 		"base_hp": 13, "defense": 0, "power": 2, "level": 1, "attack_speed": 1.0,
@@ -263,7 +263,7 @@ const DATA: Dictionary = {
 		"spawn_weight": 0,
 	},
 	"donkey": {
-		"name": "donkey", "char": "τ", "tileset_char": "τ",
+		"name": "donkey", "char": "d", "tileset_char": "d",
 		"cr": 0.66, "cg": 0.56, "cb": 0.40,
 		"str": 12, "dex": 10, "con": 12, "int": 2, "wis": 10, "cha": 7,
 		"base_hp": 11, "defense": 0, "power": 1, "level": 1, "attack_speed": 1.0,
@@ -277,7 +277,7 @@ const DATA: Dictionary = {
 		"spawn_weight": 0,
 	},
 	"ibex": {
-		"name": "ibex", "char": "π", "tileset_char": "π",
+		"name": "ibex", "char": "i", "tileset_char": "i",
 		"cr": 0.50, "cg": 0.40, "cb": 0.28,
 		"str": 11, "dex": 14, "con": 11, "int": 2, "wis": 12, "cha": 5,
 		"base_hp": 10, "defense": 1, "power": 2, "level": 1, "attack_speed": 1.0,
@@ -297,7 +297,7 @@ const DATA: Dictionary = {
 		"spawn_weight": 0,
 	},
 	"hyena": {
-		"name": "hyena", "char": "Φ", "tileset_char": "Φ",
+		"name": "hyena", "char": "h", "tileset_char": "h",
 		"cr": 0.62, "cg": 0.54, "cb": 0.38,
 		"str": 13, "dex": 13, "con": 13, "int": 3, "wis": 12, "cha": 4,
 		"base_hp": 15, "defense": 1, "power": 3, "level": 1, "attack_speed": 1.0,

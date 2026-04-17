@@ -1184,30 +1184,54 @@ func chunk_transition(dir: Vector2i, action_cost: int = ACTION_COST_STANDARD) ->
 	elif next.y >= OVERWORLD_H:
 		dc.y  =  1;  new_y = 0
 
+	# If crossing on a road tile, snap the free axis to the road centerline so the
+	# player arrives on the road in the new chunk (roads always enter at chunk center).
+	var on_road: bool = map.tiles[player.pos.y][player.pos.x] == GameMapClass.TILE_ROAD
+	if on_road:
+		if dc.y != 0:  # north/south crossing — snap x to center
+			new_x = OVERWORLD_W >> 1
+		elif dc.x != 0:  # east/west crossing — snap y to center
+			new_y = OVERWORLD_H >> 1
+
 	var dest_chunk := chunk + dc
 	if dest_chunk.x < 0 or dest_chunk.x >= GameState.WORLD_W \
 	or dest_chunk.y < 0 or dest_chunk.y >= GameState.WORLD_H:
 		add_msg("Beyond this lies only empty horizon. You cannot travel farther.")
 		return
 
+	# Load or generate the destination chunk BEFORE committing the move so we
+	# can check whether the landing tile is actually passable.
+	var dest_map: GameMapClass
+	if chunks.has(dest_chunk):
+		dest_map = chunks[dest_chunk]
+	else:
+		var new_map := GameMapClass.new(OVERWORLD_W, OVERWORLD_H)
+		ProcgenClass.generate_overworld(new_map,
+				dest_chunk.x * OVERWORLD_W, dest_chunk.y * OVERWORLD_H,
+				GameState.world_seed, get_chunk_biome(dest_chunk), false,
+				get_road_dirs(dest_chunk), is_village_chunk(dest_chunk.x, dest_chunk.y))
+		_place_chunk_encounter(new_map, dest_chunk, Vector2i(new_x, new_y))
+		chunks[dest_chunk] = new_map
+		dest_map = new_map
+
+	# Block the crossing if the landing tile is impassable (rock, water, etc.).
+	var dest_pos := Vector2i(
+		clampi(new_x, 0, OVERWORLD_W - 1),
+		clampi(new_y, 0, OVERWORLD_H - 1))
+	if not dest_map.is_walkable(dest_pos.x, dest_pos.y):
+		add_msg("Impassable terrain blocks your path.")
+		turn_ended.emit(turn)  # flush message log without advancing game state
+		return
+
+	# Commit the transition — only now do we move the player.
 	map.remove_entity(player)
 	if current_mount != null:
 		map.remove_entity(current_mount)
 	chunks[chunk] = map
 	chunk = dest_chunk
+	map = dest_map
 
-	if chunks.has(chunk):
-		map = chunks[chunk]
-	else:
-		var new_map := GameMapClass.new(OVERWORLD_W, OVERWORLD_H)
-		ProcgenClass.generate_overworld(new_map,
-				chunk.x * OVERWORLD_W, chunk.y * OVERWORLD_H,
-				GameState.world_seed, get_chunk_biome(chunk), false,
-				get_road_dirs(chunk), is_village_chunk(chunk.x, chunk.y))
-		_place_chunk_encounter(new_map, chunk, Vector2i(new_x, new_y))
-		map = new_map
-
-	player.pos      = _nearest_walkable_overworld_pos(map, Vector2i(new_x, new_y))
+	player.pos = dest_pos
 	map.add_entity(player)
 	if current_mount != null:
 		current_mount.pos = player.pos
@@ -1326,6 +1350,10 @@ func get_village_at_chunk(cx: int, cy: int) -> Variant:
 
 
 func get_road_dirs(c: Vector2i) -> Array:
+	# Guard: only road chunks get roads carved. Without this, every non-road chunk
+	# adjacent to a road chunk would receive dead-end stub roads.
+	if not GameState.road_chunks.has("%d,%d" % [c.x, c.y]):
+		return []
 	var dirs: Array = []
 	for d: Vector2i in [Vector2i(0,-1), Vector2i(0,1), Vector2i(-1,0), Vector2i(1,0)]:
 		var nc := c + d

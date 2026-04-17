@@ -96,6 +96,10 @@ const C_GRASS_BG_TILESET_DIM := Color(0.08, 0.16, 0.05)
 const C_ROAD_BG_TILESET_LIT  := Color(0.50, 0.40, 0.24)
 const C_ROAD_BG_TILESET_DIM  := Color(0.18, 0.14, 0.08)
 
+# -- TERRAIN VARIATION -------------------------------------------------------
+# Set to false to revert all terrain tiles to single-char, single-colour glyphs.
+const TERRAIN_VARIATION := true
+
 # ---------------------------------------------------------------------------
 # Escape menu
 # ---------------------------------------------------------------------------
@@ -2163,6 +2167,47 @@ func _ascii_glyph_tint(base_color: Color, lit: bool) -> Color:
 	return glyph_color
 
 
+# Returns [char, lit_color] for terrain tiles that support visual variation.
+# Uses a deterministic hash of world coords — stable across frames and redraws.
+# Returns ["", Color.WHITE] for unhandled tiles (caller uses its own defaults).
+func _terrain_cell(tile: int, mx: int, my: int) -> Array:
+	if not TERRAIN_VARIATION:
+		return ["", Color.WHITE]
+	# Avalanche hash — fully mixes both coords so no diagonal banding appears.
+	var h: int = mx * 1836311903 ^ my * 2971215073
+	h += h << 10
+	h ^= h >> 6
+	h += h << 3
+	h ^= h >> 11
+	h += h << 15
+	h = abs(h) & 0x7FFFFFFF
+	match tile:
+		GameMapClass.TILE_GRASS:
+			# All chars sit in the upper-mid region of the CP437 cell — no height mismatch.
+			var idx: int = h % 4
+			var chars := ["\"", "'", "\"", "'"]
+			var colors := [
+				Color(0.38, 0.73, 0.20),  # slightly darker
+				Color(0.42, 0.78, 0.25),  # slightly brighter
+				Color(0.40, 0.75, 0.22),  # base
+				Color(0.36, 0.70, 0.18),  # more muted
+			]
+			return [chars[idx], colors[idx]]
+		GameMapClass.TILE_DUNE:
+			# All chars sit at mid-row in the CP437 cell — no height mismatch.
+			var idx: int = h % 4
+			var chars := ["~", "-", "~", "="]
+			var colors := [
+				Color(0.94, 0.68, 0.22),  # base
+				Color(0.90, 0.64, 0.18),  # darker
+				Color(0.97, 0.72, 0.26),  # lighter
+				Color(0.92, 0.66, 0.20),  # mid-dark
+			]
+			return [chars[idx], colors[idx]]
+		_:
+			return ["", Color.WHITE]
+
+
 func _ascii_cell_rect(x: int, y: int) -> Rect2:
 	var cell_w: float = _map_cell_w()
 	var cell_h: float = _map_cell_h()
@@ -3154,8 +3199,11 @@ func _draw_map() -> void:
 					color = C_SAND_LIT if lit else _tile_dim_color(tile)
 				GameMapClass.TILE_DUNE:
 					if ch == "":
-						ch = "^"
-					color = C_DUNE_LIT if lit else _tile_dim_color(tile)
+						var variant := _terrain_cell(tile, mx, my)
+						ch = variant[0] if variant[0] != "" else "^"
+						color = (variant[1] as Color) if lit else _tile_dim_color(tile)
+					else:
+						color = C_DUNE_LIT if lit else _tile_dim_color(tile)
 				GameMapClass.TILE_ROCK:
 					if ch == "":
 						ch = "#"
@@ -3166,8 +3214,11 @@ func _draw_map() -> void:
 					color = C_WATER_LIT if lit else _tile_dim_color(tile)
 				GameMapClass.TILE_GRASS:
 					if ch == "":
-						ch = "."
-					color = C_GRASS_LIT if lit else _tile_dim_color(tile)
+						var variant := _terrain_cell(tile, mx, my)
+						ch = variant[0] if variant[0] != "" else "."
+						color = (variant[1] as Color) if lit else _tile_dim_color(tile)
+					else:
+						color = C_GRASS_LIT if lit else _tile_dim_color(tile)
 				GameMapClass.TILE_ROAD:
 					if ch == "":
 						ch = "\u2591"
@@ -3237,8 +3288,9 @@ func _sync_chunk_tilemaps() -> void:
 						ch = "."
 						base_color = C_SAND_LIT if lit else _tile_dim_color(tile)
 					GameMapClass.TILE_DUNE:
-						ch = "^"
-						base_color = C_DUNE_LIT if lit else _tile_dim_color(tile)
+						var variant := _terrain_cell(tile, mx, my)
+						ch = variant[0] if variant[0] != "" else "^"
+						base_color = (variant[1] as Color) if lit else _tile_dim_color(tile)
 					GameMapClass.TILE_ROCK:
 						ch = "#"
 						base_color = C_ROCK_LIT if lit else _tile_dim_color(tile)
@@ -3246,8 +3298,9 @@ func _sync_chunk_tilemaps() -> void:
 						ch = "~"
 						base_color = C_WATER_LIT if lit else _tile_dim_color(tile)
 					GameMapClass.TILE_GRASS:
-						ch = "\""
-						base_color = C_GRASS_LIT if lit else _tile_dim_color(tile)
+						var variant := _terrain_cell(tile, mx, my)
+						ch = variant[0] if variant[0] != "" else "\""
+						base_color = (variant[1] as Color) if lit else _tile_dim_color(tile)
 					GameMapClass.TILE_ROAD:
 						ch = "\u2591"
 						base_color = C_ROAD_LIT if lit else _tile_dim_color(tile)
