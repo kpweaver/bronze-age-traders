@@ -104,7 +104,19 @@ static func generate_dungeon_sites(
 
 
 # ---------------------------------------------------------------------------
-# Dungeon generation — Cellular Automata caves + rectangular rooms
+# Dungeon generation — rooms-first with organic cave corridors
+#
+# Design: start fully solid (TILE_CAVE_WALL), carve rooms into it, then
+# connect rooms with winding cave corridors.  This ensures every room has
+# proper walls on all sides — the problem with CA-first was that rooms
+# just became differently-coloured patches in an already-open space.
+#
+# Room mix:
+#   ~55 % rectangular (TILE_FLOOR)  — man-made chambers, warm colour
+#   ~45 % organic cave chambers (TILE_CAVE_FLOOR) — eroded borders, cool colour
+#
+# Corridors are carved as TILE_CAVE_FLOOR with occasional 2-wide sections and
+# small bulge pockets, giving the natural feel between rooms.
 # ---------------------------------------------------------------------------
 
 static func generate_dungeon(
@@ -119,28 +131,25 @@ static func generate_dungeon(
 	var rng := RandomNumberGenerator.new()
 	rng.seed = randi()
 
-	# --- Phase 1: Cellular Automata cave skeleton ---
-	# ~47 % initial wall fill produces well-connected caves after smoothing.
-	_ca_init(map, rng, 0.47)
-	for _i in range(4):
-		_ca_step(map)
+	# --- Phase 1: Start completely solid ---
+	for y in range(map.height):
+		for x in range(map.width):
+			map.tiles[y][x] = GameMapClass.TILE_CAVE_WALL
 
-	# --- Phase 2: Rectangular rooms carved into the CA base ---
-	# Rooms are stamped as TILE_FLOOR so they read as man-made chambers amid
-	# the natural TILE_CAVE_FLOOR surroundings.
+	# --- Phase 2: Place rooms with spacing ---
 	var rooms: Array = []
-	var rect_target: int = maxi(4, max_rooms / 2)
-	for _i in range(rect_target * 4):
-		if rooms.size() >= rect_target:
+	for _i in range(max_rooms * 4):
+		if rooms.size() >= max_rooms:
 			break
 		var w := rng.randi_range(min_size, max_size)
 		var h := rng.randi_range(min_size, max_size)
-		var x := rng.randi_range(1, map.width  - w - 2)
-		var y := rng.randi_range(1, map.height - h - 2)
+		var x := rng.randi_range(2, map.width  - w - 3)
+		var y := rng.randi_range(2, map.height - h - 3)
 		var new_room := RectRoom.new(x, y, w, h)
 
 		var overlaps := false
 		for room in rooms:
+			# 2-tile padding so rooms always have wall between them.
 			var padded := RectRoom.new(
 				room.x1 - 2, room.y1 - 2,
 				(room.x2 - room.x1) + 4,
@@ -151,18 +160,29 @@ static func generate_dungeon(
 		if overlaps:
 			continue
 
-		_carve_room(map, new_room, _room_is_lit(floor))
+		# ~45 % chance: irregular cave chamber instead of a clean rectangle.
+		var is_lit: bool = _room_is_lit(floor)
+		if rng.randf() < 0.45:
+			_carve_cave_chamber(map, new_room, rng, is_lit)
+		else:
+			_carve_room(map, new_room, is_lit)
 		rooms.append(new_room)
 
-	# --- Phase 3: Flood-fill connectivity ---
-	# Merge disconnected floor regions with narrow cave corridors.
-	_connect_cave_regions(map, rng)
+	if rooms.is_empty():
+		player.pos = Vector2i(map.width >> 1, map.height >> 1)
+		return
 
-	# --- Phase 4: Player placement ---
-	if not rooms.is_empty():
-		player.pos = rooms[0].center()
-	else:
-		player.pos = _find_open_cave_tile(map)
+	# --- Phase 3: Connect rooms with winding cave corridors ---
+	# Shuffle connection order slightly so the path isn't always linear.
+	for i in range(rooms.size() - 1):
+		_carve_winding_corridor(map, rooms[i].center(), rooms[i + 1].center(), rng)
+
+	# Optional back-connection: link last room to first to create loops (~40 %).
+	if rooms.size() > 3 and rng.randf() < 0.40:
+		_carve_winding_corridor(map, rooms.back().center(), rooms[0].center(), rng)
+
+	# --- Phase 4: Player placement (first room) ---
+	player.pos = rooms[0].center()
 
 	# --- Phase 5: Monsters & items ---
 	for i in range(1, rooms.size()):
@@ -170,158 +190,112 @@ static func generate_dungeon(
 		_place_items(map, rooms[i], 2, floor)
 	_scatter_cave_monsters(map, player.pos, max_monsters_per_room, floor, rng)
 
-	# --- Phase 6: Stairs down in last room (or far from player) ---
-	var stairs_pos: Vector2i
-	if rooms.size() > 1:
-		stairs_pos = rooms.back().center()
-	else:
-		stairs_pos = _find_far_cave_tile(map, player.pos)
-	if map.is_in_bounds(stairs_pos.x, stairs_pos.y):
-		map.add_entity(EntityClass.new(stairs_pos, ">", Color(0.90, 0.85, 0.60), "stairs down", false))
+	# --- Phase 6: Stairs down in last room ---
+	map.add_entity(EntityClass.new(
+			rooms.back().center(), ">", Color(0.90, 0.85, 0.60), "stairs down", false))
 
 
 # ---------------------------------------------------------------------------
-# Cellular Automata helpers
+# Room carving
 # ---------------------------------------------------------------------------
 
-static func _ca_init(map, rng: RandomNumberGenerator, fill_chance: float) -> void:
-	for y in range(map.height):
-		for x in range(map.width):
-			if x == 0 or x == map.width - 1 or y == 0 or y == map.height - 1:
-				map.tiles[y][x] = GameMapClass.TILE_CAVE_WALL
-			elif rng.randf() < fill_chance:
+# Organic cave chamber: fill rectangle as TILE_CAVE_FLOOR, then randomly
+# erode ~35 % of border cells back to TILE_CAVE_WALL for a natural look.
+static func _carve_cave_chamber(map, room: RectRoom, rng: RandomNumberGenerator, is_lit: bool) -> void:
+	for y in range(room.y1, room.y2):
+		for x in range(room.x1, room.x2):
+			var on_border: bool = (x == room.x1 or x == room.x2 - 1 or
+								   y == room.y1 or y == room.y2 - 1)
+			# Erode ~35 % of border tiles to keep rough edges.
+			if on_border and rng.randf() < 0.35:
 				map.tiles[y][x] = GameMapClass.TILE_CAVE_WALL
 			else:
 				map.tiles[y][x] = GameMapClass.TILE_CAVE_FLOOR
-
-
-static func _ca_wall_neighbors(map, x: int, y: int) -> int:
-	var count: int = 0
-	for dy in range(-1, 2):
-		for dx in range(-1, 2):
-			if dx == 0 and dy == 0:
-				continue
-			var nx: int = x + dx
-			var ny: int = y + dy
-			if not map.is_in_bounds(nx, ny) or map.tiles[ny][nx] == GameMapClass.TILE_CAVE_WALL:
-				count += 1
-	return count
-
-
-static func _ca_step(map) -> void:
-	# B5/S4 rule expressed as wall-neighbor count:
-	#   ≥ 5 wall neighbours → becomes/stays wall
-	#   ≤ 4 wall neighbours → becomes/stays floor
-	var next: Array = []
-	for y in range(map.height):
-		next.append(map.tiles[y].duplicate())
-	for y in range(1, map.height - 1):
-		for x in range(1, map.width - 1):
-			var walls: int = _ca_wall_neighbors(map, x, y)
-			next[y][x] = GameMapClass.TILE_CAVE_WALL if walls >= 5 else GameMapClass.TILE_CAVE_FLOOR
-	for y in range(map.height):
-		for x in range(map.width):
-			map.tiles[y][x] = next[y][x]
+				if is_lit:
+					map.permanent_light[y][x] = true
 
 
 # ---------------------------------------------------------------------------
-# Flood-fill connectivity
+# Winding cave corridor
 # ---------------------------------------------------------------------------
 
-static func _connect_cave_regions(map, rng: RandomNumberGenerator) -> void:
-	# BFS flood-fill to find all distinct walkable regions.
-	var visited: Array = []
-	for y in range(map.height):
-		visited.append([])
-		for x in range(map.width):
-			visited[y].append(false)
-
-	var regions: Array = []
-	for y in range(map.height):
-		for x in range(map.width):
-			if visited[y][x]:
-				continue
-			var t: int = map.tiles[y][x]
-			if t != GameMapClass.TILE_CAVE_FLOOR and t != GameMapClass.TILE_FLOOR:
-				continue
-			var region: Array = []
-			var queue: Array[Vector2i] = [Vector2i(x, y)]
-			visited[y][x] = true
-			while not queue.is_empty():
-				var pos: Vector2i = queue.pop_front()
-				region.append(pos)
-				for d: Vector2i in [Vector2i(1,0), Vector2i(-1,0), Vector2i(0,1), Vector2i(0,-1)]:
-					var nx: int = pos.x + d.x
-					var ny: int = pos.y + d.y
-					if not map.is_in_bounds(nx, ny) or visited[ny][nx]:
-						continue
-					var nt: int = map.tiles[ny][nx]
-					if nt != GameMapClass.TILE_CAVE_FLOOR and nt != GameMapClass.TILE_FLOOR:
-						continue
-					visited[ny][nx] = true
-					queue.append(Vector2i(nx, ny))
-			regions.append(region)
-
-	if regions.size() <= 1:
-		return
-
-	# Largest region is main. Sort descending by size.
-	regions.sort_custom(func(a: Array, b: Array) -> bool: return a.size() > b.size())
-
-	# Discard tiny isolated patches and fill with wall.
-	var large: Array = []
-	for region in regions:
-		if (region as Array).size() >= 10:
-			large.append(region)
-		else:
-			for pos: Vector2i in (region as Array):
-				map.tiles[pos.y][pos.x] = GameMapClass.TILE_CAVE_WALL
-
-	# Connect every large region to the main (largest) region.
-	for i in range(1, large.size()):
-		var ra: Array = large[0]
-		var rb: Array = large[i]
-		# Sample up to 50 tiles per region to find the closest pair.
-		var sa: Array = ra if ra.size() <= 50 else []
-		var sb: Array = rb if rb.size() <= 50 else []
-		if sa.is_empty():
-			for _j in range(50):
-				sa.append(ra[rng.randi_range(0, ra.size() - 1)])
-		if sb.is_empty():
-			for _j in range(50):
-				sb.append(rb[rng.randi_range(0, rb.size() - 1)])
-		var best_dist: int = 999999
-		var best_a := Vector2i(0, 0)
-		var best_b := Vector2i(0, 0)
-		for pa: Vector2i in sa:
-			for pb: Vector2i in sb:
-				var d: int = absi(pa.x - pb.x) + absi(pa.y - pb.y)
-				if d < best_dist:
-					best_dist = d
-					best_a = pa
-					best_b = pb
-		_carve_cave_corridor(map, best_a, best_b)
-
-
-static func _carve_cave_corridor(map, a: Vector2i, b: Vector2i) -> void:
-	if randf() < 0.5:
-		_cave_hline(map, a.x, b.x, a.y)
-		_cave_vline(map, a.y, b.y, b.x)
+# Connects two points with a 2-segment L-corridor, adding a random midpoint
+# offset and occasional corridor widening for an organic feel.
+static func _carve_winding_corridor(map, a: Vector2i, b: Vector2i, rng: RandomNumberGenerator) -> void:
+	# Introduce a random waypoint between A and B so the path bends.
+	var mx: int
+	var my: int
+	if rng.randf() < 0.5:
+		# Horizontal-first bend: midpoint shifts vertically.
+		mx = b.x
+		my = a.y + rng.randi_range(-3, 3)
 	else:
-		_cave_vline(map, a.y, b.y, a.x)
-		_cave_hline(map, a.x, b.x, b.y)
+		# Vertical-first bend: midpoint shifts horizontally.
+		mx = a.x + rng.randi_range(-3, 3)
+		my = b.y
+	mx = clampi(mx, 1, map.width  - 2)
+	my = clampi(my, 1, map.height - 2)
+	var mid := Vector2i(mx, my)
+
+	_carve_corridor_segment(map, a, mid, rng)
+	_carve_corridor_segment(map, mid, b, rng)
 
 
-static func _cave_hline(map, x0: int, x1: int, y: int) -> void:
-	for x in range(mini(x0, x1), maxi(x0, x1) + 1):
-		if map.is_in_bounds(x, y):
-			map.tiles[y][x] = GameMapClass.TILE_CAVE_FLOOR
+# Carve a straight axis-aligned corridor segment, 1 wide with ~30 % chance
+# of widening to 2 and occasional small pocket bulges.
+static func _carve_corridor_segment(map, from: Vector2i, to: Vector2i, rng: RandomNumberGenerator) -> void:
+	var dx: int = signi(to.x - from.x)
+	var dy: int = signi(to.y - from.y)
+	var cx: int = from.x
+	var cy: int = from.y
+
+	# Horizontal leg first, then vertical (standard L).
+	# Walk the horizontal leg.
+	while cx != to.x:
+		_corridor_cell(map, cx, cy, rng)
+		cx += dx if dx != 0 else 0
+		if dx == 0:
+			break
+	# Walk the vertical leg.
+	while cy != to.y:
+		_corridor_cell(map, cx, cy, rng)
+		cy += dy if dy != 0 else 0
+		if dy == 0:
+			break
+	_corridor_cell(map, cx, cy, rng)
 
 
-static func _cave_vline(map, y0: int, y1: int, x: int) -> void:
-	for y in range(mini(y0, y1), maxi(y0, y1) + 1):
-		if map.is_in_bounds(x, y):
-			map.tiles[y][x] = GameMapClass.TILE_CAVE_FLOOR
+# Carve a single corridor cell plus optional side widening.
+# Corridor cells carve through TILE_CAVE_WALL (open cave) and TILE_WALL
+# (room border) — the latter creates natural doorways into rectangular rooms.
+# TILE_FLOOR and TILE_CAVE_FLOOR are never overwritten (room interiors preserved).
+static func _corridor_cell(map, x: int, y: int, rng: RandomNumberGenerator) -> void:
+	if not map.is_in_bounds(x, y):
+		return
+	var t: int = map.tiles[y][x]
+	# Only carve wall tiles — preserve any existing floor.
+	if t != GameMapClass.TILE_CAVE_WALL and t != GameMapClass.TILE_WALL:
+		return
+	map.tiles[y][x] = GameMapClass.TILE_CAVE_FLOOR
+
+	# 30 % chance: widen by one cell perpendicular to travel (cave walls only,
+	# so we don't accidentally widen through a room border twice).
+	if rng.randf() < 0.30:
+		var side: int = rng.randi_range(0, 1) * 2 - 1   # −1 or +1
+		var nx: int = x + side
+		var ny: int = y
+		if not map.is_in_bounds(nx, ny):
+			nx = x
+			ny = y + side
+		if map.is_in_bounds(nx, ny) and map.tiles[ny][nx] == GameMapClass.TILE_CAVE_WALL:
+			map.tiles[ny][nx] = GameMapClass.TILE_CAVE_FLOOR
+
+	# 8 % chance: small bulge pocket for organic texture (cave walls only).
+	if rng.randf() < 0.08:
+		for py in range(y - 1, y + 2):
+			for px in range(x - 1, x + 2):
+				if map.is_in_bounds(px, py) and map.tiles[py][px] == GameMapClass.TILE_CAVE_WALL:
+					map.tiles[py][px] = GameMapClass.TILE_CAVE_FLOOR
 
 
 # ---------------------------------------------------------------------------
@@ -398,11 +372,19 @@ static func _spawn_dungeon_monster(map, x: int, y: int, floor: int) -> void:
 
 
 static func _carve_room(map, room: RectRoom, is_lit: bool = false) -> void:
+	# Perimeter becomes TILE_WALL (warm, constructed look) so rectangular rooms
+	# have a clear frame.  Corridors will punch through this border as doorways.
+	# Interior is TILE_FLOOR (walkable, optionally lit).
 	for y in range(room.y1, room.y2):
 		for x in range(room.x1, room.x2):
-			map.tiles[y][x] = GameMapClass.TILE_FLOOR
-			if is_lit:
-				map.permanent_light[y][x] = true
+			var on_border: bool = (x == room.x1 or x == room.x2 - 1 or
+								   y == room.y1 or y == room.y2 - 1)
+			if on_border:
+				map.tiles[y][x] = GameMapClass.TILE_WALL
+			else:
+				map.tiles[y][x] = GameMapClass.TILE_FLOOR
+				if is_lit:
+					map.permanent_light[y][x] = true
 
 
 static func _room_is_lit(floor: int) -> bool:

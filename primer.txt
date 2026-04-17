@@ -4,6 +4,23 @@
     every move. Base fatigue pressure is 0.75 per movement turn, modified by
     CON, while night overworld travel applies that rate twice.
 
+  2026-04 dungeon + world overhaul:
+    Added TILE_CAVE_WALL (8) and TILE_CAVE_FLOOR (9) — cool grey cave tiles
+    distinct from the warm-brown dungeon palette.
+    generate_dungeon() completely rewritten: rooms-first (start solid, carve
+    in), mix of rectangular rooms with TILE_WALL borders and organic cave
+    chambers with eroded edges, winding corridors with bulges.
+    generate_dungeon_sites() added: biome-weighted dungeon site selection
+    populates GameState.dungeon_chunks on new game and load.
+    World map glyphs updated: village ⌂, road ≡, desert ·, oasis ≈.
+    Terrain variation (TERRAIN_VARIATION flag): TILE_GRASS and TILE_DUNE use
+    deterministic per-cell char/colour mixing via avalanche hash.
+    NPC glyphs: animals now use lowercase letters (g o d i h).
+    Chunk boundary fixes: road_dirs guard prevents stub roads in non-road
+    chunks; road snap on crossing aligns player to road centreline.
+    Impassable terrain blocking: chunk_transition pre-generates destination
+    and blocks crossing if landing tile is unwalkable.
+
 ================================================================================
   BRONZE AGE TRADERS — CODEBASE PRIMER
   For developers with amateur experience, no formal training required.
@@ -135,16 +152,18 @@ time more slowly than a normal action.
   it as a shared notepad the whole game can read from and write to.
 
   KEY VARIABLES:
-    world_seed   — the random number that generates the entire world. Change
-                   this for a different map layout.
-    god_mode     — when true: no thirst drain, player kills in one hit, takes
-                   no damage. Toggle in-game with G (check the settings screen).
+    world_seed     — the random number that generates the entire world. Change
+                     this for a different map layout.
+    god_mode       — when true: no thirst drain, player kills in one hit, takes
+                     no damage. Toggle in-game with G (check the settings screen).
     debug_tools_enabled — enables the hidden debug hub and developer test tools.
-    auto_pickup  — whether the player auto-grabs items they step on.
-    WORLD_W/H    — size of the world in chunks (60×36 = 2160 chunks total).
-    world_biomes — the biome grid for the entire world.
-    villages     — list of village locations (regenerated from world_seed).
-    road_chunks  — which chunks have roads running through them.
+    auto_pickup    — whether the player auto-grabs items they step on.
+    WORLD_W/H      — size of the world in chunks (60×36 = 2160 chunks total).
+    world_biomes   — the biome grid for the entire world.
+    villages       — list of village locations (regenerated from world_seed).
+    road_chunks    — which chunks have roads running through them.
+    dungeon_chunks — which chunks have dungeon entrances (regenerated from
+                     world_seed via procgen.generate_dungeon_sites()).
 
   SAFE TO CHANGE: The constants (WORLD_W, WORLD_H, god_mode default). Be
   careful with world_biomes and villages — those are computed, not hardcoded.
@@ -532,8 +551,32 @@ time more slowly than a normal action.
     supports a highlighted cursor, arrow/tab navigation, Enter/Space to confirm,
     and Esc to cancel. Wildlife attack confirmation uses this overlay.
 
+  TERRAIN VARIATION:
+    TILE_GRASS and TILE_DUNE use deterministic per-cell character and colour
+    mixing controlled by the TERRAIN_VARIATION const flag at the top of the
+    file. Set it to false to revert to single-char single-colour tiles.
+    Variation uses a MurmurHash-style avalanche hash of world coordinates so
+    there is no visible pattern or diagonal banding. Only same-height CP437
+    character families are used to avoid vertical misalignment artefacts.
+
+  WORLD MAP GLYPHS:
+    Village markers: ⌂ (U+2302, CP437 127)
+    Road chunks:     ≡ (U+2261, CP437 240)
+    Desert biome:    · (U+00B7, CP437 250)
+    Oasis biome:     ≈ (U+2248, CP437 247)
+    These glyphs are set in _wm_paint_cell() and _biome_char(). In-chunk tile
+    glyphs are unchanged from their original values.
+
+  NPC GLYPHS:
+    Non-human wildlife now use standard lowercase letters for readability:
+      gazelle → g,  onager → o,  donkey → d,  ibex → i,  hyena → h
+    Human village NPCs still use ☺/☻ (CP437 1/2).
+
   COLOURS:
     All colour constants are at the top of the file (C_BG, C_STATUS, etc.).
+    Cave tile colours: C_CAVE_WALL_LIT/DIM (cool slate grey) and
+    C_CAVE_FLOOR_LIT/DIM (dark cool stone) — visually distinct from the
+    warm-brown dungeon tile palette. Tileset BG variants also defined.
     These are safe to change to retune the visual palette.
 
   CAUTION: This file is large and handles a lot. If you're making small tweaks
@@ -563,14 +606,21 @@ time more slowly than a normal action.
       debug hub.
 
   TILE CONSTANTS:
-    TILE_WALL   = 0  (dungeon wall — blocks movement and sight)
-    TILE_FLOOR  = 1  (dungeon floor)
-    TILE_SAND   = 2  (open desert, walkable)
-    TILE_DUNE   = 3  (dune, walkable but slower-feel)
-    TILE_ROCK   = 4  (rocky outcrop, blocks movement)
-    TILE_WATER  = 5  (oasis water, blocks movement — quenches thirst if adjacent)
-    TILE_GRASS  = 6  (lush grass near water, walkable)
-    TILE_ROAD   = 7  (trade road, walkable — faster travel feel eventually)
+    TILE_WALL       = 0  (dungeon wall — blocks movement and sight; warm brown)
+    TILE_FLOOR      = 1  (dungeon floor; warm brown)
+    TILE_SAND       = 2  (open desert, walkable)
+    TILE_DUNE       = 3  (dune, walkable)
+    TILE_ROCK       = 4  (rocky outcrop, blocks movement)
+    TILE_WATER      = 5  (oasis water, blocks movement — quenches thirst if adjacent)
+    TILE_GRASS      = 6  (lush grass near water, walkable)
+    TILE_ROAD       = 7  (trade road, walkable)
+    TILE_CAVE_WALL  = 8  (natural cave wall — blocks movement and sight; cool slate grey)
+    TILE_CAVE_FLOOR = 9  (natural cave floor — walkable, transparent; cool dark stone)
+
+  The cave tiles (8 and 9) visually distinguish natural cave passages and
+  chambers from man-made dungeon rooms. Rectangular rooms use TILE_WALL (0)
+  borders with TILE_FLOOR (1) interiors. Organic cave chambers and corridors
+  use TILE_CAVE_FLOOR (9) with surrounding TILE_CAVE_WALL (8).
 
   FOV is computed here using recursive shadowcasting, which is the classic
   roguelike approach. Instead of drawing a separate line to every tile, it
@@ -594,7 +644,23 @@ time more slowly than a normal action.
   village layouts, and the world-level road network.
 
   KEY FUNCTIONS:
-    generate_dungeon()    — creates a dungeon floor with rooms and corridors.
+    generate_dungeon()       — creates a dungeon floor. Rooms-first approach:
+                               map starts fully solid (TILE_CAVE_WALL), then
+                               rooms are carved into it so every room has walls
+                               automatically. ~55% rectangular rooms (TILE_WALL
+                               border + TILE_FLOOR interior, warm brown), ~45%
+                               organic cave chambers (TILE_CAVE_FLOOR with
+                               eroded borders, cool grey). Rooms connected by
+                               winding corridors (TILE_CAVE_FLOOR) that
+                               occasionally widen and bulge for organic texture.
+                               Corridors punch through room borders creating
+                               natural doorways.
+    generate_dungeon_sites() — selects which world chunks will have dungeon
+                               entrances, using biome-weighted rejection sampling.
+                               Biome weights (out of 35): mountains 35, desert 20,
+                               badlands 12, steppes 4, oasis 2. Targets ~1 site
+                               per 40 chunks (~54 entrances per world). Result
+                               stored in GameState.dungeon_chunks.
     generate_overworld()  — creates one overworld chunk with terrain, optional
                             village, and roads entering from adjacent chunks.
     generate_roads()      — builds the world-level road network as an MST
@@ -605,6 +671,13 @@ time more slowly than a normal action.
     (home, commercial, admin). Their gameplay tiles are still standard wall/
     floor cells, but procgen also stamps CP437 box-drawing glyph overrides
     so village walls render with corners and vertical/horizontal edges.
+
+  DUNGEON ENTRANCE PLACEMENT:
+    game_world._place_dungeon_entrance_if_needed() is called whenever a fresh
+    overworld chunk is generated (chunk_transition, world_map_navigate, _ascend
+    eviction, exit_debug_hub eviction). It checks GameState.dungeon_chunks and
+    places a '>' entity if applicable. The starting chunk always gets a
+    hand-placed entrance near rocky outcroppings (find_cave_entrance()).
 
   WORLD SCALE:
     Each overworld chunk is 200×200 tiles. Each tile = 0.1 miles (528 feet).
