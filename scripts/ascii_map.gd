@@ -9,6 +9,7 @@ const ItemClass    = preload("res://scripts/entities/item.gd")
 const NpcClass     = preload("res://scripts/entities/npc.gd")
 const GameWorldClass = preload("res://scripts/game_world.gd")
 const ModulateTileMapLayerClass = preload("res://scripts/render/modulate_tile_map_layer.gd")
+const DevProfilerClass = preload("res://scripts/dev_profiler.gd")
 
 # ---------------------------------------------------------------------------
 # Display constants  (viewport: 1080Ã—720, cell: 9Ã—14 â†’ 120Ã—51 tiles)
@@ -184,6 +185,7 @@ var _wm_last_scale: Vector2 = Vector2.ZERO  # detects viewport resize; reset for
 var _wm_prev_chunk: Vector2i = Vector2i(-99, -99)
 var _wm_prev_look_cursor: Vector2i = Vector2i(-99, -99)
 var _wm_prev_look_mode: bool = false
+var _world_tiles_dirty: bool = true
 
 # ---------------------------------------------------------------------------
 # Chunk-map entity layer incremental sync — tracks which screen cells had
@@ -194,6 +196,10 @@ var _wm_prev_look_mode: bool = false
 var _prev_entity_cells: Array[Vector2i] = []
 var _prev_cam_x: int = -9999
 var _prev_cam_y: int = -9999
+var _chunk_tiles_dirty: bool = true
+var _chunk_entities_dirty: bool = true
+var _chunk_overlay_dirty: bool = true
+var _last_draw_screen: Screen = Screen.NONE
 
 # ---------------------------------------------------------------------------
 # Attack animation state — bump ghosts run sequentially via _anim_queue so
@@ -219,7 +225,8 @@ var _tileset: Texture2D
 var _ascii_atlas: Texture2D
 var _glyph_tileset: TileSet
 var _fill_tileset: TileSet
-var _chunk_tile_root: Node2D
+var _chunk_terrain_root: Node2D
+var _chunk_screen_root: Node2D
 var _chunk_bg_layer
 var _chunk_fg_layer
 var _chunk_entity_layer
@@ -263,6 +270,26 @@ var _hud_status_bottom
 var _hud_status_third
 var _hud_sky_label
 var _hud_message_labels: Array = []
+var _hud_dirty: bool = true
+var _profile_chunk_movement: bool = false
+var _profile_live_walk: bool = false
+var _profile_manual_pacing: bool = false
+var _chunk_bg_cache: Dictionary = {}
+var _chunk_fg_cache: Dictionary = {}
+var _chunk_terrain_reset_required: bool = true
+var _terrain_atlas_cache: Array = []
+var _terrain_lit_cache: Array = []
+var _terrain_dim_cache: Array = []
+var _terrain_fill_lit_cache: Array = []
+var _terrain_fill_dim_cache: Array = []
+var _glyph_coord_cache: Dictionary = {}
+var _last_profile_key_usec: int = -1
+var _last_profile_move_key_usec: int = -1
+var _held_move_keycode: int = KEY_NONE
+var _held_move_dir: Vector2i = Vector2i.ZERO
+var _held_move_force_attack: bool = false
+var _held_move_delay_remaining: float = 0.0
+var _held_move_repeat_accum: float = 0.0
 
 # Convenience aliases â€” read-only proxies into _world.
 # These let the rendering/input code below read _map, _player etc. unchanged.
@@ -288,6 +315,14 @@ var _game_over:
 
 func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_profile_chunk_movement = OS.get_cmdline_user_args().has("profile_chunk_movement")
+	_profile_live_walk = OS.get_cmdline_user_args().has("profile_live_walk")
+	_profile_manual_pacing = OS.get_cmdline_user_args().has("profile_manual_pacing")
+	if _profile_chunk_movement or _profile_live_walk or _profile_manual_pacing:
+		DevProfilerClass.enabled = true
+		DevProfilerClass.reset()
+		_last_profile_key_usec = -1
+		_last_profile_move_key_usec = -1
 	_font  = _make_font()
 	_tileset = _load_tileset()
 	_ascii_atlas = _load_ascii_atlas()
@@ -318,6 +353,10 @@ func _ready() -> void:
 	# in case _ready runs before the signal handler is wired (belt-and-suspenders).
 	_day_tint = _compute_day_tint()
 	_open_attribute_overlay_if_needed()
+	if _profile_chunk_movement:
+		call_deferred("_run_chunk_movement_profile")
+	elif _profile_live_walk:
+		call_deferred("_run_live_walk_profile")
 
 
 func _exit_tree() -> void:
@@ -326,6 +365,11 @@ func _exit_tree() -> void:
 
 
 func _process(delta: float) -> void:
+	if DevProfilerClass.enabled:
+		DevProfilerClass.sample("frame.process_delta", int(delta * 1000000.0))
+	if _world == null or _world.map == null:
+		return
+	_tick_held_move_repeat(delta)
 	_sync_inventory_ui_visibility()
 	_sync_menu_ui_visibility()
 	_sync_trade_ui_visibility()
@@ -333,6 +377,8 @@ func _process(delta: float) -> void:
 		var bucket: int = int(Time.get_ticks_msec() / MOUNT_GLYPH_CYCLE_MS)
 		if bucket != _mount_cycle_bucket:
 			_mount_cycle_bucket = bucket
+			_chunk_entities_dirty = true
+			_world_tiles_dirty = true
 			queue_redraw()
 	if _auto_move_mode == AutoMoveMode.NONE:
 		return
@@ -343,6 +389,348 @@ func _process(delta: float) -> void:
 	while _auto_move_mode != AutoMoveMode.NONE and _auto_move_accum >= AUTO_MOVE_STEP_SECONDS:
 		_auto_move_accum -= AUTO_MOVE_STEP_SECONDS
 		_tick_auto_move()
+
+
+func _run_chunk_movement_profile() -> void:
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var shuttle_dir: Vector2i = _find_profile_shuttle_dir()
+	if shuttle_dir == Vector2i.ZERO:
+		push_warning("Chunk movement profiler could not find an open adjacent tile.")
+		await _quit_after_profile()
+		return
+	DevProfilerClass.reset()
+	var dirs: Array[Vector2i] = [shuttle_dir, -shuttle_dir]
+	var dir_idx: int = 0
+	var steps: int = 120
+	for _i in range(steps):
+		var dir: Vector2i = dirs[dir_idx]
+		dir_idx = 1 - dir_idx
+		_world.do_player_turn(dir)
+		_handle_post_player_action()
+		if _game_over:
+			break
+		await get_tree().process_frame
+	print(DevProfilerClass.report())
+	await _quit_after_profile()
+
+
+func _run_live_walk_profile() -> void:
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var waypoints: Array[Vector2i] = _build_live_walk_waypoints()
+	if waypoints.is_empty():
+		push_warning("Live walk profiler could not find any reachable waypoint.")
+		await _quit_after_profile()
+		return
+	DevProfilerClass.reset()
+	var steps_taken: int = 0
+	var max_steps: int = 240
+	for waypoint in waypoints:
+		if steps_taken >= max_steps or _game_over:
+			break
+		var path: Array = _world._path_to(waypoint, false)
+		if path.is_empty():
+			continue
+		for next_pos in path:
+			if steps_taken >= max_steps or _game_over:
+				break
+			var dir: Vector2i = next_pos - _player.pos
+			if dir == Vector2i.ZERO:
+				continue
+			_world.do_player_turn(dir)
+			_handle_post_player_action()
+			steps_taken += 1
+			if _screen != Screen.NONE:
+				_screen = Screen.NONE
+			await get_tree().process_frame
+	print("=== Live Walk Scenario ===")
+	print("steps=%d" % steps_taken)
+	print(DevProfilerClass.report())
+	await _quit_after_profile()
+
+
+func _quit_after_profile() -> void:
+	DevProfilerClass.enabled = false
+	if _world != null:
+		_world.cleanup()
+	await get_tree().process_frame
+	_glyph_tileset = null
+	_fill_tileset = null
+	_tileset = null
+	_ascii_atlas = null
+	_font = null
+	_ui_theme = null
+	_terrain_atlas_cache.clear()
+	_terrain_lit_cache.clear()
+	_terrain_dim_cache.clear()
+	_terrain_fill_lit_cache.clear()
+	_terrain_fill_dim_cache.clear()
+	_glyph_coord_cache.clear()
+	await get_tree().process_frame
+	get_tree().quit()
+
+
+func _find_profile_shuttle_dir() -> Vector2i:
+	var dirs: Array[Vector2i] = [
+		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+		Vector2i(1, 1), Vector2i(-1, 1), Vector2i(1, -1), Vector2i(-1, -1),
+	]
+	for dir in dirs:
+		var pos: Vector2i = _player.pos + dir
+		if not _map.is_in_bounds(pos.x, pos.y):
+			continue
+		if not _map.is_walkable(pos.x, pos.y):
+			continue
+		var blocker = _map.get_blocking_entity_at(pos.x, pos.y)
+		if blocker != null and blocker != _player:
+			continue
+		return dir
+	return Vector2i.ZERO
+
+
+func _build_live_walk_waypoints() -> Array[Vector2i]:
+	var targets: Array[Vector2i] = []
+	var candidates: Array[Vector2i] = [
+		Vector2i(1, 1),
+		Vector2i(_map.width - 2, 1),
+		Vector2i(_map.width - 2, _map.height - 2),
+		Vector2i(1, _map.height - 2),
+		Vector2i(_map.width / 2, _map.height / 2),
+	]
+	for candidate in candidates:
+		var waypoint: Vector2i = _nearest_profile_walkable(candidate)
+		if waypoint == Vector2i(-1, -1) or waypoint == _player.pos or targets.has(waypoint):
+			continue
+		var path: Array = _world._path_to(waypoint, false)
+		if path.is_empty():
+			continue
+		targets.append(waypoint)
+	return targets
+
+
+func _nearest_profile_walkable(target: Vector2i) -> Vector2i:
+	if _map.is_in_bounds(target.x, target.y) and _map.is_walkable(target.x, target.y):
+		var direct_blocker = _map.get_blocking_entity_at(target.x, target.y)
+		if direct_blocker == null or direct_blocker == _player:
+			return target
+	var max_radius: int = maxi(_map.width, _map.height)
+	for radius in range(1, max_radius):
+		for dy in range(-radius, radius + 1):
+			for dx in range(-radius, radius + 1):
+				if maxi(absi(dx), absi(dy)) != radius:
+					continue
+				var pos := target + Vector2i(dx, dy)
+				if not _map.is_in_bounds(pos.x, pos.y) or not _map.is_walkable(pos.x, pos.y):
+					continue
+				var blocker = _map.get_blocking_entity_at(pos.x, pos.y)
+				if blocker != null and blocker != _player:
+					continue
+				return pos
+	return Vector2i(-1, -1)
+
+
+func _is_repeatable_move_key(keycode: int) -> bool:
+	match keycode:
+		KEY_KP_8, KEY_UP, KEY_KP_2, KEY_DOWN, KEY_KP_4, KEY_LEFT, KEY_KP_6, KEY_RIGHT, \
+		KEY_KP_7, KEY_KP_9, KEY_KP_1, KEY_KP_3, KEY_KP_5, KEY_PERIOD:
+			return true
+		_:
+			return false
+
+
+func _repeatable_move_dir_for_keycode(keycode: int) -> Vector2i:
+	match keycode:
+		KEY_KP_8, KEY_UP:
+			return Vector2i(0, -1)
+		KEY_KP_2, KEY_DOWN:
+			return Vector2i(0, 1)
+		KEY_KP_4, KEY_LEFT:
+			return Vector2i(-1, 0)
+		KEY_KP_6, KEY_RIGHT:
+			return Vector2i(1, 0)
+		KEY_KP_7:
+			return Vector2i(-1, -1)
+		KEY_KP_9:
+			return Vector2i(1, -1)
+		KEY_KP_1:
+			return Vector2i(-1, 1)
+		KEY_KP_3:
+			return Vector2i(1, 1)
+		KEY_KP_5, KEY_PERIOD:
+			return Vector2i.ZERO
+		_:
+			return Vector2i(99, 99)
+
+
+func _stop_held_move_repeat() -> void:
+	_held_move_keycode = KEY_NONE
+	_held_move_dir = Vector2i.ZERO
+	_held_move_force_attack = false
+	_held_move_delay_remaining = 0.0
+	_held_move_repeat_accum = 0.0
+
+
+func _begin_held_move_repeat(keycode: int, dir: Vector2i, force_attack: bool) -> void:
+	_held_move_keycode = keycode
+	_held_move_dir = dir
+	_held_move_force_attack = force_attack
+	_held_move_delay_remaining = GameState.held_move_initial_delay_sec()
+	_held_move_repeat_accum = 0.0
+
+
+func _tick_held_move_repeat(delta: float) -> void:
+	if _held_move_keycode == KEY_NONE:
+		return
+	if _auto_move_mode != AutoMoveMode.NONE or _game_over or _screen != Screen.NONE:
+		_stop_held_move_repeat()
+		return
+	if not Input.is_physical_key_pressed(_held_move_keycode):
+		_stop_held_move_repeat()
+		return
+	if _held_move_delay_remaining > 0.0:
+		_held_move_delay_remaining = maxf(0.0, _held_move_delay_remaining - delta)
+		return
+	_held_move_repeat_accum += delta
+	var repeat_sec: float = GameState.held_move_repeat_sec()
+	while _held_move_repeat_accum >= repeat_sec:
+		_held_move_repeat_accum -= repeat_sec
+		if _held_move_force_attack and _held_move_dir != Vector2i.ZERO:
+			_world.do_player_turn(_held_move_dir, true)
+			_handle_post_player_action()
+		else:
+			if _maybe_prompt_wildlife_attack(_held_move_dir, false):
+				_stop_held_move_repeat()
+				return
+			_world.do_player_turn(_held_move_dir, false)
+			_handle_post_player_action()
+		if _screen != Screen.NONE or _game_over:
+			_stop_held_move_repeat()
+			return
+
+
+func _mark_chunk_tiles_dirty() -> void:
+	_chunk_tiles_dirty = true
+	_chunk_entities_dirty = true
+	_chunk_overlay_dirty = true
+
+
+func _mark_chunk_entities_dirty() -> void:
+	_chunk_entities_dirty = true
+
+
+func _mark_chunk_overlay_dirty() -> void:
+	_chunk_overlay_dirty = true
+
+
+func _mark_world_tiles_dirty() -> void:
+	_world_tiles_dirty = true
+
+
+func _mark_hud_dirty() -> void:
+	_hud_dirty = true
+
+
+func _reset_chunk_terrain_cache() -> void:
+	_chunk_terrain_reset_required = true
+	_chunk_bg_cache.clear()
+	_chunk_fg_cache.clear()
+
+
+func _rebuild_terrain_render_cache() -> void:
+	_terrain_atlas_cache.clear()
+	_terrain_lit_cache.clear()
+	_terrain_dim_cache.clear()
+	_terrain_fill_lit_cache.clear()
+	_terrain_fill_dim_cache.clear()
+	if _world == null or _map == null:
+		return
+	for y in range(_map.height):
+		var atlas_row: Array = []
+		var lit_row: Array = []
+		var dim_row: Array = []
+		var fill_lit_row: Array = []
+		var fill_dim_row: Array = []
+		for x in range(_map.width):
+			var tile: int = _map.tiles[y][x]
+			var glyph: String = _map.glyph_overrides[y][x]
+			var lit_color: Color
+			if glyph == "":
+				match tile:
+					GameMapClass.TILE_WALL:
+						glyph = "#" if _map.map_type == GameMapClass.MAP_DUNGEON else "^"
+						lit_color = C_WALL_LIT
+					GameMapClass.TILE_FLOOR:
+						glyph = "."
+						lit_color = C_FLOOR_LIT
+					GameMapClass.TILE_SAND:
+						glyph = "."
+						lit_color = C_SAND_LIT
+					GameMapClass.TILE_DUNE:
+						var dune_variant := _terrain_cell(tile, x, y)
+						glyph = dune_variant[0] if dune_variant[0] != "" else "^"
+						lit_color = dune_variant[1] as Color
+					GameMapClass.TILE_ROCK:
+						glyph = "#"
+						lit_color = C_ROCK_LIT
+					GameMapClass.TILE_WATER:
+						glyph = "~"
+						lit_color = C_WATER_LIT
+					GameMapClass.TILE_GRASS:
+						var grass_variant := _terrain_cell(tile, x, y)
+						glyph = grass_variant[0] if grass_variant[0] != "" else "\""
+						lit_color = grass_variant[1] as Color
+					GameMapClass.TILE_ROAD:
+						glyph = "\u2591"
+						lit_color = C_ROAD_LIT
+					GameMapClass.TILE_CAVE_WALL:
+						glyph = "%"
+						lit_color = C_CAVE_WALL_LIT
+					GameMapClass.TILE_CAVE_FLOOR:
+						glyph = "."
+						lit_color = C_CAVE_FLOOR_LIT
+					_:
+						glyph = "?"
+						lit_color = Color.WHITE
+			else:
+				lit_color = C_WALL_LIT
+
+			atlas_row.append(_glyph_atlas_coords(glyph))
+			lit_row.append(lit_color)
+			dim_row.append(_tile_dim_color(tile))
+			fill_lit_row.append(_terrain_fill_base_color(tile, true, lit_color))
+			fill_dim_row.append(_terrain_fill_base_color(tile, false, lit_color))
+		_terrain_atlas_cache.append(atlas_row)
+		_terrain_lit_cache.append(lit_row)
+		_terrain_dim_cache.append(dim_row)
+		_terrain_fill_lit_cache.append(fill_lit_row)
+		_terrain_fill_dim_cache.append(fill_dim_row)
+
+
+func _terrain_fill_base_color(tile: int, lit: bool, fallback: Color) -> Color:
+	match tile:
+		GameMapClass.TILE_WALL:
+			return C_WALL_BG_TILESET_LIT if lit else C_WALL_BG_TILESET_DIM
+		GameMapClass.TILE_FLOOR:
+			return C_FLOOR_BG_TILESET_LIT if lit else C_FLOOR_BG_TILESET_DIM
+		GameMapClass.TILE_SAND:
+			return C_SAND_BG_TILESET_LIT if lit else C_SAND_BG_TILESET_DIM
+		GameMapClass.TILE_DUNE:
+			return C_DUNE_BG_TILESET_LIT if lit else C_DUNE_BG_TILESET_DIM
+		GameMapClass.TILE_ROCK:
+			return C_ROCK_BG_TILESET_LIT if lit else C_ROCK_BG_TILESET_DIM
+		GameMapClass.TILE_WATER:
+			return C_WATER_BG_TILESET_LIT if lit else C_WATER_BG_TILESET_DIM
+		GameMapClass.TILE_GRASS:
+			return C_GRASS_BG_TILESET_LIT if lit else C_GRASS_BG_TILESET_DIM
+		GameMapClass.TILE_ROAD:
+			return C_ROAD_BG_TILESET_LIT if lit else C_ROAD_BG_TILESET_DIM
+		GameMapClass.TILE_CAVE_WALL:
+			return C_CAVE_WALL_BG_TILESET_LIT if lit else C_CAVE_WALL_BG_TILESET_DIM
+		GameMapClass.TILE_CAVE_FLOOR:
+			return C_CAVE_FLOOR_BG_TILESET_LIT if lit else C_CAVE_FLOOR_BG_TILESET_DIM
+		_:
+			return fallback
 
 
 func _make_font() -> Font:
@@ -357,23 +745,15 @@ func _make_font() -> Font:
 
 
 func _load_tileset() -> Texture2D:
-	if not TILESET_ENABLED or not FileAccess.file_exists(TILESET_PATH):
+	if not TILESET_ENABLED or not ResourceLoader.exists(TILESET_PATH):
 		return null
-	var image := Image.load_from_file(TILESET_PATH)
-	if image == null or image.is_empty():
-		return null
-	if not TILESET_PATH.ends_with("_mask.png"):
-		_prepare_tileset_mask(image)
-	return ImageTexture.create_from_image(image)
+	return load(TILESET_PATH) as Texture2D
 
 
 func _load_ascii_atlas() -> Texture2D:
-	if not FileAccess.file_exists(ASCII_ATLAS_PATH):
+	if not ResourceLoader.exists(ASCII_ATLAS_PATH):
 		return null
-	var image := Image.load_from_file(ASCII_ATLAS_PATH)
-	if image == null or image.is_empty():
-		return null
-	return ImageTexture.create_from_image(image)
+	return load(ASCII_ATLAS_PATH) as Texture2D
 
 
 func _build_tilemap_tilesets() -> void:
@@ -408,21 +788,26 @@ func _make_tile_layer(tile_set: TileSet, z_index: int) -> ModulateTileMapLayerCl
 
 
 func _build_tilemap_layers() -> void:
-	_chunk_tile_root = Node2D.new()
-	_chunk_tile_root.name = "ChunkTileRoot"
-	_chunk_tile_root.z_index = 1
-	add_child(_chunk_tile_root)
+	_chunk_terrain_root = Node2D.new()
+	_chunk_terrain_root.name = "ChunkTerrainRoot"
+	_chunk_terrain_root.z_index = 1
+	add_child(_chunk_terrain_root)
+
+	_chunk_screen_root = Node2D.new()
+	_chunk_screen_root.name = "ChunkScreenRoot"
+	_chunk_screen_root.z_index = 1
+	add_child(_chunk_screen_root)
 
 	_chunk_bg_layer = _make_tile_layer(_fill_tileset, 0)
 	_chunk_fg_layer = _make_tile_layer(_glyph_tileset, 1)
 	_chunk_entity_layer = _make_tile_layer(_glyph_tileset, 2)
 	_chunk_overlay_bg_layer = _make_tile_layer(_fill_tileset, 3)
 	_chunk_overlay_fg_layer = _make_tile_layer(_glyph_tileset, 4)
-	_chunk_tile_root.add_child(_chunk_bg_layer)
-	_chunk_tile_root.add_child(_chunk_fg_layer)
-	_chunk_tile_root.add_child(_chunk_entity_layer)
-	_chunk_tile_root.add_child(_chunk_overlay_bg_layer)
-	_chunk_tile_root.add_child(_chunk_overlay_fg_layer)
+	_chunk_terrain_root.add_child(_chunk_bg_layer)
+	_chunk_terrain_root.add_child(_chunk_fg_layer)
+	_chunk_screen_root.add_child(_chunk_entity_layer)
+	_chunk_screen_root.add_child(_chunk_overlay_bg_layer)
+	_chunk_screen_root.add_child(_chunk_overlay_fg_layer)
 
 	_world_tile_root = Node2D.new()
 	_world_tile_root.name = "WorldTileRoot"
@@ -683,6 +1068,8 @@ func _build_hud_ui() -> void:
 func _on_turn_ended(_n: int) -> void:
 	_day_tint = _compute_day_tint()
 	_update_camera()
+	_mark_chunk_tiles_dirty()
+	_mark_hud_dirty()
 	if _screen == Screen.INVENTORY:
 		_refresh_inventory_ui()
 	queue_redraw()
@@ -691,6 +1078,11 @@ func _on_turn_ended(_n: int) -> void:
 func _on_map_changed() -> void:
 	_day_tint = _compute_day_tint()
 	_update_camera()
+	_rebuild_terrain_render_cache()
+	_reset_chunk_terrain_cache()
+	_mark_chunk_tiles_dirty()
+	_mark_world_tiles_dirty()
+	_mark_hud_dirty()
 	_open_attribute_overlay_if_needed()
 	if _screen == Screen.INVENTORY:
 		_refresh_inventory_ui()
@@ -700,6 +1092,8 @@ func _on_map_changed() -> void:
 func _on_attribute_points_changed(_n: int) -> void:
 	_stop_auto_move()
 	_open_attribute_overlay_if_needed()
+	_mark_chunk_overlay_dirty()
+	_mark_hud_dirty()
 	queue_redraw()
 
 
@@ -758,6 +1152,7 @@ func _play_bump_anim(attacker_pos: Vector2i, target_pos: Vector2i, glyph: String
 		_bump_ghosts.erase(sp_key)
 		_bump_suppressed.erase(sp_key)
 		ghost.queue_free()
+		_mark_chunk_entities_dirty()
 		queue_redraw()  # restore the entity tile
 		_next_anim()    # advance the queue
 	)
@@ -1428,6 +1823,8 @@ func _set_chunk_zoom(step: int) -> void:
 		return
 	_map_zoom_idx = new_idx
 	_update_camera()
+	_mark_chunk_tiles_dirty()
+	_mark_world_tiles_dirty()
 	_layout_hud_ui()
 	queue_redraw()
 
@@ -1513,6 +1910,10 @@ func _apply_font_profile() -> void:
 		_refresh_menu_ui()
 	if _screen == Screen.TRADE:
 		_refresh_trade_ui()
+	_rebuild_terrain_render_cache()
+	_reset_chunk_terrain_cache()
+	_mark_chunk_tiles_dirty()
+	_mark_world_tiles_dirty()
 	queue_redraw()
 
 
@@ -1565,7 +1966,13 @@ func _refresh_menu_ui() -> void:
 					GameState.god_mode = not GameState.god_mode
 					_refresh_menu_ui()
 			, false, true))
-			_menu_footer_label.text = "Esc: back"
+			_menu_button_box.add_child(_make_menu_button(
+				"[J/K] Held move speed:  %s" % GameState.held_move_repeat_label(),
+				func():
+					GameState.increase_held_move_repeat()
+					_refresh_menu_ui()
+			, false, true))
+			_menu_footer_label.text = "Esc: back    J/K or Left/Right: held move speed"
 		Screen.CHARACTER:
 			_menu_title_label.text = "-=[ CHARACTER ]=-"
 			var mount = _world.get_player_mount()
@@ -1772,7 +2179,9 @@ func _refresh_trade_ui() -> void:
 
 
 func _refresh_hud_ui() -> void:
+	var started_at: int = DevProfilerClass.start("ascii_map._refresh_hud_ui")
 	if _hud_ui_root == null or _world == null or _player == null:
+		DevProfilerClass.stop("ascii_map._refresh_hud_ui", started_at)
 		return
 	var hp_frac: float = float(_player.hp) / float(_player.max_hp)
 	var wpn = _player.equipped.get(ItemClass.SLOT_WEAPON)
@@ -1857,6 +2266,7 @@ func _refresh_hud_ui() -> void:
 		else:
 			var is_last: bool = i == hud_lines.size() - 1
 			label.add_theme_color_override("font_color", C_MSG_RECENT if is_last else C_MSG_OLD)
+	DevProfilerClass.stop("ascii_map._refresh_hud_ui", started_at)
 
 
 func _handle_post_player_action() -> void:
@@ -2287,6 +2697,23 @@ func _unhandled_input(event: InputEvent) -> void:
 		_handle_mouse_button(event)
 		return
 	if not event is InputEventKey or not event.pressed:
+		if event is InputEventKey and not event.pressed and not event.echo and _is_repeatable_move_key(event.physical_keycode):
+			if event.physical_keycode == _held_move_keycode:
+				_stop_held_move_repeat()
+		return
+	if DevProfilerClass.enabled:
+		var key_event := event as InputEventKey
+		if not key_event.echo:
+			var now_usec: int = Time.get_ticks_usec()
+			if _last_profile_key_usec > 0:
+				DevProfilerClass.sample("input.key_press_gap", now_usec - _last_profile_key_usec)
+			_last_profile_key_usec = now_usec
+			if _is_repeatable_move_key(key_event.physical_keycode):
+				if _last_profile_move_key_usec > 0:
+					DevProfilerClass.sample("input.move_key_gap", now_usec - _last_profile_move_key_usec)
+				_last_profile_move_key_usec = now_usec
+	if event.echo and _is_repeatable_move_key(event.physical_keycode):
+		get_viewport().set_input_as_handled()
 		return
 
 	match _screen:
@@ -2348,6 +2775,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		_screen = Screen.HELP
 		get_viewport().set_input_as_handled()
 		queue_redraw()
+		return
+
+	if DevProfilerClass.enabled and event.shift_pressed and event.physical_keycode == KEY_P:
+		get_viewport().set_input_as_handled()
+		print(DevProfilerClass.report())
 		return
 
 	if event.shift_pressed and event.physical_keycode == KEY_D:
@@ -2439,29 +2871,23 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 
 	var dir := Vector2i.ZERO
-	match event.physical_keycode:
-		KEY_KP_8, KEY_UP:    dir = Vector2i(0, -1)
-		KEY_KP_2, KEY_DOWN:  dir = Vector2i(0, 1)
-		KEY_KP_4, KEY_LEFT:  dir = Vector2i(-1, 0)
-		KEY_KP_6, KEY_RIGHT: dir = Vector2i(1, 0)
-		KEY_KP_7:            dir = Vector2i(-1, -1)
-		KEY_KP_9:            dir = Vector2i(1, -1)
-		KEY_KP_1:            dir = Vector2i(-1, 1)
-		KEY_KP_3:            dir = Vector2i(1, 1)
-		KEY_KP_5, KEY_PERIOD: pass  # wait
-		KEY_G:
-			if not event.shift_pressed:
-				_world.auto_pickup()
-				_world.resolve_action()
-			return
-		_: return
+	if event.physical_keycode == KEY_G:
+		if not event.shift_pressed:
+			_world.auto_pickup()
+			_world.resolve_action()
+		return
+	dir = _repeatable_move_dir_for_keycode(event.physical_keycode)
+	if dir == Vector2i(99, 99):
+		return
 
 	get_viewport().set_input_as_handled()
 	var force_attack: bool = event.shift_pressed and dir != Vector2i.ZERO
 	if _maybe_prompt_wildlife_attack(dir, force_attack):
+		_stop_held_move_repeat()
 		return
 	_world.do_player_turn(dir, force_attack)
 	_handle_post_player_action()
+	_begin_held_move_repeat(event.physical_keycode, dir, force_attack)
 
 
 func _handle_mouse_motion(event: InputEventMouseMotion) -> void:
@@ -2475,22 +2901,29 @@ func _handle_mouse_motion(event: InputEventMouseMotion) -> void:
 			_refresh_hover_path_preview()
 		else:
 			_hover_path.clear()
+		_mark_chunk_overlay_dirty()
 	elif _screen == Screen.WORLD_MAP:
 		_hover_path.clear()
 		var chunk := _world_map_chunk_at_pos(event.position)
 		if chunk.x >= 0:
 			_world_look_cursor = chunk
+			_mark_world_tiles_dirty()
+			_mark_hud_dirty()
 			queue_redraw()
 	elif _screen == Screen.LOOK:
 		_hover_active = false
 		_hover_path.clear()
 		if should_highlight and _map.explored[map_pos.y][map_pos.x]:
 			_look_pos = map_pos
+		_mark_chunk_overlay_dirty()
+		_mark_hud_dirty()
 	elif _screen == Screen.TARGET:
 		_hover_active = false
 		_hover_path.clear()
 		if should_highlight and _map.explored[map_pos.y][map_pos.x]:
 			_target_pos = map_pos
+		_mark_chunk_overlay_dirty()
+		_mark_hud_dirty()
 	else:
 		_hover_active = false
 		_hover_path.clear()
@@ -2629,6 +3062,8 @@ func _open_ranged_targeting() -> void:
 			_target_pos.y = clampi(_target_pos.y, 0, _map.height - 1)
 	_screen = Screen.TARGET
 	_hover_active = false
+	_mark_chunk_overlay_dirty()
+	_mark_hud_dirty()
 	queue_redraw()
 
 
@@ -2645,6 +3080,8 @@ func _close_targeting() -> void:
 	_target_candidates.clear()
 	_target_candidate_index = 0
 	_target_pos = Vector2i.ZERO
+	_mark_chunk_overlay_dirty()
+	_mark_hud_dirty()
 	queue_redraw()
 
 
@@ -2654,6 +3091,8 @@ func _cycle_target_candidate(step: int) -> void:
 		return
 	_target_candidate_index = wrapi(_target_candidate_index + step, 0, _target_candidates.size())
 	_target_pos = (_target_candidates[_target_candidate_index] as ActorClass).pos
+	_mark_chunk_overlay_dirty()
+	_mark_hud_dirty()
 	queue_redraw()
 
 
@@ -2686,6 +3125,8 @@ func _handle_target_input(event: InputEvent) -> void:
 	_target_pos += delta
 	_target_pos.x = clampi(_target_pos.x, 0, _map.width - 1)
 	_target_pos.y = clampi(_target_pos.y, 0, _map.height - 1)
+	_mark_chunk_overlay_dirty()
+	_mark_hud_dirty()
 	queue_redraw()
 
 
@@ -2932,6 +3373,12 @@ func _handle_settings_input(event: InputEvent) -> void:
 			KEY_G:
 				GameState.god_mode = not GameState.god_mode
 				queue_redraw()
+			KEY_J, KEY_LEFT:
+				GameState.decrease_held_move_repeat()
+				queue_redraw()
+			KEY_K, KEY_RIGHT:
+				GameState.increase_held_move_repeat()
+				queue_redraw()
 
 
 func _handle_settings_mouse_click(mouse_pos: Vector2) -> void:
@@ -2966,6 +3413,8 @@ func _handle_look_input(event: InputEvent) -> void:
 		var vis_rows: int = _map_visible_rows()
 		_cam_x = clampi(_look_pos.x - (vis_cols >> 1), 0, maxi(0, _map.width  - vis_cols))
 		_cam_y = clampi(_look_pos.y - (vis_rows >> 1), 0, maxi(0, _map.height - vis_rows))
+		_mark_chunk_tiles_dirty()
+		_mark_hud_dirty()
 		queue_redraw()
 
 
@@ -3162,13 +3611,31 @@ func _handle_travel_event_mouse_click(mouse_pos: Vector2) -> void:
 # ===========================================================================
 
 func _draw() -> void:
-	_refresh_hud_ui()
+	var draw_started_at: int = DevProfilerClass.start("ascii_map._draw_total")
+	if _screen != _last_draw_screen:
+		_chunk_overlay_dirty = true
+		_world_tiles_dirty = true
+		_hud_dirty = true
+		_last_draw_screen = _screen
+	if _hud_dirty:
+		_refresh_hud_ui()
+		_hud_dirty = false
 	draw_rect(Rect2(Vector2.ZERO, get_viewport_rect().size), C_BG)
 	if _screen == Screen.WORLD_MAP or _screen == Screen.TRAVEL_EVENT:
-		_sync_world_tilemaps()
+		if _world_tiles_dirty:
+			_sync_world_tilemaps()
+			_world_tiles_dirty = false
 		_draw_world_map()
+		DevProfilerClass.stop("ascii_map._draw_total", draw_started_at)
 		return
-	_sync_chunk_tilemaps()
+	if not _use_tilemap_renderer():
+		_sync_chunk_tilemaps(true, true, true)
+	else:
+		if _chunk_tiles_dirty or _chunk_entities_dirty or _chunk_overlay_dirty:
+			_sync_chunk_tilemaps(_chunk_tiles_dirty, _chunk_entities_dirty, _chunk_overlay_dirty)
+			_chunk_tiles_dirty = false
+			_chunk_entities_dirty = false
+			_chunk_overlay_dirty = false
 	if _screen == Screen.NONE:
 		_draw_hover_path_preview()
 	elif _screen == Screen.TARGET:
@@ -3188,6 +3655,7 @@ func _draw() -> void:
 		Screen.HELP:         pass
 		Screen.READER:       pass
 		Screen.DIALOGUE:     pass
+	DevProfilerClass.stop("ascii_map._draw_total", draw_started_at)
 
 
 func _draw_map() -> void:
@@ -3266,154 +3734,174 @@ func _draw_map() -> void:
 				_draw_ascii_cell(vx, vy, tile, ch, tinted, lit, occupied_cells.has(Vector2i(vx, vy)))
 
 
-func _sync_chunk_tilemaps() -> void:
+func _sync_chunk_tilemaps(sync_tiles: bool = true, sync_entities: bool = true, sync_overlay: bool = true) -> void:
+	var started_at: int = DevProfilerClass.start("ascii_map._sync_chunk_tilemaps")
 	if not _use_tilemap_renderer():
 		_draw_map()
 		_draw_entities()
+		DevProfilerClass.stop("ascii_map._sync_chunk_tilemaps", started_at)
 		return
-	_chunk_tile_root.visible = true
+	_chunk_terrain_root.visible = true
+	_chunk_screen_root.visible = true
 	_world_tile_root.visible = false
 	var scale_value: float = _map_font_size() / float(TILESET_TILE_W)
-	_chunk_tile_root.position = Vector2.ZERO
-	_chunk_tile_root.scale = Vector2(scale_value, scale_value)
-	_chunk_bg_layer.clear_with_modulates()
-	_chunk_fg_layer.clear_with_modulates()
-	# Entity layer: full clear only when camera moved (all screen-space coords shifted).
-	# Otherwise erase only cells that previously held entities — saves O(visible_cells)
-	# set_cell calls on stationary turns (waiting, inventory open, etc.).
+	var scaled_cell_size: float = float(_map_font_size())
+	_chunk_terrain_root.position = Vector2(-float(_cam_x) * scaled_cell_size, -float(_cam_y) * scaled_cell_size)
+	_chunk_terrain_root.scale = Vector2(scale_value, scale_value)
+	_chunk_screen_root.position = Vector2.ZERO
+	_chunk_screen_root.scale = Vector2(scale_value, scale_value)
 	var cam_moved: bool = (_cam_x != _prev_cam_x or _cam_y != _prev_cam_y)
-	if cam_moved:
-		_chunk_entity_layer.clear_with_modulates()
-		_prev_entity_cells.clear()
-	else:
-		for coords in _prev_entity_cells:
-			_chunk_entity_layer.erase_cell_with_modulate(coords)
+	var hidden_fg_cells: Dictionary = {}
+	if sync_tiles and not _bump_suppressed.is_empty():
+		for screen_pos in _bump_suppressed:
+			var map_pos := Vector2i(int(screen_pos.x) + _cam_x, int(screen_pos.y) + _cam_y)
+			if _map.is_in_bounds(map_pos.x, map_pos.y):
+				hidden_fg_cells[map_pos] = true
+	if sync_tiles:
+		if _terrain_atlas_cache.size() != _map.height:
+			_rebuild_terrain_render_cache()
+		var tiles_started_at: int = DevProfilerClass.start("ascii_map._sync_chunk_tilemaps.tiles")
+		var tile_cells_changed: bool = false
+		if _chunk_terrain_reset_required:
+			_chunk_bg_layer.clear_with_modulates()
+			_chunk_fg_layer.clear_with_modulates()
+			_chunk_bg_cache.clear()
+			_chunk_fg_cache.clear()
+			_chunk_terrain_reset_required = false
+			tile_cells_changed = true
+		for vy in range(_map_visible_rows()):
+			for vx in range(_map_visible_cols()):
+				var mx := vx + _cam_x
+				var my := vy + _cam_y
+				if not _map.is_in_bounds(mx, my):
+					continue
+				var coords := Vector2i(mx, my)
+				if not _map.explored[my][mx]:
+					var unexplored_bg: Color = C_UNEXPLORED_TILESET
+					if _chunk_bg_cache.get(coords) != unexplored_bg:
+						_chunk_bg_layer.set_cell_with_modulate(coords, FILL_SOURCE_ID, Vector2i.ZERO, unexplored_bg)
+						_chunk_bg_cache[coords] = unexplored_bg
+						tile_cells_changed = true
+					if _chunk_fg_cache.has(coords):
+						_chunk_fg_layer.erase_cell_with_modulate(coords)
+						_chunk_fg_cache.erase(coords)
+						tile_cells_changed = true
+					continue
+				var tile: int = _map.tiles[my][mx]
+				var lit: bool = _map.visible[my][mx]
+				var fill_base: Color = (_terrain_fill_lit_cache[my][mx] as Color) if lit else (_terrain_fill_dim_cache[my][mx] as Color)
+				var fill_color := fill_base * _day_tint
+				fill_color.a = 1.0
+				if _chunk_bg_cache.get(coords) != fill_color:
+					_chunk_bg_layer.set_cell_with_modulate(coords, FILL_SOURCE_ID, Vector2i.ZERO, fill_color)
+					_chunk_bg_cache[coords] = fill_color
+					tile_cells_changed = true
+				if not hidden_fg_cells.has(coords):
+					var base_color: Color = (_terrain_lit_cache[my][mx] as Color) if lit else (_terrain_dim_cache[my][mx] as Color)
+					var tinted_base: Color = base_color * _day_tint
+					var fg_color: Color
+					if lit:
+						fg_color = tinted_base.lerp(Color(1, 1, 1, 1), 0.10)
+					else:
+						fg_color = tinted_base.lerp(Color(0.80, 0.80, 0.80, 1), 0.05)
+					fg_color.a = 1.0
+					var atlas_coords: Vector2i = _terrain_atlas_cache[my][mx] as Vector2i
+					var fg_state: Array = [atlas_coords, fg_color]
+					if _chunk_fg_cache.get(coords) != fg_state:
+						_chunk_fg_layer.set_cell_with_modulate(coords, TILE_SOURCE_ID, atlas_coords, fg_color)
+						_chunk_fg_cache[coords] = fg_state
+						tile_cells_changed = true
+				elif _chunk_fg_cache.has(coords):
+					_chunk_fg_layer.erase_cell_with_modulate(coords)
+					_chunk_fg_cache.erase(coords)
+					tile_cells_changed = true
+		DevProfilerClass.stop("ascii_map._sync_chunk_tilemaps.tiles", tiles_started_at)
+		if tile_cells_changed:
+			_chunk_bg_layer.notify_runtime_tile_data_update()
+			_chunk_fg_layer.notify_runtime_tile_data_update()
+
+	if sync_entities:
+		var entities_started_at: int = DevProfilerClass.start("ascii_map._sync_chunk_tilemaps.entities")
+		# Entity layer: full clear only when camera moved (all screen-space coords shifted).
+		# Otherwise erase only cells that previously held entities.
+		if cam_moved:
+			_chunk_entity_layer.clear_with_modulates()
+			_prev_entity_cells.clear()
+		else:
+			for coords in _prev_entity_cells:
+				_chunk_entity_layer.erase_cell_with_modulate(coords)
+
+		var cell_map: Dictionary = {}
+		for e in _map.entities:
+			if not _on_screen(e.pos.x, e.pos.y) or not _map.visible[e.pos.y][e.pos.x]:
+				continue
+			var sp := _to_screen(e.pos.x, e.pos.y)
+			var key := Vector2i(sp.x, sp.y)
+			if not cell_map.has(key):
+				cell_map[key] = []
+			(cell_map[key] as Array).append(e)
+
+		var new_entity_cells: Array[Vector2i] = []
+		for key in cell_map:
+			if _bump_suppressed.has(key):
+				continue
+			var e = _display_entity_for_cell(cell_map[key] as Array)
+			if e == null:
+				continue
+			_chunk_entity_layer.set_cell_with_modulate(
+				key,
+				TILE_SOURCE_ID,
+				_glyph_atlas_coords(_entity_glyph(e)),
+				_tileset_glyph_tint(e.color * _day_tint, true)
+			)
+			new_entity_cells.append(key)
+		_prev_entity_cells = new_entity_cells
+		DevProfilerClass.stop("ascii_map._sync_chunk_tilemaps.entities", entities_started_at)
+
+	if sync_overlay:
+		var overlay_started_at: int = DevProfilerClass.start("ascii_map._sync_chunk_tilemaps.overlay")
+		_chunk_overlay_bg_layer.clear_with_modulates()
+		_chunk_overlay_fg_layer.clear_with_modulates()
+
+		if _screen == Screen.LOOK and _on_screen(_look_pos.x, _look_pos.y):
+			var sp := _to_screen(_look_pos.x, _look_pos.y)
+			_chunk_overlay_bg_layer.set_cell_with_modulate(Vector2i(sp.x, sp.y), FILL_SOURCE_ID, Vector2i.ZERO, Color(0.20, 0.75, 0.90, 0.40))
+		elif _screen == Screen.TARGET and _on_screen(_target_pos.x, _target_pos.y):
+			var tsp := _to_screen(_target_pos.x, _target_pos.y)
+			_chunk_overlay_bg_layer.set_cell_with_modulate(Vector2i(tsp.x, tsp.y), FILL_SOURCE_ID, Vector2i.ZERO, Color(0.92, 0.28, 0.12, 0.42))
+		elif _screen == Screen.NONE and _hover_active and _on_screen(_hover_pos.x, _hover_pos.y) and _auto_move_mode == AutoMoveMode.NONE:
+			var hsp := _to_screen(_hover_pos.x, _hover_pos.y)
+			_chunk_overlay_bg_layer.set_cell_with_modulate(Vector2i(hsp.x, hsp.y), FILL_SOURCE_ID, Vector2i.ZERO, Color(0.85, 0.72, 0.20, 0.24))
+
+		if _screen == Screen.NONE and _auto_move_mode == AutoMoveMode.NONE:
+			for step in _hover_path:
+				if not _on_screen(step.x, step.y):
+					continue
+				var sp := _to_screen(step.x, step.y)
+				var glyph := "X" if step == _hover_pos else "•"
+				var color := Color(0.96, 0.96, 0.92, 0.86) if step == _hover_pos else Color(0.90, 0.90, 0.86, 0.62)
+				_chunk_overlay_fg_layer.set_cell_with_modulate(Vector2i(sp.x, sp.y), TILE_SOURCE_ID, _glyph_atlas_coords(glyph), color)
+		elif _screen == Screen.TARGET:
+			var preview: Dictionary = _target_preview_validity()
+			var line: Array = preview.get("line", [])
+			var line_color: Color = Color(0.90, 0.94, 1.00, 0.62) if bool(preview.get("valid", false)) else Color(0.90, 0.32, 0.22, 0.68)
+			for point in line:
+				if point == _player.pos or not _on_screen(point.x, point.y):
+					continue
+				var sp := _to_screen(point.x, point.y)
+				var glyph := "X" if point == _target_pos else "•"
+				_chunk_overlay_fg_layer.set_cell_with_modulate(Vector2i(sp.x, sp.y), TILE_SOURCE_ID, _glyph_atlas_coords(glyph), line_color)
+		DevProfilerClass.stop("ascii_map._sync_chunk_tilemaps.overlay", overlay_started_at)
+
 	_prev_cam_x = _cam_x
 	_prev_cam_y = _cam_y
-	_chunk_overlay_bg_layer.clear_with_modulates()
-	_chunk_overlay_fg_layer.clear_with_modulates()
 
-	var occupied_cells: Dictionary = _visible_entity_screen_positions()
-	for vy in range(_map_visible_rows()):
-		for vx in range(_map_visible_cols()):
-			var mx := vx + _cam_x
-			var my := vy + _cam_y
-			if not _map.is_in_bounds(mx, my):
-				continue
-			var coords := Vector2i(vx, vy)
-			if not _map.explored[my][mx]:
-				_chunk_bg_layer.set_cell_with_modulate(coords, FILL_SOURCE_ID, Vector2i.ZERO, C_UNEXPLORED_TILESET)
-				continue
-			var tile: int = _map.tiles[my][mx]
-			var lit: bool = _map.visible[my][mx]
-			var ch: String = _map.get_glyph_override(mx, my)
-			var base_color: Color
-			if ch == "":
-				match tile:
-					GameMapClass.TILE_WALL:
-						ch = "#" if _map.map_type == GameMapClass.MAP_DUNGEON else "^"
-						base_color = C_WALL_LIT if lit else _tile_dim_color(tile)
-					GameMapClass.TILE_FLOOR:
-						ch = "."
-						base_color = C_FLOOR_LIT if lit else _tile_dim_color(tile)
-					GameMapClass.TILE_SAND:
-						ch = "."
-						base_color = C_SAND_LIT if lit else _tile_dim_color(tile)
-					GameMapClass.TILE_DUNE:
-						var variant := _terrain_cell(tile, mx, my)
-						ch = variant[0] if variant[0] != "" else "^"
-						base_color = (variant[1] as Color) if lit else _tile_dim_color(tile)
-					GameMapClass.TILE_ROCK:
-						ch = "#"
-						base_color = C_ROCK_LIT if lit else _tile_dim_color(tile)
-					GameMapClass.TILE_WATER:
-						ch = "~"
-						base_color = C_WATER_LIT if lit else _tile_dim_color(tile)
-					GameMapClass.TILE_GRASS:
-						var variant := _terrain_cell(tile, mx, my)
-						ch = variant[0] if variant[0] != "" else "\""
-						base_color = (variant[1] as Color) if lit else _tile_dim_color(tile)
-					GameMapClass.TILE_ROAD:
-						ch = "\u2591"
-						base_color = C_ROAD_LIT if lit else _tile_dim_color(tile)
-					GameMapClass.TILE_CAVE_WALL:
-						ch = "%"
-						base_color = C_CAVE_WALL_LIT if lit else _tile_dim_color(tile)
-					GameMapClass.TILE_CAVE_FLOOR:
-						ch = "."
-						base_color = C_CAVE_FLOOR_LIT if lit else _tile_dim_color(tile)
-					_:
-						ch = "?"
-						base_color = Color.WHITE
-			else:
-				base_color = C_WALL_LIT if lit else _tile_dim_color(tile)
-
-			var fill_color := _tileset_fill_color(tile, base_color * _day_tint, lit)
-			_chunk_bg_layer.set_cell_with_modulate(coords, FILL_SOURCE_ID, Vector2i.ZERO, fill_color)
-			if not occupied_cells.has(coords):
-				_chunk_fg_layer.set_cell_with_modulate(coords, TILE_SOURCE_ID, _glyph_atlas_coords(ch), _tileset_glyph_tint(base_color * _day_tint, lit))
-
-	var cell_map: Dictionary = {}
-	for e in _map.entities:
-		if not _on_screen(e.pos.x, e.pos.y) or not _map.visible[e.pos.y][e.pos.x]:
-			continue
-		var sp := _to_screen(e.pos.x, e.pos.y)
-		var key := Vector2i(sp.x, sp.y)
-		if not cell_map.has(key):
-			cell_map[key] = []
-		(cell_map[key] as Array).append(e)
-
-	var new_entity_cells: Array[Vector2i] = []
-	for key in cell_map:
-		# Skip cells whose tile is owned by an in-progress bump animation.
-		if _bump_suppressed.has(key):
-			continue
-		var e = _display_entity_for_cell(cell_map[key] as Array)
-		if e == null:
-			continue
-		_chunk_entity_layer.set_cell_with_modulate(
-			key,
-			TILE_SOURCE_ID,
-			_glyph_atlas_coords(_entity_glyph(e)),
-			_tileset_glyph_tint(e.color * _day_tint, true)
-		)
-		new_entity_cells.append(key)
-	_prev_entity_cells = new_entity_cells
-
-	if _screen == Screen.LOOK and _on_screen(_look_pos.x, _look_pos.y):
-		var sp := _to_screen(_look_pos.x, _look_pos.y)
-		_chunk_overlay_bg_layer.set_cell_with_modulate(Vector2i(sp.x, sp.y), FILL_SOURCE_ID, Vector2i.ZERO, Color(0.20, 0.75, 0.90, 0.40))
-	elif _screen == Screen.TARGET and _on_screen(_target_pos.x, _target_pos.y):
-		var tsp := _to_screen(_target_pos.x, _target_pos.y)
-		_chunk_overlay_bg_layer.set_cell_with_modulate(Vector2i(tsp.x, tsp.y), FILL_SOURCE_ID, Vector2i.ZERO, Color(0.92, 0.28, 0.12, 0.42))
-	elif _screen == Screen.NONE and _hover_active and _on_screen(_hover_pos.x, _hover_pos.y) and _auto_move_mode == AutoMoveMode.NONE:
-		var hsp := _to_screen(_hover_pos.x, _hover_pos.y)
-		_chunk_overlay_bg_layer.set_cell_with_modulate(Vector2i(hsp.x, hsp.y), FILL_SOURCE_ID, Vector2i.ZERO, Color(0.85, 0.72, 0.20, 0.24))
-
-	if _screen == Screen.NONE and _auto_move_mode == AutoMoveMode.NONE:
-		for step in _hover_path:
-			if not _on_screen(step.x, step.y):
-				continue
-			var sp := _to_screen(step.x, step.y)
-			var glyph := "X" if step == _hover_pos else "•"
-			var color := Color(0.96, 0.96, 0.92, 0.86) if step == _hover_pos else Color(0.90, 0.90, 0.86, 0.62)
-			_chunk_overlay_fg_layer.set_cell_with_modulate(Vector2i(sp.x, sp.y), TILE_SOURCE_ID, _glyph_atlas_coords(glyph), color)
-	elif _screen == Screen.TARGET:
-		var preview: Dictionary = _target_preview_validity()
-		var line: Array = preview.get("line", [])
-		var line_color: Color = Color(0.90, 0.94, 1.00, 0.62) if bool(preview.get("valid", false)) else Color(0.90, 0.32, 0.22, 0.68)
-		for point in line:
-			if point == _player.pos or not _on_screen(point.x, point.y):
-				continue
-			var sp := _to_screen(point.x, point.y)
-			var glyph := "X" if point == _target_pos else "•"
-			_chunk_overlay_fg_layer.set_cell_with_modulate(Vector2i(sp.x, sp.y), TILE_SOURCE_ID, _glyph_atlas_coords(glyph), line_color)
-
-	_chunk_bg_layer.notify_runtime_tile_data_update()
-	_chunk_fg_layer.notify_runtime_tile_data_update()
-	_chunk_entity_layer.notify_runtime_tile_data_update()
-	_chunk_overlay_bg_layer.notify_runtime_tile_data_update()
-	_chunk_overlay_fg_layer.notify_runtime_tile_data_update()
+	if sync_entities:
+		_chunk_entity_layer.notify_runtime_tile_data_update()
+	if sync_overlay:
+		_chunk_overlay_bg_layer.notify_runtime_tile_data_update()
+		_chunk_overlay_fg_layer.notify_runtime_tile_data_update()
+	DevProfilerClass.stop("ascii_map._sync_chunk_tilemaps", started_at)
 
 
 func _draw_entities() -> void:
@@ -3901,11 +4389,15 @@ func _biome_color(biome: int) -> Color:
 
 
 func _sync_world_tilemaps() -> void:
+	var started_at: int = DevProfilerClass.start("ascii_map._sync_world_tilemaps")
 	if not _use_tilemap_renderer():
-		_chunk_tile_root.visible = false
+		_chunk_terrain_root.visible = false
+		_chunk_screen_root.visible = false
 		_world_tile_root.visible = false
+		DevProfilerClass.stop("ascii_map._sync_world_tilemaps", started_at)
 		return
-	_chunk_tile_root.visible = false
+	_chunk_terrain_root.visible = false
+	_chunk_screen_root.visible = false
 	_world_tile_root.visible = true
 	var map_px_w: float = _chunk_view_px_w()
 	var map_px_y: float = _map_cell_h() * 2.0
@@ -3955,6 +4447,7 @@ func _sync_world_tilemaps() -> void:
 	_world_bg_layer.notify_runtime_tile_data_update()
 	_world_fg_layer.notify_runtime_tile_data_update()
 	_world_overlay_layer.notify_runtime_tile_data_update()
+	DevProfilerClass.stop("ascii_map._sync_world_tilemaps", started_at)
 
 
 # Paint a single world-map cell. Called for both full and incremental repaints.
@@ -4028,6 +4521,7 @@ func _handle_world_map_mouse_click(mouse_pos: Vector2) -> void:
 	if chunk.x < 0:
 		return
 	_world_look_cursor = chunk
+	_mark_world_tiles_dirty()
 	if _world_look_mode:
 		queue_redraw()
 		return
@@ -4055,6 +4549,7 @@ func _handle_world_map_input(event: InputEvent) -> void:
 		match event.physical_keycode:
 			KEY_ESCAPE, KEY_L:
 				_world_look_mode = false
+				_mark_world_tiles_dirty()
 				queue_redraw()
 			KEY_UP,    KEY_KP_8: dc = Vector2i(0, -1)
 			KEY_DOWN,  KEY_KP_2: dc = Vector2i(0,  1)
@@ -4069,6 +4564,7 @@ func _handle_world_map_input(event: InputEvent) -> void:
 			_world_look_cursor = Vector2i(
 				clampi(_world_look_cursor.x + dc.x, 0, GameState.WORLD_W - 1),
 				clampi(_world_look_cursor.y + dc.y, 0, GameState.WORLD_H - 1))
+			_mark_world_tiles_dirty()
 			queue_redraw()
 		return
 
@@ -4076,6 +4572,7 @@ func _handle_world_map_input(event: InputEvent) -> void:
 		_screen = Screen.NONE
 		_update_camera()
 		_map.compute_fov(_player.pos.x, _player.pos.y, GameWorldClass.FOV_OVERWORLD)
+		_mark_chunk_tiles_dirty()
 		if _chunk != _world_entry_chunk:
 			var wv: Variant = _world.get_village_at_chunk(_chunk.x, _chunk.y)
 			if wv != null:
@@ -4090,11 +4587,13 @@ func _handle_world_map_input(event: InputEvent) -> void:
 			_screen = Screen.NONE
 			_update_camera()
 			_map.compute_fov(_player.pos.x, _player.pos.y, GameWorldClass.FOV_OVERWORLD)
+			_mark_chunk_tiles_dirty()
 			queue_redraw()
 			return
 		KEY_L:
 			_world_look_mode   = true
 			_world_look_cursor = _chunk
+			_mark_world_tiles_dirty()
 			queue_redraw()
 			return
 		KEY_UP,    KEY_KP_8: dc = Vector2i(0, -1)
@@ -4109,6 +4608,7 @@ func _handle_world_map_input(event: InputEvent) -> void:
 
 	if dc != Vector2i.ZERO:
 		_world.world_map_navigate(dc)
+		_mark_world_tiles_dirty()
 		if _world.has_pending_travel_event():
 			_screen = Screen.TRAVEL_EVENT
 		queue_redraw()
@@ -4205,8 +4705,13 @@ func _glyph_region(ch: String) -> Rect2:
 
 
 func _glyph_atlas_coords(ch: String) -> Vector2i:
+	var cached = _glyph_coord_cache.get(ch, null)
+	if cached != null:
+		return cached as Vector2i
 	var cp437_index: int = _cp437_index_for_glyph(ch)
-	return Vector2i(posmod(cp437_index, TILESET_COLS), cp437_index / TILESET_COLS)
+	var coords := Vector2i(posmod(cp437_index, TILESET_COLS), cp437_index / TILESET_COLS)
+	_glyph_coord_cache[ch] = coords
+	return coords
 
 
 func _cp437_index_for_glyph(ch: String) -> int:

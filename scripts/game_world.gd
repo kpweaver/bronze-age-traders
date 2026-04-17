@@ -22,6 +22,7 @@ const NpcDataClass     = preload("res://content/npcs.gd")
 const ItemDataClass    = preload("res://content/items.gd")
 const ProcgenClass     = preload("res://scripts/map/procgen.gd")
 const SaveManagerClass = preload("res://scripts/save_manager.gd")
+const DevProfilerClass = preload("res://scripts/dev_profiler.gd")
 const HostileAIClass   = preload("res://scripts/components/hostile_ai.gd")
 const WanderAIClass    = preload("res://scripts/components/wander_ai.gd")
 const DocileAIClass    = preload("res://scripts/components/docile_ai.gd")
@@ -566,6 +567,7 @@ func _cheb(a: Vector2i, b: Vector2i) -> int:
 
 
 func do_enemy_turns() -> void:
+	var started_at: int = DevProfilerClass.start("game_world.do_enemy_turns")
 	var night: bool = is_night
 	for e in map.entities.duplicate():
 		if not (e is ActorClass):
@@ -595,7 +597,9 @@ func do_enemy_turns() -> void:
 				map.refresh_entity(player)
 				add_msg("You are dead.  Press r to try again.")
 				game_over = true
+				DevProfilerClass.stop("game_world.do_enemy_turns", started_at)
 				return
+	DevProfilerClass.stop("game_world.do_enemy_turns", started_at)
 
 
 func player_light_fov() -> int:
@@ -609,11 +613,13 @@ func player_light_fov() -> int:
 
 
 func _recompute_fov() -> void:
+	var started_at: int = DevProfilerClass.start("game_world._recompute_fov")
 	var base_fov: int
 	if debug_hub_active:
 		# The debug hub is a fixed test room, not a gameplay stealth space.
 		# Revealing it wholesale avoids an expensive full-room LOS pass every turn.
 		map.reveal_all()
+		DevProfilerClass.stop("game_world._recompute_fov", started_at)
 		return
 	elif map.map_type == GameMapClass.MAP_OVERWORLD:
 		base_fov = overworld_fov()
@@ -631,6 +637,7 @@ func _recompute_fov() -> void:
 		var dy: int = absi(e.pos.y - player.pos.y)
 		if maxi(dx, dy) <= fov + e.light_radius:
 			map.compute_fov_additive(e.pos.x, e.pos.y, e.light_radius)
+	DevProfilerClass.stop("game_world._recompute_fov", started_at)
 
 
 func _tick_torch() -> void:
@@ -674,7 +681,7 @@ func try_skin() -> void:
 			if dx == 0 and dy == 0:
 				continue
 			var check_pos: Vector2i = player.pos + Vector2i(dx, dy)
-			for e in map.get_entities_at(check_pos.x, check_pos.y):
+			for e in map.get_entities_view_at(check_pos.x, check_pos.y):
 				if e is NpcClass and not (e as NpcClass).is_alive \
 						and (e as NpcClass).is_wildlife:
 					corpse = e
@@ -753,6 +760,8 @@ func auto_pickup() -> void:
 
 
 func get_player_mount():
+	if map == null:
+		return null
 	for e in map.entities:
 		if e != player and e is ActorClass and e.is_mounted:
 			return e
@@ -800,7 +809,7 @@ func _find_adjacent_mount():
 		for dx in range(-1, 2):
 			if dx == 0 and dy == 0:
 				continue
-			for e in map.get_entities_at(player.pos.x + dx, player.pos.y + dy):
+			for e in map.get_entities_view_at(player.pos.x + dx, player.pos.y + dy):
 				if e is ActorClass and e.is_alive and e.is_mountable and not e.is_mounted:
 					return e
 	return null
@@ -977,8 +986,10 @@ func _path_to_nearest_unexplored() -> Array:
 		Vector2i(-1, -1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(1, 1),
 	]
 
-	while not frontier.is_empty():
-		var current: Vector2i = frontier.pop_front()
+	var frontier_idx: int = 0
+	while frontier_idx < frontier.size():
+		var current: Vector2i = frontier[frontier_idx]
+		frontier_idx += 1
 		for dir: Vector2i in dirs:
 			var next: Vector2i = current + dir
 			if visited.has(next):
@@ -1006,8 +1017,10 @@ func _path_to(target: Vector2i, require_explored: bool = false) -> Array:
 		Vector2i(-1, -1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(1, 1),
 	]
 
-	while not frontier.is_empty():
-		var current: Vector2i = frontier.pop_front()
+	var frontier_idx: int = 0
+	while frontier_idx < frontier.size():
+		var current: Vector2i = frontier[frontier_idx]
+		frontier_idx += 1
 		if current == target:
 			return _reconstruct_path(came_from, start, target)
 		for dir: Vector2i in dirs:
@@ -1065,7 +1078,7 @@ func can_enter_world_map() -> bool:
 
 
 func _player_on_stairs() -> bool:
-	for e in map.get_entities_at(player.pos.x, player.pos.y):
+	for e in map.get_entities_view_at(player.pos.x, player.pos.y):
 		if e is ActorClass:
 			continue
 		if e.char == ">" or e.char == "<":
@@ -1074,7 +1087,7 @@ func _player_on_stairs() -> bool:
 
 
 func _item_at_player_pos() -> bool:
-	for e in map.get_entities_at(player.pos.x, player.pos.y):
+	for e in map.get_entities_view_at(player.pos.x, player.pos.y):
 		if e is ItemClass:
 			return true
 	return false
@@ -1306,7 +1319,7 @@ func try_descend() -> void:
 	if debug_hub_active:
 		add_msg("There are no stairs leading down from the developer's oasis.")
 		return
-	for e in map.get_entities_at(player.pos.x, player.pos.y):
+	for e in map.get_entities_view_at(player.pos.x, player.pos.y):
 		if not (e is ActorClass) and e.char == ">":
 			_descend()
 			return
@@ -1322,7 +1335,7 @@ func try_ascend() -> void:
 	if depth == 0 and not can_enter_world_map():
 		add_msg("Hostiles are too close. You need to get clear before checking the world map.")
 		return
-	for e in map.get_entities_at(player.pos.x, player.pos.y):
+	for e in map.get_entities_view_at(player.pos.x, player.pos.y):
 		if not (e is ActorClass) and e.char == "<":
 			_ascend()
 			return
@@ -1465,7 +1478,7 @@ func _stairs_pos(m, ch: String) -> Vector2i:
 func _check_stairs() -> void:
 	if debug_hub_active:
 		return
-	for e in map.get_entities_at(player.pos.x, player.pos.y):
+	for e in map.get_entities_view_at(player.pos.x, player.pos.y):
 		if e is ActorClass:
 			continue
 		if e.char == ">":
@@ -1539,7 +1552,7 @@ func exit_debug_hub() -> void:
 func _check_debug_fixture() -> void:
 	if not debug_hub_active:
 		return
-	for e in map.get_entities_at(player.pos.x, player.pos.y):
+	for e in map.get_entities_view_at(player.pos.x, player.pos.y):
 		if e is ActorClass:
 			continue
 		match e.name:

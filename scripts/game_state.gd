@@ -8,6 +8,8 @@ var auto_pickup: bool = false
 var god_mode: bool    = false
 var debug_tools_enabled: bool = false
 var use_tileset: bool = true
+const HELD_MOVE_REPEAT_OPTIONS: Array[float] = [4.0, 6.0, 8.0, 10.0, 12.0]
+var held_move_repeat_index: int = 2
 const FONT_PROFILE_BIOS := "bios"
 const FONT_PROFILE_VGA_9X14 := "vga_9x14"
 var font_profile: String = FONT_PROFILE_BIOS
@@ -61,3 +63,32 @@ func current_map_zoom_sizes() -> Array:
 
 func toggle_font_profile() -> void:
 	font_profile = FONT_PROFILE_VGA_9X14 if font_profile == FONT_PROFILE_BIOS else FONT_PROFILE_BIOS
+
+
+func held_move_repeat_hz() -> float:
+	return float(HELD_MOVE_REPEAT_OPTIONS[clampi(held_move_repeat_index, 0, HELD_MOVE_REPEAT_OPTIONS.size() - 1)])
+
+
+func held_move_initial_delay_sec() -> float:
+	return 0.16
+
+
+func held_move_repeat_sec() -> float:
+	return 1.0 / held_move_repeat_hz()
+
+
+func held_move_repeat_label() -> String:
+	var bars: int = held_move_repeat_index + 1
+	return "%.0f / sec  [%s%s]" % [
+		held_move_repeat_hz(),
+		"|".repeat(bars),
+		".".repeat(HELD_MOVE_REPEAT_OPTIONS.size() - bars),
+	]
+
+
+func increase_held_move_repeat() -> void:
+	held_move_repeat_index = mini(held_move_repeat_index + 1, HELD_MOVE_REPEAT_OPTIONS.size() - 1)
+
+
+func decrease_held_move_repeat() -> void:
+	held_move_repeat_index = maxi(held_move_repeat_index - 1, 0)
