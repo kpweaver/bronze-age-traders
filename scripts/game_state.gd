@@ -31,6 +31,8 @@ var world_biomes: Array = []
 var villages: Array = []
 # Road chunks — "cx,cy" string keys. Regenerated from world_seed on load.
 var road_chunks: Dictionary = {}
+# Dungeon chunks — "cx,cy" string keys. Regenerated from world_seed on load.
+var dungeon_chunks: Dictionary = {}
 
 
 func current_font_path() -> String:

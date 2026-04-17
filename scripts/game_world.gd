@@ -203,6 +203,9 @@ func new_game() -> void:
 			GameState.WORLD_W, GameState.WORLD_H, GameState.world_biomes, GameState.world_seed)
 	GameState.road_chunks  = ProcgenClass.generate_roads(
 			GameState.villages, GameState.WORLD_W, GameState.WORLD_H)
+	GameState.dungeon_chunks = ProcgenClass.generate_dungeon_sites(
+			GameState.WORLD_W, GameState.WORLD_H,
+			GameState.world_biomes, GameState.villages, GameState.world_seed)
 
 	chunk = Vector2i(GameState.WORLD_W >> 1, GameState.WORLD_H >> 1)
 
@@ -270,6 +273,9 @@ func load_from_save() -> void:
 			GameState.WORLD_W, GameState.WORLD_H, GameState.world_biomes, GameState.world_seed)
 	GameState.road_chunks  = ProcgenClass.generate_roads(
 			GameState.villages, GameState.WORLD_W, GameState.WORLD_H)
+	GameState.dungeon_chunks = ProcgenClass.generate_dungeon_sites(
+			GameState.WORLD_W, GameState.WORLD_H,
+			GameState.world_biomes, GameState.villages, GameState.world_seed)
 	party = [player]
 	_recompute_fov()
 	add_msg("You return to where you left off...")
@@ -1210,6 +1216,7 @@ func chunk_transition(dir: Vector2i, action_cost: int = ACTION_COST_STANDARD) ->
 				dest_chunk.x * OVERWORLD_W, dest_chunk.y * OVERWORLD_H,
 				GameState.world_seed, get_chunk_biome(dest_chunk), false,
 				get_road_dirs(dest_chunk), is_village_chunk(dest_chunk.x, dest_chunk.y))
+		_place_dungeon_entrance_if_needed(new_map, dest_chunk.x, dest_chunk.y)
 		_place_chunk_encounter(new_map, dest_chunk, Vector2i(new_x, new_y))
 		chunks[dest_chunk] = new_map
 		dest_map = new_map
@@ -1273,6 +1280,7 @@ func world_map_navigate(dir: Vector2i) -> void:
 				chunk.x * OVERWORLD_W, chunk.y * OVERWORLD_H,
 				GameState.world_seed, get_chunk_biome(chunk), false,
 				get_road_dirs(chunk), is_village_chunk(chunk.x, chunk.y))
+		_place_dungeon_entrance_if_needed(new_map, chunk.x, chunk.y)
 		map = new_map
 
 	player.pos      = _nearest_walkable_overworld_pos(map, Vector2i(OVERWORLD_W >> 1, OVERWORLD_H >> 1))
@@ -1340,6 +1348,10 @@ func is_village_chunk(cx: int, cy: int) -> bool:
 		if int(v.cx) == cx and int(v.cy) == cy:
 			return true
 	return false
+
+
+func is_dungeon_chunk(cx: int, cy: int) -> bool:
+	return GameState.dungeon_chunks.has("%d,%d" % [cx, cy])
 
 
 func get_village_at_chunk(cx: int, cy: int) -> Variant:
@@ -1416,11 +1428,17 @@ func _ascend() -> void:
 					chunk.x * OVERWORLD_W, chunk.y * OVERWORLD_H,
 					GameState.world_seed, get_chunk_biome(chunk), is_center,
 					get_road_dirs(chunk), is_village_chunk(chunk.x, chunk.y))
-			var entrance_pos: Vector2i = ProcgenClass.find_cave_entrance(new_map)
-			var dungeon_entry := EntityClass.new(
-					entrance_pos, ">", Color(0.90, 0.85, 0.60), "dungeon entrance", false)
-			new_map.add_entity(dungeon_entry)
-			player.pos      = entrance_pos
+			# Starting chunk always gets a dungeon entrance; other dungeon chunks via helper.
+			if is_center:
+				var entrance_pos: Vector2i = ProcgenClass.find_cave_entrance(new_map)
+				new_map.add_entity(EntityClass.new(
+						entrance_pos, ">", Color(0.90, 0.85, 0.60), "dungeon entrance", false))
+				player.pos = entrance_pos
+			else:
+				_place_dungeon_entrance_if_needed(new_map, chunk.x, chunk.y)
+				player.pos = _stairs_pos(new_map, ">")
+				if player.pos == Vector2i(-1, -1):
+					player.pos = Vector2i(OVERWORLD_W >> 1, OVERWORLD_H >> 1)
 			new_map.add_entity(player)
 			map = new_map
 	else:
@@ -1504,6 +1522,7 @@ func exit_debug_hub() -> void:
 					chunk.x * OVERWORLD_W, chunk.y * OVERWORLD_H,
 					GameState.world_seed, get_chunk_biome(chunk), is_center,
 					get_road_dirs(chunk), is_village_chunk(chunk.x, chunk.y))
+			_place_dungeon_entrance_if_needed(new_map, chunk.x, chunk.y)
 			map = new_map
 			chunks[chunk] = map
 	else:
@@ -1959,6 +1978,19 @@ func _place_travel_event_in_map(target_map, event_data: Dictionary, player_entry
 			_place_bandits_in(target_map, player_entry)
 		TRAVEL_EVENT_MERCHANT:
 			_place_merchant_in(target_map, player_entry)
+
+# Place a dungeon entrance on a freshly generated chunk if it's a dungeon site.
+# Skips if the chunk already contains a ">" entity (idempotent).
+func _place_dungeon_entrance_if_needed(target_map, cx: int, cy: int) -> void:
+	if not is_dungeon_chunk(cx, cy):
+		return
+	for e in target_map.entities:
+		if e.char == ">":
+			return  # already placed
+	var entrance_pos: Vector2i = ProcgenClass.find_cave_entrance(target_map)
+	target_map.add_entity(EntityClass.new(
+			entrance_pos, ">", Color(0.90, 0.85, 0.60), "dungeon entrance", false))
+
 
 # Called once when a fresh (never-visited) overworld chunk is generated.
 # Rolls for and pre-places encounter entities so the player discovers them

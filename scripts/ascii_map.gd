@@ -1,4 +1,4 @@
-﻿extends Node2D
+extends Node2D
 
 # ---------------------------------------------------------------------------
 # Dependencies
@@ -65,19 +65,25 @@ const C_WATER_LIT  := Color(0.22, 0.55, 0.88)
 const C_WATER_DIM  := Color(0.10, 0.26, 0.44)
 const C_GRASS_LIT  := Color(0.40, 0.75, 0.22)
 const C_GRASS_DIM  := Color(0.18, 0.38, 0.10)
-const C_ROAD_LIT   := Color(0.78, 0.62, 0.38)
-const C_ROAD_DIM   := Color(0.42, 0.32, 0.18)
-const C_VILLAGE_WM := Color(0.95, 0.90, 0.70)
+const C_ROAD_LIT        := Color(0.78, 0.62, 0.38)
+const C_ROAD_DIM        := Color(0.42, 0.32, 0.18)
+const C_CAVE_WALL_LIT   := Color(0.50, 0.46, 0.44)   # cool slate grey
+const C_CAVE_WALL_DIM   := Color(0.18, 0.16, 0.15)
+const C_CAVE_FLOOR_LIT  := Color(0.34, 0.30, 0.28)   # dark stone, slightly cool
+const C_CAVE_FLOOR_DIM  := Color(0.12, 0.11, 0.10)
+const C_VILLAGE_WM      := Color(0.95, 0.90, 0.70)
 
-const C_WALL_DIM_TILESET  := Color(0.08, 0.05, 0.03)
-const C_FLOOR_DIM_TILESET := Color(0.03, 0.025, 0.02)
-const C_SAND_DIM_TILESET  := Color(0.08, 0.06, 0.03)
-const C_DUNE_DIM_TILESET  := Color(0.10, 0.05, 0.02)
-const C_ROCK_DIM_TILESET  := Color(0.08, 0.035, 0.02)
-const C_WATER_DIM_TILESET := Color(0.03, 0.08, 0.14)
-const C_GRASS_DIM_TILESET := Color(0.04, 0.08, 0.03)
-const C_ROAD_DIM_TILESET  := Color(0.08, 0.06, 0.03)
-const C_UNEXPLORED_TILESET := Color(0.0, 0.0, 0.0)
+const C_WALL_DIM_TILESET      := Color(0.08, 0.05, 0.03)
+const C_FLOOR_DIM_TILESET     := Color(0.03, 0.025, 0.02)
+const C_SAND_DIM_TILESET      := Color(0.08, 0.06, 0.03)
+const C_DUNE_DIM_TILESET      := Color(0.10, 0.05, 0.02)
+const C_ROCK_DIM_TILESET      := Color(0.08, 0.035, 0.02)
+const C_WATER_DIM_TILESET     := Color(0.03, 0.08, 0.14)
+const C_GRASS_DIM_TILESET     := Color(0.04, 0.08, 0.03)
+const C_ROAD_DIM_TILESET      := Color(0.08, 0.06, 0.03)
+const C_CAVE_WALL_DIM_TILESET  := Color(0.05, 0.05, 0.05)
+const C_CAVE_FLOOR_DIM_TILESET := Color(0.03, 0.03, 0.03)
+const C_UNEXPLORED_TILESET    := Color(0.0, 0.0, 0.0)
 
 const C_WALL_BG_TILESET_LIT  := Color(0.46, 0.24, 0.14)
 const C_WALL_BG_TILESET_DIM  := Color(0.18, 0.10, 0.06)
@@ -93,8 +99,12 @@ const C_WATER_BG_TILESET_LIT := Color(0.16, 0.34, 0.54)
 const C_WATER_BG_TILESET_DIM := Color(0.06, 0.12, 0.20)
 const C_GRASS_BG_TILESET_LIT := Color(0.22, 0.46, 0.14)
 const C_GRASS_BG_TILESET_DIM := Color(0.08, 0.16, 0.05)
-const C_ROAD_BG_TILESET_LIT  := Color(0.50, 0.40, 0.24)
-const C_ROAD_BG_TILESET_DIM  := Color(0.18, 0.14, 0.08)
+const C_ROAD_BG_TILESET_LIT       := Color(0.50, 0.40, 0.24)
+const C_ROAD_BG_TILESET_DIM       := Color(0.18, 0.14, 0.08)
+const C_CAVE_WALL_BG_TILESET_LIT  := Color(0.32, 0.30, 0.28)
+const C_CAVE_WALL_BG_TILESET_DIM  := Color(0.10, 0.10, 0.09)
+const C_CAVE_FLOOR_BG_TILESET_LIT := Color(0.22, 0.20, 0.18)
+const C_CAVE_FLOOR_BG_TILESET_DIM := Color(0.08, 0.07, 0.07)
 
 # -- TERRAIN VARIATION -------------------------------------------------------
 # Set to false to revert all terrain tiles to single-char, single-colour glyphs.
@@ -2090,6 +2100,10 @@ func _tile_dim_color(tile: int) -> Color:
 			return C_GRASS_DIM_TILESET if tileset_mode else C_GRASS_DIM
 		GameMapClass.TILE_ROAD:
 			return C_ROAD_DIM_TILESET if tileset_mode else C_ROAD_DIM
+		GameMapClass.TILE_CAVE_WALL:
+			return C_CAVE_WALL_DIM_TILESET if tileset_mode else C_CAVE_WALL_DIM
+		GameMapClass.TILE_CAVE_FLOOR:
+			return C_CAVE_FLOOR_DIM_TILESET if tileset_mode else C_CAVE_FLOOR_DIM
 		_:
 			return Color(0.05, 0.05, 0.05) if tileset_mode else Color(0.20, 0.20, 0.20)
 
@@ -2113,6 +2127,10 @@ func _tileset_fill_color(tile: int, base_color: Color, lit: bool) -> Color:
 			fill = C_GRASS_BG_TILESET_LIT if lit else C_GRASS_BG_TILESET_DIM
 		GameMapClass.TILE_ROAD:
 			fill = C_ROAD_BG_TILESET_LIT if lit else C_ROAD_BG_TILESET_DIM
+		GameMapClass.TILE_CAVE_WALL:
+			fill = C_CAVE_WALL_BG_TILESET_LIT if lit else C_CAVE_WALL_BG_TILESET_DIM
+		GameMapClass.TILE_CAVE_FLOOR:
+			fill = C_CAVE_FLOOR_BG_TILESET_LIT if lit else C_CAVE_FLOOR_BG_TILESET_DIM
 		_:
 			fill = base_color
 	fill = fill * _day_tint
@@ -2139,6 +2157,10 @@ func _ascii_fill_color(tile: int, base_color: Color, lit: bool) -> Color:
 			fill = C_GRASS_LIT if lit else C_GRASS_DIM
 		GameMapClass.TILE_ROAD:
 			fill = C_ROAD_LIT if lit else C_ROAD_DIM
+		GameMapClass.TILE_CAVE_WALL:
+			fill = C_CAVE_WALL_LIT if lit else C_CAVE_WALL_DIM
+		GameMapClass.TILE_CAVE_FLOOR:
+			fill = C_CAVE_FLOOR_LIT if lit else C_CAVE_FLOOR_DIM
 		_:
 			fill = base_color
 	fill = fill * _day_tint
@@ -2963,8 +2985,10 @@ func _look_description() -> String:
 		GameMapClass.TILE_ROCK:  tile = "rocky outcropping"
 		GameMapClass.TILE_WATER: tile = "shimmering water"
 		GameMapClass.TILE_GRASS: tile = "lush grassland"
-		GameMapClass.TILE_ROAD:  tile = "packed-dirt trade road"
-		_:                       tile = "unknown terrain"
+		GameMapClass.TILE_ROAD:       tile = "packed-dirt trade road"
+		GameMapClass.TILE_CAVE_WALL:  tile = "rough cave wall"
+		GameMapClass.TILE_CAVE_FLOOR: tile = "cave floor"
+		_:                            tile = "unknown terrain"
 
 	if not _map.visible[y][x]:
 		return "You remember: %s." % tile
@@ -3215,7 +3239,7 @@ func _draw_map() -> void:
 				GameMapClass.TILE_GRASS:
 					if ch == "":
 						var variant := _terrain_cell(tile, mx, my)
-						ch = variant[0] if variant[0] != "" else "."
+						ch = variant[0] if variant[0] != "" else "\""
 						color = (variant[1] as Color) if lit else _tile_dim_color(tile)
 					else:
 						color = C_GRASS_LIT if lit else _tile_dim_color(tile)
@@ -3223,6 +3247,14 @@ func _draw_map() -> void:
 					if ch == "":
 						ch = "\u2591"
 					color = C_ROAD_LIT if lit else _tile_dim_color(tile)
+				GameMapClass.TILE_CAVE_WALL:
+					if ch == "":
+						ch = "%"
+					color = C_CAVE_WALL_LIT if lit else _tile_dim_color(tile)
+				GameMapClass.TILE_CAVE_FLOOR:
+					if ch == "":
+						ch = "."
+					color = C_CAVE_FLOOR_LIT if lit else _tile_dim_color(tile)
 				_:
 					if ch == "":
 						ch = "?"
@@ -3304,6 +3336,12 @@ func _sync_chunk_tilemaps() -> void:
 					GameMapClass.TILE_ROAD:
 						ch = "\u2591"
 						base_color = C_ROAD_LIT if lit else _tile_dim_color(tile)
+					GameMapClass.TILE_CAVE_WALL:
+						ch = "%"
+						base_color = C_CAVE_WALL_LIT if lit else _tile_dim_color(tile)
+					GameMapClass.TILE_CAVE_FLOOR:
+						ch = "."
+						base_color = C_CAVE_FLOOR_LIT if lit else _tile_dim_color(tile)
 					_:
 						ch = "?"
 						base_color = Color.WHITE
@@ -3844,11 +3882,11 @@ func _biome_name(biome: int) -> String:
 
 func _biome_char(biome: int) -> String:
 	match biome:
-		GameMapClass.BIOME_DESERT:    return "."
-		GameMapClass.BIOME_OASIS:     return "~"
-		GameMapClass.BIOME_STEPPES:   return "\""
-		GameMapClass.BIOME_MOUNTAINS: return "^"
-		GameMapClass.BIOME_BADLANDS:  return "%"
+		GameMapClass.BIOME_DESERT:    return "\u00B7"   # · bare sand
+		GameMapClass.BIOME_OASIS:     return "\u2248"   # ≈ water / lush
+		GameMapClass.BIOME_STEPPES:   return "\""       # " grass / steppe
+		GameMapClass.BIOME_MOUNTAINS: return "^"        # ^ mountains
+		GameMapClass.BIOME_BADLANDS:  return "%"        # % rocky rubble
 		_:                            return "?"
 
 
@@ -3930,10 +3968,10 @@ func _wm_paint_cell(cx: int, cy: int, current_chunk_char: String, current_chunk_
 	var village: Variant = _world.get_village_at_chunk(cx, cy)
 
 	if village != null:
-		ch = "*"
+		ch = "\u2302"  # ⌂ house symbol
 		color = C_VILLAGE_WM
 	elif _world.is_road_chunk(cx, cy):
-		ch = "="
+		ch = "\u2261"  # ≡ road markings
 		color = Color(0.70, 0.55, 0.32)
 	else:
 		var biome: int = _world.get_chunk_biome(this_chunk)
@@ -4128,6 +4166,14 @@ func _glyph_draw_metrics(ch: String) -> Dictionary:
 			return {"scale": 0.92, "x": 0.0, "y": 0.0}
 		"~":
 			return {"scale": 0.98, "x": 0.0, "y": 0.0}
+		"≈":
+			return {"scale": 0.98, "x": 0.0, "y": 0.0}
+		"≡":
+			return {"scale": 1.00, "x": 0.0, "y": 0.0}
+		"·":
+			return {"scale": 0.80, "x": 0.0, "y": 2.0}
+		"⌂":
+			return {"scale": 0.90, "x": 0.0, "y": -1.0}
 		"%":
 			return {"scale": 0.96, "x": 0.0, "y": 0.0}
 		"=":
@@ -4229,7 +4275,15 @@ func _cp437_index_for_glyph(ch: String) -> int:
 		0x00F7:
 			return 246
 		0x2248:
-			return 247
+			return 247  # ≈ almost-equal / water
+		0x2261:
+			return 240  # ≡ triple-bar / road
+		0x00B7:
+			return 250  # · middle dot / sand
+		0x2302:
+			return 127  # ⌂ house / village
+		0x2663:
+			return 5    # ♣ clubs / oasis vegetation
 		0x221A:
 			return 251
 		_:
@@ -4269,4 +4323,3 @@ func _puts(x: int, y: int, text: String, color: Color) -> void:
 
 func _puts_centered(row: int, text: String, color: Color) -> void:
 	_puts((COLS - text.length()) >> 1, row, text, color)
-

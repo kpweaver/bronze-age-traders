@@ -38,6 +38,75 @@ class RectRoom:
 		return x1 <= other.x2 and x2 >= other.x1 and y1 <= other.y2 and y2 >= other.y1
 
 
+# ---------------------------------------------------------------------------
+# Dungeon site generation — biome-weighted chunk selection
+# ---------------------------------------------------------------------------
+
+# Biome weights for dungeon entrance spawning (out of 35 max).
+const _DUNGEON_BIOME_WEIGHTS := {
+	GameMapClass.BIOME_MOUNTAINS: 35,
+	GameMapClass.BIOME_DESERT:    20,
+	GameMapClass.BIOME_BADLANDS:  12,
+	GameMapClass.BIOME_STEPPES:    4,
+	GameMapClass.BIOME_OASIS:      2,
+}
+
+static func generate_dungeon_sites(
+		world_w: int, world_h: int,
+		biomes: Array, villages: Array,
+		world_seed: int) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = world_seed + 7777
+
+	var result: Dictionary = {}
+	var center_x: int = world_w >> 1
+	var center_y: int = world_h >> 1
+
+	# Build fast lookup for excluded chunks (villages).
+	var village_set: Dictionary = {}
+	for v in villages:
+		village_set["%d,%d" % [int(v.cx), int(v.cy)]] = true
+
+	# Target ~1 dungeon per 40 non-village chunks.
+	var target: int = maxi(10, int(round(float(world_w * world_h) / 40.0)))
+
+	for _attempt in range(target * 30):
+		if result.size() >= target:
+			break
+		var cx: int = rng.randi_range(0, world_w - 1)
+		var cy: int = rng.randi_range(0, world_h - 1)
+
+		# Exclude world centre (starting chunk has its own hand-placed entrance).
+		if cx == center_x and cy == center_y:
+			continue
+		# Exclude village chunks.
+		if village_set.has("%d,%d" % [cx, cy]):
+			continue
+		# Enforce minimum spacing between dungeon sites.
+		var too_close := false
+		for key: String in result:
+			var parts := key.split(",")
+			if absi(cx - parts[0].to_int()) + absi(cy - parts[1].to_int()) < 4:
+				too_close = true
+				break
+		if too_close:
+			continue
+
+		# Weighted biome rejection sampling — probability = weight / 35.
+		var biome: int = int(biomes[cy][cx])
+		var weight: int = _DUNGEON_BIOME_WEIGHTS.get(biome, 1)
+		if rng.randi_range(0, 34) >= weight:
+			continue
+
+		result["%d,%d" % [cx, cy]] = true
+
+	return result
+
+
+# ---------------------------------------------------------------------------
+# Dungeon generation — Cellular Automata caves + rectangular rooms
+# ---------------------------------------------------------------------------
+
 static func generate_dungeon(
 	map,
 	max_rooms: int,
@@ -47,45 +116,285 @@ static func generate_dungeon(
 	player,
 	floor: int = 1
 ) -> void:
-	var rooms: Array = []
+	var rng := RandomNumberGenerator.new()
+	rng.seed = randi()
 
-	for _i in range(max_rooms):
-		var w := randi_range(min_size, max_size)
-		var h := randi_range(min_size, max_size)
-		var x := randi_range(1, map.width - w - 2)
-		var y := randi_range(1, map.height - h - 2)
+	# --- Phase 1: Cellular Automata cave skeleton ---
+	# ~47 % initial wall fill produces well-connected caves after smoothing.
+	_ca_init(map, rng, 0.47)
+	for _i in range(4):
+		_ca_step(map)
+
+	# --- Phase 2: Rectangular rooms carved into the CA base ---
+	# Rooms are stamped as TILE_FLOOR so they read as man-made chambers amid
+	# the natural TILE_CAVE_FLOOR surroundings.
+	var rooms: Array = []
+	var rect_target: int = maxi(4, max_rooms / 2)
+	for _i in range(rect_target * 4):
+		if rooms.size() >= rect_target:
+			break
+		var w := rng.randi_range(min_size, max_size)
+		var h := rng.randi_range(min_size, max_size)
+		var x := rng.randi_range(1, map.width  - w - 2)
+		var y := rng.randi_range(1, map.height - h - 2)
 		var new_room := RectRoom.new(x, y, w, h)
 
 		var overlaps := false
 		for room in rooms:
 			var padded := RectRoom.new(
-				room.x1 - 1, room.y1 - 1,
-				(room.x2 - room.x1) + 2,
-				(room.y2 - room.y1) + 2
-			)
+				room.x1 - 2, room.y1 - 2,
+				(room.x2 - room.x1) + 4,
+				(room.y2 - room.y1) + 4)
 			if new_room.intersects(padded):
 				overlaps = true
 				break
 		if overlaps:
 			continue
 
-		var room_is_lit: bool = _room_is_lit(floor)
-		_carve_room(map, new_room, room_is_lit)
-
-		if rooms.is_empty():
-			player.pos = new_room.center()
-		else:
-			_carve_tunnel(map, rooms.back().center(), new_room.center())
-			_place_monsters(map, new_room, max_monsters_per_room, floor)
-			_place_items(map, new_room, 2, floor)
-
+		_carve_room(map, new_room, _room_is_lit(floor))
 		rooms.append(new_room)
 
-	# Stairs at the center of the last room
+	# --- Phase 3: Flood-fill connectivity ---
+	# Merge disconnected floor regions with narrow cave corridors.
+	_connect_cave_regions(map, rng)
+
+	# --- Phase 4: Player placement ---
 	if not rooms.is_empty():
-		var stairs_pos: Vector2i = rooms.back().center()
-		var stairs := EntityClass.new(stairs_pos, ">", Color(0.90, 0.85, 0.60), "stairs down", false)
-		map.add_entity(stairs)
+		player.pos = rooms[0].center()
+	else:
+		player.pos = _find_open_cave_tile(map)
+
+	# --- Phase 5: Monsters & items ---
+	for i in range(1, rooms.size()):
+		_place_monsters(map, rooms[i], max_monsters_per_room, floor)
+		_place_items(map, rooms[i], 2, floor)
+	_scatter_cave_monsters(map, player.pos, max_monsters_per_room, floor, rng)
+
+	# --- Phase 6: Stairs down in last room (or far from player) ---
+	var stairs_pos: Vector2i
+	if rooms.size() > 1:
+		stairs_pos = rooms.back().center()
+	else:
+		stairs_pos = _find_far_cave_tile(map, player.pos)
+	if map.is_in_bounds(stairs_pos.x, stairs_pos.y):
+		map.add_entity(EntityClass.new(stairs_pos, ">", Color(0.90, 0.85, 0.60), "stairs down", false))
+
+
+# ---------------------------------------------------------------------------
+# Cellular Automata helpers
+# ---------------------------------------------------------------------------
+
+static func _ca_init(map, rng: RandomNumberGenerator, fill_chance: float) -> void:
+	for y in range(map.height):
+		for x in range(map.width):
+			if x == 0 or x == map.width - 1 or y == 0 or y == map.height - 1:
+				map.tiles[y][x] = GameMapClass.TILE_CAVE_WALL
+			elif rng.randf() < fill_chance:
+				map.tiles[y][x] = GameMapClass.TILE_CAVE_WALL
+			else:
+				map.tiles[y][x] = GameMapClass.TILE_CAVE_FLOOR
+
+
+static func _ca_wall_neighbors(map, x: int, y: int) -> int:
+	var count: int = 0
+	for dy in range(-1, 2):
+		for dx in range(-1, 2):
+			if dx == 0 and dy == 0:
+				continue
+			var nx: int = x + dx
+			var ny: int = y + dy
+			if not map.is_in_bounds(nx, ny) or map.tiles[ny][nx] == GameMapClass.TILE_CAVE_WALL:
+				count += 1
+	return count
+
+
+static func _ca_step(map) -> void:
+	# B5/S4 rule expressed as wall-neighbor count:
+	#   ≥ 5 wall neighbours → becomes/stays wall
+	#   ≤ 4 wall neighbours → becomes/stays floor
+	var next: Array = []
+	for y in range(map.height):
+		next.append(map.tiles[y].duplicate())
+	for y in range(1, map.height - 1):
+		for x in range(1, map.width - 1):
+			var walls: int = _ca_wall_neighbors(map, x, y)
+			next[y][x] = GameMapClass.TILE_CAVE_WALL if walls >= 5 else GameMapClass.TILE_CAVE_FLOOR
+	for y in range(map.height):
+		for x in range(map.width):
+			map.tiles[y][x] = next[y][x]
+
+
+# ---------------------------------------------------------------------------
+# Flood-fill connectivity
+# ---------------------------------------------------------------------------
+
+static func _connect_cave_regions(map, rng: RandomNumberGenerator) -> void:
+	# BFS flood-fill to find all distinct walkable regions.
+	var visited: Array = []
+	for y in range(map.height):
+		visited.append([])
+		for x in range(map.width):
+			visited[y].append(false)
+
+	var regions: Array = []
+	for y in range(map.height):
+		for x in range(map.width):
+			if visited[y][x]:
+				continue
+			var t: int = map.tiles[y][x]
+			if t != GameMapClass.TILE_CAVE_FLOOR and t != GameMapClass.TILE_FLOOR:
+				continue
+			var region: Array = []
+			var queue: Array[Vector2i] = [Vector2i(x, y)]
+			visited[y][x] = true
+			while not queue.is_empty():
+				var pos: Vector2i = queue.pop_front()
+				region.append(pos)
+				for d: Vector2i in [Vector2i(1,0), Vector2i(-1,0), Vector2i(0,1), Vector2i(0,-1)]:
+					var nx: int = pos.x + d.x
+					var ny: int = pos.y + d.y
+					if not map.is_in_bounds(nx, ny) or visited[ny][nx]:
+						continue
+					var nt: int = map.tiles[ny][nx]
+					if nt != GameMapClass.TILE_CAVE_FLOOR and nt != GameMapClass.TILE_FLOOR:
+						continue
+					visited[ny][nx] = true
+					queue.append(Vector2i(nx, ny))
+			regions.append(region)
+
+	if regions.size() <= 1:
+		return
+
+	# Largest region is main. Sort descending by size.
+	regions.sort_custom(func(a: Array, b: Array) -> bool: return a.size() > b.size())
+
+	# Discard tiny isolated patches and fill with wall.
+	var large: Array = []
+	for region in regions:
+		if (region as Array).size() >= 10:
+			large.append(region)
+		else:
+			for pos: Vector2i in (region as Array):
+				map.tiles[pos.y][pos.x] = GameMapClass.TILE_CAVE_WALL
+
+	# Connect every large region to the main (largest) region.
+	for i in range(1, large.size()):
+		var ra: Array = large[0]
+		var rb: Array = large[i]
+		# Sample up to 50 tiles per region to find the closest pair.
+		var sa: Array = ra if ra.size() <= 50 else []
+		var sb: Array = rb if rb.size() <= 50 else []
+		if sa.is_empty():
+			for _j in range(50):
+				sa.append(ra[rng.randi_range(0, ra.size() - 1)])
+		if sb.is_empty():
+			for _j in range(50):
+				sb.append(rb[rng.randi_range(0, rb.size() - 1)])
+		var best_dist: int = 999999
+		var best_a := Vector2i(0, 0)
+		var best_b := Vector2i(0, 0)
+		for pa: Vector2i in sa:
+			for pb: Vector2i in sb:
+				var d: int = absi(pa.x - pb.x) + absi(pa.y - pb.y)
+				if d < best_dist:
+					best_dist = d
+					best_a = pa
+					best_b = pb
+		_carve_cave_corridor(map, best_a, best_b)
+
+
+static func _carve_cave_corridor(map, a: Vector2i, b: Vector2i) -> void:
+	if randf() < 0.5:
+		_cave_hline(map, a.x, b.x, a.y)
+		_cave_vline(map, a.y, b.y, b.x)
+	else:
+		_cave_vline(map, a.y, b.y, a.x)
+		_cave_hline(map, a.x, b.x, b.y)
+
+
+static func _cave_hline(map, x0: int, x1: int, y: int) -> void:
+	for x in range(mini(x0, x1), maxi(x0, x1) + 1):
+		if map.is_in_bounds(x, y):
+			map.tiles[y][x] = GameMapClass.TILE_CAVE_FLOOR
+
+
+static func _cave_vline(map, y0: int, y1: int, x: int) -> void:
+	for y in range(mini(y0, y1), maxi(y0, y1) + 1):
+		if map.is_in_bounds(x, y):
+			map.tiles[y][x] = GameMapClass.TILE_CAVE_FLOOR
+
+
+# ---------------------------------------------------------------------------
+# Cave tile search helpers
+# ---------------------------------------------------------------------------
+
+static func _find_open_cave_tile(map) -> Vector2i:
+	var cx: int = map.width  >> 1
+	var cy: int = map.height >> 1
+	for r in range(maxi(map.width, map.height)):
+		for dy in range(-r, r + 1):
+			for dx in range(-r, r + 1):
+				if absi(dx) != r and absi(dy) != r:
+					continue
+				var x: int = cx + dx
+				var y: int = cy + dy
+				if map.is_in_bounds(x, y):
+					var t: int = map.tiles[y][x]
+					if t == GameMapClass.TILE_CAVE_FLOOR or t == GameMapClass.TILE_FLOOR:
+						return Vector2i(x, y)
+	return Vector2i(cx, cy)
+
+
+static func _find_far_cave_tile(map, origin: Vector2i) -> Vector2i:
+	var best := Vector2i(map.width >> 1, map.height >> 1)
+	var best_dist: int = 0
+	for y in range(1, map.height - 1):
+		for x in range(1, map.width - 1):
+			var t: int = map.tiles[y][x]
+			if t != GameMapClass.TILE_CAVE_FLOOR and t != GameMapClass.TILE_FLOOR:
+				continue
+			var d: int = absi(x - origin.x) + absi(y - origin.y)
+			if d > best_dist:
+				best_dist = d
+				best = Vector2i(x, y)
+	return best
+
+
+# ---------------------------------------------------------------------------
+# Cave monster scatter
+# ---------------------------------------------------------------------------
+
+static func _scatter_cave_monsters(map, origin: Vector2i, max_per_area: int, floor: int, rng: RandomNumberGenerator) -> void:
+	var count: int = rng.randi_range(2, maxi(2, max_per_area + 2))
+	var placed: int = 0
+	for _i in range(count * 12):
+		if placed >= count:
+			break
+		var x: int = rng.randi_range(1, map.width  - 2)
+		var y: int = rng.randi_range(1, map.height - 2)
+		if map.tiles[y][x] != GameMapClass.TILE_CAVE_FLOOR:
+			continue
+		if map.get_blocking_entity_at(x, y) != null:
+			continue
+		if absi(x - origin.x) + absi(y - origin.y) < 12:
+			continue
+		_spawn_dungeon_monster(map, x, y, floor)
+		placed += 1
+
+
+static func _spawn_dungeon_monster(map, x: int, y: int, floor: int) -> void:
+	var beast_chance := minf(0.1 + (floor - 1) * 0.1, 0.5)
+	var monster
+	if randf() < beast_chance:
+		var hp    := 18 + (floor - 1) * 3
+		var power := 4  + (floor - 1)
+		monster = ActorClass.new(Vector2i(x, y), "B", Color(0.48, 0.32, 0.12), "desert beast", hp, 2, power)
+	else:
+		var hp    := 10 + (floor - 1) * 2
+		var power := 3  + (floor - 1)
+		monster = ActorClass.new(Vector2i(x, y), "r", Color(0.72, 0.22, 0.10), "raider", hp, 0, power)
+	monster.ai = HostileAIClass.new(monster)
+	map.add_entity(monster)
 
 
 static func _carve_room(map, room: RectRoom, is_lit: bool = false) -> void:
