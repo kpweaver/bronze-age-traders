@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dukgohdly721b"
-path="res://.godot/imported/Alloy_curses_12x12.png-123c304463387eee42e7a96f68e51df0.ctex"
+uid="uid://cu02eri4wybti"
+path="res://.godot/imported/CGA8x8thick_mask_centered.png-20b1862db90d17050757f025db801cdb.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/tilesets/Alloy_curses_12x12.png"
-dest_files=["res://.godot/imported/Alloy_curses_12x12.png-123c304463387eee42e7a96f68e51df0.ctex"]
+source_file="res://assets/tilesets/CGA8x8thick_mask_centered.png"
+dest_files=["res://.godot/imported/CGA8x8thick_mask_centered.png-20b1862db90d17050757f025db801cdb.ctex"]
 
 [params]
 
