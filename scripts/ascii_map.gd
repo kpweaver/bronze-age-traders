@@ -10,6 +10,7 @@ const NpcClass     = preload("res://scripts/entities/npc.gd")
 const GameWorldClass = preload("res://scripts/game_world.gd")
 const ModulateTileMapLayerClass = preload("res://scripts/render/modulate_tile_map_layer.gd")
 const DevProfilerClass = preload("res://scripts/dev_profiler.gd")
+const ProcgenClass = preload("res://scripts/map/procgen.gd")
 
 # ---------------------------------------------------------------------------
 # Display constants  (viewport: 1080Ã—720, cell: 9Ã—14 â†’ 120Ã—51 tiles)
@@ -274,6 +275,7 @@ var _hud_dirty: bool = true
 var _profile_chunk_movement: bool = false
 var _profile_live_walk: bool = false
 var _profile_manual_pacing: bool = false
+var _profile_village_generation: bool = false
 var _chunk_bg_cache: Dictionary = {}
 var _chunk_fg_cache: Dictionary = {}
 var _chunk_terrain_reset_required: bool = true
@@ -283,6 +285,7 @@ var _terrain_dim_cache: Array = []
 var _terrain_fill_lit_cache: Array = []
 var _terrain_fill_dim_cache: Array = []
 var _glyph_coord_cache: Dictionary = {}
+var _terrain_cache_map = null
 var _last_profile_key_usec: int = -1
 var _last_profile_move_key_usec: int = -1
 var _held_move_keycode: int = KEY_NONE
@@ -318,7 +321,8 @@ func _ready() -> void:
 	_profile_chunk_movement = OS.get_cmdline_user_args().has("profile_chunk_movement")
 	_profile_live_walk = OS.get_cmdline_user_args().has("profile_live_walk")
 	_profile_manual_pacing = OS.get_cmdline_user_args().has("profile_manual_pacing")
-	if _profile_chunk_movement or _profile_live_walk or _profile_manual_pacing:
+	_profile_village_generation = OS.get_cmdline_user_args().has("profile_village_generation")
+	if _profile_chunk_movement or _profile_live_walk or _profile_manual_pacing or _profile_village_generation:
 		DevProfilerClass.enabled = true
 		DevProfilerClass.reset()
 		_last_profile_key_usec = -1
@@ -348,7 +352,7 @@ func _ready() -> void:
 		_world.load_from_save()
 		GameState.load_save = false
 	else:
-		_world.new_game()
+		_world.new_game(1337 if _profile_village_generation else -1)
 	# map_changed fires during new_game/load, but compute tint explicitly here
 	# in case _ready runs before the signal handler is wired (belt-and-suspenders).
 	_day_tint = _compute_day_tint()
@@ -357,6 +361,8 @@ func _ready() -> void:
 		call_deferred("_run_chunk_movement_profile")
 	elif _profile_live_walk:
 		call_deferred("_run_live_walk_profile")
+	elif _profile_village_generation:
+		call_deferred("_run_village_generation_profile")
 
 
 func _exit_tree() -> void:
@@ -450,6 +456,25 @@ func _run_live_walk_profile() -> void:
 	await _quit_after_profile()
 
 
+func _run_village_generation_profile() -> void:
+	await get_tree().process_frame
+	await get_tree().process_frame
+	DevProfilerClass.reset()
+	var reports: Array = _world.profile_village_chunks(5)
+	if reports.is_empty():
+		push_warning("Village profiler could not find any villages to inspect.")
+		return
+	print("=== Village Generation Profile ===")
+	for report in reports:
+		print(ProcgenClass.format_village_report(report))
+	print(DevProfilerClass.report())
+	var entered: Dictionary = _world.enter_profile_village(0)
+	var entered_report: Dictionary = entered.get("report", {})
+	if not entered_report.is_empty():
+		print("--- Entered Village ---")
+		print(ProcgenClass.format_village_report(entered_report))
+
+
 func _quit_after_profile() -> void:
 	DevProfilerClass.enabled = false
 	if _world != null:
@@ -539,16 +564,16 @@ func _is_repeatable_move_key(keycode: int) -> bool:
 			return false
 
 
-func _repeatable_move_dir_for_keycode(keycode: int) -> Vector2i:
+func _repeatable_move_dir_for_keycode(keycode: int, shift_pressed: bool = false) -> Vector2i:
 	match keycode:
 		KEY_KP_8, KEY_UP:
-			return Vector2i(0, -1)
+			return Vector2i(-1, -1) if shift_pressed else Vector2i(0, -1)
 		KEY_KP_2, KEY_DOWN:
-			return Vector2i(0, 1)
+			return Vector2i(1, 1) if shift_pressed else Vector2i(0, 1)
 		KEY_KP_4, KEY_LEFT:
-			return Vector2i(-1, 0)
+			return Vector2i(-1, 1) if shift_pressed else Vector2i(-1, 0)
 		KEY_KP_6, KEY_RIGHT:
-			return Vector2i(1, 0)
+			return Vector2i(1, -1) if shift_pressed else Vector2i(1, 0)
 		KEY_KP_7:
 			return Vector2i(-1, -1)
 		KEY_KP_9:
@@ -599,7 +624,7 @@ func _tick_held_move_repeat(delta: float) -> void:
 			_world.do_player_turn(_held_move_dir, true)
 			_handle_post_player_action()
 		else:
-			if _maybe_prompt_wildlife_attack(_held_move_dir, false):
+			if _maybe_prompt_neutral_attack(_held_move_dir, false):
 				_stop_held_move_repeat()
 				return
 			_world.do_player_turn(_held_move_dir, false)
@@ -637,12 +662,24 @@ func _reset_chunk_terrain_cache() -> void:
 	_chunk_fg_cache.clear()
 
 
+func _tileset_safe_terrain_glyph(tile: int, glyph_override: String) -> String:
+	# The custom tileset does not reliably provide architectural box-drawing art
+	# in the CP437 slots we use for BIOS/ASCII mode. In tileset mode, coerce
+	# village walls to a safe wall glyph so visuals stay in sync with the tile id.
+	if tile == GameMapClass.TILE_WALL:
+		return "#"
+	if glyph_override in ["═", "║", "╔", "╗", "╚", "╝"]:
+		return "#"
+	return glyph_override
+
+
 func _rebuild_terrain_render_cache() -> void:
 	_terrain_atlas_cache.clear()
 	_terrain_lit_cache.clear()
 	_terrain_dim_cache.clear()
 	_terrain_fill_lit_cache.clear()
 	_terrain_fill_dim_cache.clear()
+	_terrain_cache_map = _map
 	if _world == null or _map == null:
 		return
 	for y in range(_map.height):
@@ -654,11 +691,13 @@ func _rebuild_terrain_render_cache() -> void:
 		for x in range(_map.width):
 			var tile: int = _map.tiles[y][x]
 			var glyph: String = _map.glyph_overrides[y][x]
+			if _tileset_active():
+				glyph = _tileset_safe_terrain_glyph(tile, glyph)
 			var lit_color: Color
 			if glyph == "":
 				match tile:
 					GameMapClass.TILE_WALL:
-						glyph = "#" if _map.map_type == GameMapClass.MAP_DUNGEON else "^"
+						glyph = "#"
 						lit_color = C_WALL_LIT
 					GameMapClass.TILE_FLOOR:
 						glyph = "."
@@ -756,11 +795,20 @@ func _load_ascii_atlas() -> Texture2D:
 	return load(ASCII_ATLAS_PATH) as Texture2D
 
 
+func _glyph_texture() -> Texture2D:
+	# The BIOS atlas is guaranteed to be CP437-aligned; prefer it for glyph
+	# rendering even in tileset mode so terrain/entity glyphs stay semantically
+	# correct. The custom CGA sheet can still inform palette/tint choices.
+	if _ascii_atlas != null:
+		return _ascii_atlas
+	return _tileset
+
+
 func _build_tilemap_tilesets() -> void:
 	_glyph_tileset = TileSet.new()
 	_glyph_tileset.tile_size = Vector2i(TILESET_TILE_W, TILESET_TILE_H)
 	var glyph_source := TileSetAtlasSource.new()
-	glyph_source.texture = _tileset if _tileset != null else _ascii_atlas
+	glyph_source.texture = _glyph_texture()
 	glyph_source.texture_region_size = Vector2i(TILESET_TILE_W, TILESET_TILE_H)
 	for row in range(TILESET_ROWS):
 		for col in range(TILESET_COLS):
@@ -2055,7 +2103,7 @@ func _refresh_menu_ui() -> void:
 			_menu_footer_label.text = "Enter: confirm    Esc: cancel"
 		Screen.HELP:
 			_menu_title_label.text = "-=[ KEYBINDS ]=-"
-			_set_rich_text_plain(_menu_body_text, "MOVEMENT\narrows / numpad  move\nnumpad 7/9/1/3   diagonal move\nnumpad 5 / .     wait one turn\nmouse wheel       zoom chunk view\n\nACTIONS\nm  mount / dismount\ng  pick up items\ns  skin/butcher carcass\nt  trade (near merchant)\nf  fire ranged weapon\nShift+dir  force attack\n>  descend / enter\n<  ascend / world map\n\nMENUS\ni  inventory\nc  character sheet\nl  look mode\n?  this help screen\nEsc  pause menu\n\nINVENTORY\n[a-z] use / equip item\n[w/r/b/f/h/u] unequip slot\n\nTRADE\n[a-z] buy item\n[Tab + A-Z] sell item\n\nWORLD MAP\narrows  travel between chunks\nl  toggle look cursor\n>  enter chunk view")
+			_set_rich_text_plain(_menu_body_text, "MOVEMENT\narrows / numpad  move\nShift+arrows     diagonal move\nnumpad 7/9/1/3   diagonal move\nnumpad 5 / .     wait one turn\nmouse wheel       zoom chunk view\n\nACTIONS\nm  mount / dismount\ng  pick up items\ns  skin/butcher carcass\nt  trade (near merchant)\nf  fire ranged weapon\nAlt+dir          force attack\nAlt+Shift+dir    diagonal force attack\n>  descend / enter\n<  ascend / world map\n\nMENUS\ni  inventory\nc  character sheet\nl  look mode\n?  this help screen\nEsc  pause menu\n\nINVENTORY\n[a-z] use / equip item\n[w/r/b/f/h/u] unequip slot\n\nTRADE\n[a-z] buy item\n[Tab + A-Z] sell item\n\nWORLD MAP\narrows  travel between chunks\nl  toggle look cursor\n>  enter chunk view")
 			_menu_button_box.visible = true
 			_menu_button_box.add_child(_make_menu_button("Close", func():
 				_screen = Screen.NONE
@@ -2289,7 +2337,7 @@ func _wildlife_at_bump(dir: Vector2i):
 	return null
 
 
-func _maybe_prompt_wildlife_attack(dir: Vector2i, force_attack: bool) -> bool:
+func _maybe_prompt_neutral_attack(dir: Vector2i, force_attack: bool) -> bool:
 	if force_attack or _screen != Screen.NONE:
 		return false
 	var npc = _wildlife_at_bump(dir)
@@ -2299,16 +2347,23 @@ func _maybe_prompt_wildlife_attack(dir: Vector2i, force_attack: bool) -> bool:
 	_disambiguate(
 		"Attack %s?" % str((npc as NpcClass).name),
 		[
-			{"key": KEY_A, "label": "Attack", "callback": Callable(self, "_confirm_wildlife_attack").bind(dir)},
-			{"key": KEY_L, "label": "Leave it be", "callback": Callable(self, "_close_disambig_overlay")},
+			{"key": KEY_A, "label": "Attack", "callback": Callable(self, "_confirm_neutral_attack").bind(dir)},
+			{"key": KEY_L, "label": "Leave it be", "callback": Callable(self, "_confirm_neutral_bump").bind(dir)},
 		]
 	)
 	return true
 
 
-func _confirm_wildlife_attack(dir: Vector2i) -> void:
+func _confirm_neutral_attack(dir: Vector2i) -> void:
 	_close_disambig_overlay()
 	_world.do_player_turn(dir, true)
+	_handle_post_player_action()
+	queue_redraw()
+
+
+func _confirm_neutral_bump(dir: Vector2i) -> void:
+	_close_disambig_overlay()
+	_world.do_player_turn(dir, false)
 	_handle_post_player_action()
 	queue_redraw()
 
@@ -2876,13 +2931,13 @@ func _unhandled_input(event: InputEvent) -> void:
 			_world.auto_pickup()
 			_world.resolve_action()
 		return
-	dir = _repeatable_move_dir_for_keycode(event.physical_keycode)
+	dir = _repeatable_move_dir_for_keycode(event.physical_keycode, event.shift_pressed)
 	if dir == Vector2i(99, 99):
 		return
 
 	get_viewport().set_input_as_handled()
-	var force_attack: bool = event.shift_pressed and dir != Vector2i.ZERO
-	if _maybe_prompt_wildlife_attack(dir, force_attack):
+	var force_attack: bool = event.alt_pressed and dir != Vector2i.ZERO
+	if _maybe_prompt_neutral_attack(dir, force_attack):
 		_stop_held_move_repeat()
 		return
 	_world.do_player_turn(dir, force_attack)
@@ -3016,7 +3071,7 @@ func _handle_map_mouse_click(mouse_pos: Vector2) -> void:
 	if maxi(absi(delta.x), absi(delta.y)) <= 1 and delta != Vector2i.ZERO:
 		get_viewport().set_input_as_handled()
 		var step := Vector2i(clampi(delta.x, -1, 1), clampi(delta.y, -1, 1))
-		if _maybe_prompt_wildlife_attack(step, false):
+		if _maybe_prompt_neutral_attack(step, false):
 			return
 		_world.do_player_turn(step, false)
 		_handle_post_player_action()
@@ -3427,17 +3482,28 @@ func _look_description() -> String:
 	var tile_type: int = _map.tiles[y][x]
 	var tile: String
 	match tile_type:
-		GameMapClass.TILE_WALL:  tile = "stone wall"
-		GameMapClass.TILE_FLOOR: tile = "stone floor"
-		GameMapClass.TILE_SAND:  tile = "open desert"
-		GameMapClass.TILE_DUNE:  tile = "sandy dune"
-		GameMapClass.TILE_ROCK:  tile = "rocky outcropping"
-		GameMapClass.TILE_WATER: tile = "shimmering water"
-		GameMapClass.TILE_GRASS: tile = "lush grassland"
-		GameMapClass.TILE_ROAD:       tile = "packed-dirt trade road"
-		GameMapClass.TILE_CAVE_WALL:  tile = "rough cave wall"
-		GameMapClass.TILE_CAVE_FLOOR: tile = "cave floor"
-		_:                            tile = "unknown terrain"
+		GameMapClass.TILE_WALL:
+			tile = "stone wall"
+		GameMapClass.TILE_FLOOR:
+			tile = "stone floor"
+		GameMapClass.TILE_SAND:
+			tile = "open desert"
+		GameMapClass.TILE_DUNE:
+			tile = "sandy dune"
+		GameMapClass.TILE_ROCK:
+			tile = "rocky outcropping"
+		GameMapClass.TILE_WATER:
+			tile = "shimmering water"
+		GameMapClass.TILE_GRASS:
+			tile = "lush grassland"
+		GameMapClass.TILE_ROAD:
+			tile = "packed-dirt trade road"
+		GameMapClass.TILE_CAVE_WALL:
+			tile = "rough cave wall"
+		GameMapClass.TILE_CAVE_FLOOR:
+			tile = "cave floor"
+		_:
+			tile = "unknown terrain"
 
 	if not _map.visible[y][x]:
 		return "You remember: %s." % tile
@@ -3758,7 +3824,10 @@ func _sync_chunk_tilemaps(sync_tiles: bool = true, sync_entities: bool = true, s
 			if _map.is_in_bounds(map_pos.x, map_pos.y):
 				hidden_fg_cells[map_pos] = true
 	if sync_tiles:
-		if _terrain_atlas_cache.size() != _map.height:
+		if _terrain_cache_map != _map:
+			_rebuild_terrain_render_cache()
+			_reset_chunk_terrain_cache()
+		elif _terrain_atlas_cache.size() != _map.height:
 			_rebuild_terrain_render_cache()
 		var tiles_started_at: int = DevProfilerClass.start("ascii_map._sync_chunk_tilemaps.tiles")
 		var tile_cells_changed: bool = false
@@ -4798,6 +4867,9 @@ func _cp437_index_for_glyph(ch: String) -> int:
 
 
 func _put_map_tile(x: int, y: int, ch: String, color: Color) -> void:
+	var glyph_texture: Texture2D = _glyph_texture()
+	if glyph_texture == null:
+		return
 	var dest_rect := Rect2(
 		float(x) * _map_cell_w(),
 		float(y) * _map_cell_h(),
@@ -4805,7 +4877,7 @@ func _put_map_tile(x: int, y: int, ch: String, color: Color) -> void:
 		_map_cell_h()
 	)
 	var src_rect := _glyph_region(ch)
-	draw_texture_rect_region(_tileset, dest_rect, src_rect, color, false, true)
+	draw_texture_rect_region(glyph_texture, dest_rect, src_rect, color, false, true)
 
 
 func _entity_glyph(entity) -> String:

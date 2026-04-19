@@ -179,7 +179,7 @@ func _break_ai_refs_in_map(target_map) -> void:
 # Initialisation
 # ===========================================================================
 
-func new_game() -> void:
+func new_game(seed_override: int = -1) -> void:
 	depth      = 0
 	chunk      = Vector2i.ZERO
 	floors.clear()
@@ -197,7 +197,7 @@ func new_game() -> void:
 	debug_return_pos = Vector2i.ZERO
 	messages.clear()
 
-	GameState.world_seed   = randi()
+	GameState.world_seed   = seed_override if seed_override >= 0 else randi()
 	GameState.world_biomes = ProcgenClass.generate_world_biomes(
 			GameState.WORLD_W, GameState.WORLD_H, GameState.world_seed)
 	GameState.villages     = ProcgenClass.generate_villages(
@@ -1372,6 +1372,54 @@ func get_village_at_chunk(cx: int, cy: int) -> Variant:
 		if int(v.cx) == cx and int(v.cy) == cy:
 			return v
 	return null
+
+
+func profile_village_chunks(sample_limit: int = 5) -> Array:
+	var reports: Array = []
+	var limit: int = mini(sample_limit, GameState.villages.size())
+	for i in range(limit):
+		var village = GameState.villages[i]
+		var village_chunk := Vector2i(int(village.cx), int(village.cy))
+		var target_map = _get_or_create_overworld_chunk(village_chunk)
+		var report: Dictionary = target_map.get_meta("village_report", {})
+		if report.is_empty():
+			continue
+		var enriched: Dictionary = report.duplicate(true)
+		enriched["chunk"] = village_chunk
+		enriched["village_name"] = str(village.name)
+		enriched["biome"] = get_chunk_biome(village_chunk)
+		reports.append(enriched)
+	return reports
+
+
+func enter_profile_village(village_idx: int = 0) -> Dictionary:
+	if GameState.villages.is_empty():
+		return {}
+	var idx: int = clampi(village_idx, 0, GameState.villages.size() - 1)
+	var village = GameState.villages[idx]
+	var village_chunk := Vector2i(int(village.cx), int(village.cy))
+	var current_mount = get_player_mount()
+	if map != null:
+		map.remove_entity(player)
+		if current_mount != null:
+			map.remove_entity(current_mount)
+		chunks[chunk] = map
+	chunk = village_chunk
+	map = _get_or_create_overworld_chunk(chunk)
+	player.pos = _nearest_walkable_overworld_pos(map, Vector2i(OVERWORLD_W >> 1, OVERWORLD_H >> 1))
+	map.add_entity(player)
+	if current_mount != null:
+		current_mount.pos = player.pos
+		map.add_entity(current_mount)
+	_recompute_fov()
+	messages.clear()
+	add_msg("Village profiling: %s." % str(village.name))
+	map_changed.emit()
+	var report: Dictionary = map.get_meta("village_report", {}).duplicate(true)
+	report["chunk"] = village_chunk
+	report["village_name"] = str(village.name)
+	report["biome"] = get_chunk_biome(village_chunk)
+	return {"village": village, "report": report}
 
 
 func get_road_dirs(c: Vector2i) -> Array:

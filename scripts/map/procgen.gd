@@ -17,6 +17,7 @@ const NpcDataClass   = preload("res://content/npcs.gd")
 const HostileAIClass = preload("res://scripts/components/hostile_ai.gd")
 const WanderAIClass  = preload("res://scripts/components/wander_ai.gd")
 const DocileAIClass  = preload("res://scripts/components/docile_ai.gd")
+const DevProfilerClass = preload("res://scripts/dev_profiler.gd")
 
 
 class RectRoom:
@@ -558,6 +559,7 @@ static func generate_world_biomes(world_w: int, world_h: int, world_seed: int) -
 
 
 static func generate_overworld(map, world_x: int, world_y: int, world_seed: int, biome: int = 0, safe_center: bool = false, road_dirs: Array = [], is_village: bool = false) -> void:
+	var started_at: int = DevProfilerClass.start("procgen.generate_overworld")
 	# GDC-inspired layered generation (Grinblat, GDC 2019):
 	# Pass 1 — broad terrain via low-frequency noise (biome skeleton).
 	# Pass 2 — detail via higher-frequency noise (local dune ripple).
@@ -664,12 +666,18 @@ static func generate_overworld(map, world_x: int, world_y: int, world_seed: int,
 
 	# Village structures placed after roads; they preserve existing TILE_ROAD tiles.
 	if is_village:
-		_place_village(map, world_seed, world_x, world_y)
+		var village_started_at: int = DevProfilerClass.start("procgen._place_village")
+		var village_report: Dictionary = _place_village(map, world_seed, world_x, world_y)
+		DevProfilerClass.stop("procgen._place_village", village_started_at)
+		map.set_meta("village_report", village_report)
 		_place_village_lights(map, rng_lights)
+	else:
+		map.set_meta("village_report", {})
 
 	# Wildlife skip village chunks — animals keep away from settled areas.
 	if not is_village:
 		_spawn_wildlife(map, biome, world_seed, world_x, world_y, safe_center)
+	DevProfilerClass.stop("procgen.generate_overworld", started_at)
 
 
 static func generate_debug_hub(map) -> void:
@@ -1017,7 +1025,7 @@ const _VILLAGE_TEMPLATES := {
 }
 
 
-static func _place_village(map, world_seed: int, world_x: int, world_y: int) -> void:
+static func _place_village(map, world_seed: int, world_x: int, world_y: int) -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = world_seed ^ (world_x * 73856093) ^ (world_y * 19349663)
 	var home_chunk := Vector2i(world_x / map.width, world_y / map.height)
@@ -1044,8 +1052,14 @@ static func _place_village(map, world_seed: int, world_x: int, world_y: int) -> 
 	var placed_rects: Array      = []   # [{bx, by, bw, bh}]
 	var all_interior_tiles: Array = []
 	var building_specs: Array = []
+	var building_type_counts: Dictionary = {"admin": 0, "commercial": 0, "home": 0}
+	var building_template_counts: Dictionary = {}
+	var attempts_used: int = 0
+	var reject_counts: Dictionary = {"bounds": 0, "road": 0, "overlap": 0}
+	var fallback_attempts_used: int = 0
 
 	for _attempt in range(target_buildings * 20):
+		attempts_used += 1
 		if placed_rects.size() >= target_buildings:
 			break
 
@@ -1065,86 +1079,56 @@ static func _place_village(map, world_seed: int, world_x: int, world_y: int) -> 
 			_BT_COMMERCIAL:
 				ring_r = 14.0
 			_:  # HOME
-				ring_r = 13.0
+				ring_r = 16.0
 
 		var dist: float = ring_r + rng.randf_range(-2.0, 4.0)
 		var bx: int  = cx + int(cos(angle) * dist) - (bw >> 1)
 		var by_: int = cy + int(sin(angle) * dist) - (bh >> 1)
-
-		# Reject if footprint goes outside map bounds.
-		if bx < 1 or by_ < 1 or bx + bw > map.width - 1 or by_ + bh > map.height - 1:
+		if not _try_place_village_building(map, rng, btype, template, bx, by_,
+				placed_rects, all_interior_tiles, building_specs,
+				building_type_counts, building_template_counts, reject_counts):
 			continue
 
-		# Reject if too many road tiles in the footprint (road bisects building).
-		var road_count: int = 0
-		for dy in range(bh):
-			for dx in range(bw):
-				if map.tiles[by_ + dy][bx + dx] == GameMapClass.TILE_ROAD:
-					road_count += 1
-		if road_count * 100 > bw * bh * 20:
-			continue
-
-		# Reject if footprint overlaps any already-placed building (1-tile padding).
-		var overlaps: bool = false
-		for r: Dictionary in placed_rects:
-			if bx   <= int(r.bx) + int(r.bw) and bx + bw >= int(r.bx) \
-			and by_ <= int(r.by) + int(r.bh) and by_ + bh >= int(r.by):
-				overlaps = true
+	# Fallback pass: when the ring layout gets crowded, let later buildings spill
+	# into a wider outer band instead of leaving the village half empty.
+	while placed_rects.size() < target_buildings:
+		var bidx: int = placed_rects.size()
+		var btype: int = btype_seq[bidx] if bidx < btype_seq.size() else _BT_HOME
+		var placed_in_fallback: bool = false
+		for _fallback_attempt in range(80):
+			fallback_attempts_used += 1
+			var template: Dictionary = _pick_village_template(rng, btype)
+			var bw: int = int(template.get("w", 9))
+			var bh: int = int(template.get("h", 7))
+			var angle: float = rng.randf() * TAU
+			var min_r: float
+			var max_r: float
+			match btype:
+				_BT_ADMIN:
+					min_r = 16.0
+					max_r = 21.0
+				_BT_COMMERCIAL:
+					min_r = 15.0
+					max_r = 23.0
+				_:
+					min_r = 17.0
+					max_r = 24.0
+			var dist: float = rng.randf_range(min_r, max_r)
+			var bx: int = cx + int(cos(angle) * dist) - (bw >> 1)
+			var by_: int = cy + int(sin(angle) * dist) - (bh >> 1)
+			if _try_place_village_building(map, rng, btype, template, bx, by_,
+					placed_rects, all_interior_tiles, building_specs,
+					building_type_counts, building_template_counts, reject_counts):
+				placed_in_fallback = true
 				break
-		if overlaps:
-			continue
-
-		# Stamp the building — walls on perimeter, floor inside.
-		var interior_tiles: Array = []
-		for dy in range(bh):
-			for dx in range(bw):
-				var px: int = bx + dx
-				var py: int = by_ + dy
-				var on_wall: bool = (dx == 0 or dx == bw - 1 or dy == 0 or dy == bh - 1)
-				if on_wall:
-					map.tiles[py][px] = GameMapClass.TILE_WALL
-				else:
-					map.tiles[py][px] = GameMapClass.TILE_FLOOR
-					interior_tiles.append(Vector2i(px, py))
-
-		# Doorway on the wall facing the plaza.
-		var face: float = angle + PI
-		var door_x: int
-		var door_y: int
-		if absf(cos(face)) >= absf(sin(face)):
-			door_x = bx if cos(face) < 0.0 else bx + bw - 1
-			door_y = by_ + (bh >> 1)
-		else:
-			door_x = bx + (bw >> 1)
-			door_y = by_ if sin(face) < 0.0 else by_ + bh - 1
-		if map.is_in_bounds(door_x, door_y):
-			map.tiles[door_y][door_x] = GameMapClass.TILE_SAND
-			# Do NOT mark the door tile permanent_light — the flood must only start
-			# from interior tiles the player can directly see through the opening,
-			# not from the door tile being visible at a sideways angle.
-			_place_door_torches(map, door_x, door_y, bx, by_, bw, bh)
-
-		# Furnish the building based on its type.
-		match btype:
-			_BT_ADMIN:      _furnish_admin(map, rng, bx, by_, bw, bh)
-			_BT_COMMERCIAL: _furnish_commercial(map, rng, bx, by_, bw, bh)
-			_:              _furnish_home(map, rng, bx, by_, bw, bh)
-
-		placed_rects.append({bx = bx, by = by_, bw = bw + 1, bh = bh + 1})
-		building_specs.append({
-			"bx": bx,
-			"by": by_,
-			"bw": bw,
-			"bh": bh,
-			"door_x": door_x,
-			"door_y": door_y,
-			"id": str(template.get("id", "building")),
-		})
-		all_interior_tiles.append_array(interior_tiles)
+		if not placed_in_fallback:
+			break
 
 	_apply_village_wall_glyphs(map, building_specs)
 
 	# Spawn 2–4 NPCs at unoccupied interior floor positions.
+	var npc_type_counts: Dictionary = {}
+	var npc_spawned_count: int = 0
 	if all_interior_tiles.size() > 0:
 		var npc_pool: Array   = NpcDataClass.weighted_types()
 		var npc_count: int    = rng.randi_range(2, 4)
@@ -1174,12 +1158,218 @@ static func _place_village(map, world_seed: int, world_x: int, world_y: int) -> 
 			if not npc.is_merchant:
 				npc.ai = DocileAIClass.new(npc, 0.35, true)
 			map.add_entity(npc)
+			npc_type_counts[npc_type] = int(npc_type_counts.get(npc_type, 0)) + 1
 			spawned_npc += 1
+			npc_spawned_count += 1
+	return {
+		"chunk": home_chunk,
+		"target_buildings": target_buildings,
+		"attempts_used": attempts_used,
+		"fallback_attempts_used": fallback_attempts_used,
+		"placed_buildings": building_specs.size(),
+		"reject_counts": reject_counts,
+		"target_admin": 1,
+		"target_commercial": n_commercial,
+		"target_homes": n_homes,
+		"building_type_counts": building_type_counts,
+		"building_template_counts": building_template_counts,
+		"buildings": building_specs.duplicate(true),
+		"interior_tile_count": all_interior_tiles.size(),
+		"npc_count": npc_spawned_count,
+		"npc_type_counts": npc_type_counts,
+	}
 
 
 static func _pick_village_template(rng: RandomNumberGenerator, btype: int) -> Dictionary:
 	var variants: Array = _VILLAGE_TEMPLATES.get(btype, _VILLAGE_TEMPLATES[_BT_HOME])
 	return variants[rng.randi_range(0, variants.size() - 1)]
+
+
+static func _try_place_village_building(map, rng: RandomNumberGenerator, btype: int, template: Dictionary,
+		bx: int, by_: int, placed_rects: Array, all_interior_tiles: Array, building_specs: Array,
+		building_type_counts: Dictionary, building_template_counts: Dictionary, reject_counts: Dictionary) -> bool:
+	var bw: int = int(template.get("w", 9))
+	var bh: int = int(template.get("h", 7))
+	if bx < 1 or by_ < 1 or bx + bw > map.width - 1 or by_ + bh > map.height - 1:
+		reject_counts["bounds"] = int(reject_counts.get("bounds", 0)) + 1
+		return false
+
+	var road_count: int = 0
+	for dy in range(bh):
+		for dx in range(bw):
+			if map.tiles[by_ + dy][bx + dx] == GameMapClass.TILE_ROAD:
+				road_count += 1
+	var road_limit_pct: int = 30 if btype == _BT_HOME else (24 if btype == _BT_COMMERCIAL else 20)
+	if road_count * 100 > bw * bh * road_limit_pct:
+		reject_counts["road"] = int(reject_counts.get("road", 0)) + 1
+		return false
+
+	for r: Dictionary in placed_rects:
+		if bx <= int(r.bx) + int(r.bw) and bx + bw >= int(r.bx) \
+		and by_ <= int(r.by) + int(r.bh) and by_ + bh >= int(r.by):
+			reject_counts["overlap"] = int(reject_counts.get("overlap", 0)) + 1
+			return false
+
+	var interior_tiles: Array = []
+	for dy in range(bh):
+		for dx in range(bw):
+			var px: int = bx + dx
+			var py: int = by_ + dy
+			var on_wall: bool = (dx == 0 or dx == bw - 1 or dy == 0 or dy == bh - 1)
+			if on_wall:
+				map.tiles[py][px] = GameMapClass.TILE_WALL
+			else:
+				map.tiles[py][px] = GameMapClass.TILE_FLOOR
+				interior_tiles.append(Vector2i(px, py))
+
+	var village_center: Vector2 = Vector2(float(map.width >> 1), float(map.height >> 1))
+	var building_center: Vector2 = Vector2(float(bx + (bw >> 1)), float(by_ + (bh >> 1)))
+	var toward_center: Vector2 = village_center - building_center
+	var door_x: int
+	var door_y: int
+	if absf(toward_center.x) >= absf(toward_center.y):
+		door_x = bx if toward_center.x < 0.0 else bx + bw - 1
+		door_y = by_ + (bh >> 1)
+	else:
+		door_x = bx + (bw >> 1)
+		door_y = by_ if toward_center.y < 0.0 else by_ + bh - 1
+	if map.is_in_bounds(door_x, door_y):
+		map.tiles[door_y][door_x] = GameMapClass.TILE_SAND
+		_carve_village_apron(map, bx, by_, bw, bh)
+		_carve_village_path_to_plaza(map, Vector2i(door_x, door_y), Vector2i(map.width >> 1, map.height >> 1))
+		_place_door_torches(map, door_x, door_y, bx, by_, bw, bh)
+
+	match btype:
+		_BT_ADMIN:
+			_furnish_admin(map, rng, bx, by_, bw, bh)
+		_BT_COMMERCIAL:
+			_furnish_commercial(map, rng, bx, by_, bw, bh)
+		_:
+			_furnish_home(map, rng, bx, by_, bw, bh)
+
+	placed_rects.append({bx = bx, by = by_, bw = bw + 1, bh = bh + 1})
+	building_specs.append({
+		"bx": bx,
+		"by": by_,
+		"bw": bw,
+		"bh": bh,
+		"door_x": door_x,
+		"door_y": door_y,
+		"type": _village_building_type_label(btype),
+		"id": str(template.get("id", "building")),
+	})
+	var type_label: String = _village_building_type_label(btype)
+	building_type_counts[type_label] = int(building_type_counts.get(type_label, 0)) + 1
+	var template_id: String = str(template.get("id", "building"))
+	building_template_counts[template_id] = int(building_template_counts.get(template_id, 0)) + 1
+	all_interior_tiles.append_array(interior_tiles)
+	return true
+
+
+static func _village_building_type_label(btype: int) -> String:
+	match btype:
+		_BT_ADMIN:
+			return "admin"
+		_BT_COMMERCIAL:
+			return "commercial"
+		_:
+			return "home"
+
+
+static func _carve_village_apron(map, bx: int, by_: int, bw: int, bh: int) -> void:
+	for py in range(maxi(0, by_ - 1), mini(map.height, by_ + bh + 1)):
+		for px in range(maxi(0, bx - 1), mini(map.width, bx + bw + 1)):
+			var tile: int = map.tiles[py][px]
+			if tile == GameMapClass.TILE_WALL or tile == GameMapClass.TILE_FLOOR or tile == GameMapClass.TILE_ROAD:
+				continue
+			map.tiles[py][px] = GameMapClass.TILE_SAND
+
+
+static func _carve_village_path_to_plaza(map, from: Vector2i, to: Vector2i) -> void:
+	var x0: int = from.x
+	var y0: int = from.y
+	var x1: int = to.x
+	var y1: int = to.y
+	var dx: int = absi(x1 - x0)
+	var dy: int = absi(y1 - y0)
+	var sx: int = 1 if x0 < x1 else -1
+	var sy: int = 1 if y0 < y1 else -1
+	var err: int = dx - dy
+	while true:
+		for oy in range(-1, 2):
+			for ox in range(-1, 2):
+				var px: int = x0 + ox
+				var py: int = y0 + oy
+				if not map.is_in_bounds(px, py):
+					continue
+				var tile: int = map.tiles[py][px]
+				if tile == GameMapClass.TILE_WALL or tile == GameMapClass.TILE_FLOOR:
+					continue
+				map.tiles[py][px] = GameMapClass.TILE_SAND
+		if x0 == x1 and y0 == y1:
+			break
+		var e2: int = err * 2
+		if e2 > -dy:
+			err -= dy
+			x0 += sx
+		if e2 < dx:
+			err += dx
+			y0 += sy
+
+
+static func format_village_report(report: Dictionary) -> String:
+	if report.is_empty():
+		return "Village report unavailable."
+	var chunk: Vector2i = report.get("chunk", Vector2i(-1, -1))
+	var lines: Array[String] = []
+	lines.append("%s @ chunk (%d,%d) biome=%s" % [
+		str(report.get("village_name", "Village")),
+		chunk.x,
+		chunk.y,
+		str(report.get("biome", "?")),
+	])
+	lines.append(
+		"  buildings placed=%d target=%d attempts=%d" % [
+			int(report.get("placed_buildings", 0)),
+			int(report.get("target_buildings", 0)),
+			int(report.get("attempts_used", 0)) + int(report.get("fallback_attempts_used", 0)),
+		]
+	)
+	if int(report.get("fallback_attempts_used", 0)) > 0:
+		lines.append("  fallback attempts=%d" % int(report.get("fallback_attempts_used", 0)))
+	var reject_counts: Dictionary = report.get("reject_counts", {})
+	if not reject_counts.is_empty():
+		lines.append(
+			"  rejects bounds=%d road=%d overlap=%d" % [
+				int(reject_counts.get("bounds", 0)),
+				int(reject_counts.get("road", 0)),
+				int(reject_counts.get("overlap", 0)),
+			]
+		)
+	var type_counts: Dictionary = report.get("building_type_counts", {})
+	lines.append(
+		"  types admin=%d commercial=%d homes=%d" % [
+			int(type_counts.get("admin", 0)),
+			int(type_counts.get("commercial", 0)),
+			int(type_counts.get("home", 0)),
+		]
+	)
+	var template_counts: Dictionary = report.get("building_template_counts", {})
+	if not template_counts.is_empty():
+		var template_parts: Array[String] = []
+		for template_id in template_counts.keys():
+			template_parts.append("%s=%d" % [str(template_id), int(template_counts[template_id])])
+		template_parts.sort()
+		lines.append("  templates %s" % ", ".join(template_parts))
+	var npc_counts: Dictionary = report.get("npc_type_counts", {})
+	lines.append("  npcs total=%d" % int(report.get("npc_count", 0)))
+	if not npc_counts.is_empty():
+		var npc_parts: Array[String] = []
+		for npc_type in npc_counts.keys():
+			npc_parts.append("%s=%d" % [str(npc_type), int(npc_counts[npc_type])])
+		npc_parts.sort()
+		lines.append("  npc types %s" % ", ".join(npc_parts))
+	return "\n".join(lines)
 
 
 static func _apply_village_wall_glyphs(map, building_specs: Array) -> void:
