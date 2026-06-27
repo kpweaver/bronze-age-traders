@@ -16,7 +16,7 @@ const C_SELECTED := Color(0.80, 0.50, 0.20)
 const C_NORMAL   := Color(0.55, 0.42, 0.28)
 const C_DISABLED := Color(0.22, 0.17, 0.10)
 
-const OPTIONS := ["Continue", "New Game", "Quit"]
+const OPTIONS := ["Continue", "New Game", "Debug Testing", "Quit"]
 
 var _font: Font
 var _cursor: int = 0
@@ -75,11 +75,20 @@ func _confirm() -> void:
 		0:  # Continue
 			if _save_exists:
 				GameState.load_save = true
+				GameState.start_debug_testing = false
 				get_tree().change_scene_to_file("res://main.tscn")
 		1:  # New Game
 			SaveManagerClass.delete_save()
+			GameState.load_save = false
+			GameState.start_debug_testing = false
+			GameState.debug_tools_enabled = false
 			get_tree().change_scene_to_file("res://ui/char_create.tscn")
-		2:  # Quit
+		2:  # Debug Testing
+			GameState.load_save = false
+			GameState.start_debug_testing = true
+			GameState.debug_tools_enabled = true
+			get_tree().change_scene_to_file("res://main.tscn")
+		3:  # Quit
 			get_tree().quit()
 
 

@@ -9,6 +9,7 @@ signal map_changed()                  # emitted on any floor/chunk transition or
 signal attribute_points_changed(unspent_points: int)
 signal entity_attacked(attacker_pos: Vector2i, target_pos: Vector2i, glyph: String, color: Color)
 signal entity_fired(attacker_pos: Vector2i, target_pos: Vector2i, projectile_char: String, projectile_color: Color)
+signal tactical_combat_requested(attacker)
 
 # ---------------------------------------------------------------------------
 # Dependencies
@@ -422,7 +423,7 @@ func _player_attack_target(target: ActorClass) -> void:
 		map.refresh_entity(target)
 
 
-func _on_npc_attacked(npc: NpcClass) -> void:
+func _on_npc_attacked(npc: NpcClass, announce: bool = true) -> void:
 	if npc == null or not npc.is_alive:
 		return
 	if not npc.is_angered:
@@ -433,10 +434,12 @@ func _on_npc_attacked(npc: NpcClass) -> void:
 				dai._fleeing = true
 				dai._last_hp = npc.hp
 				npc.ai = dai
-				add_msg("The %s panics and tries to flee!" % npc.name)
+				if announce:
+					add_msg("The %s panics and tries to flee!" % npc.name)
 			_:
 				npc.ai = HostileAIClass.new(npc)
-				add_msg("The %s turns hostile!" % npc.name)
+				if announce:
+					add_msg("The %s turns hostile!" % npc.name)
 	elif npc.on_attacked == "retaliate" and not (npc.ai is HostileAIClass):
 		npc.ai = HostileAIClass.new(npc)
 
@@ -585,7 +588,9 @@ func do_enemy_turns() -> void:
 			var ddx: int = player.pos.x - e.pos.x
 			var ddy: int = player.pos.y - e.pos.y
 			if maxi(absi(ddx), absi(ddy)) <= 1:
-				entity_attacked.emit(e.pos, player.pos, str(e.char), e.color)
+				tactical_combat_requested.emit(e)
+				DevProfilerClass.stop("game_world.do_enemy_turns", started_at)
+				return
 		var msg: String = e.ai.take_turn(player, map)
 		if msg != "":
 			add_msg(msg)
@@ -1858,8 +1863,14 @@ func _attribute_label(stat_name: String) -> String:
 func _award_kill_xp(target: ActorClass) -> void:
 	if target == null or target == player:
 		return
-	var amount: int = XP_KILL_DANGEROUS if target.max_hp >= 12 or target.power >= 3 else XP_KILL_WEAK
+	var amount: int = preview_kill_xp(target)
 	award_xp(amount, "for defeating %s" % _xp_target_name(target))
+
+
+func preview_kill_xp(target: ActorClass) -> int:
+	if target == null or target == player:
+		return 0
+	return XP_KILL_DANGEROUS if target.max_hp >= 12 or target.power >= 3 else XP_KILL_WEAK
 
 
 func _xp_target_name(target: ActorClass) -> String:

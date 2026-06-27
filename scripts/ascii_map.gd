@@ -11,6 +11,7 @@ const GameWorldClass = preload("res://scripts/game_world.gd")
 const ModulateTileMapLayerClass = preload("res://scripts/render/modulate_tile_map_layer.gd")
 const DevProfilerClass = preload("res://scripts/dev_profiler.gd")
 const ProcgenClass = preload("res://scripts/map/procgen.gd")
+const CombatScenePacked = preload("res://ui/combat_scene.tscn")
 
 # ---------------------------------------------------------------------------
 # Display constants  (viewport: 1080Ã—720, cell: 9Ã—14 â†’ 120Ã—51 tiles)
@@ -230,6 +231,7 @@ var _chunk_terrain_root: Node2D
 var _chunk_screen_root: Node2D
 var _chunk_bg_layer
 var _chunk_fg_layer
+var _chunk_entity_bg_layer
 var _chunk_entity_layer
 var _chunk_overlay_bg_layer
 var _chunk_overlay_fg_layer
@@ -238,6 +240,7 @@ var _world_bg_layer
 var _world_fg_layer
 var _world_overlay_layer
 var _anim_layer: Node2D  # ephemeral bump/flash nodes live here; cleared each attack
+var _combat_scene = null
 var _ui_theme: Theme
 var _ui_layer
 var _inventory_ui_root: Control
@@ -348,11 +351,16 @@ func _ready() -> void:
 	_world.attribute_points_changed.connect(_on_attribute_points_changed)
 	_world.entity_attacked.connect(_on_entity_attacked)
 	_world.entity_fired.connect(_on_entity_fired)
+	_world.tactical_combat_requested.connect(_on_tactical_combat_requested)
 	if GameState.load_save:
 		_world.load_from_save()
 		GameState.load_save = false
 	else:
 		_world.new_game(1337 if _profile_village_generation else -1)
+	if GameState.start_debug_testing:
+		GameState.start_debug_testing = false
+		GameState.debug_tools_enabled = true
+		_world.enter_debug_hub()
 	# map_changed fires during new_game/load, but compute tint explicitly here
 	# in case _ready runs before the signal handler is wired (belt-and-suspenders).
 	_day_tint = _compute_day_tint()
@@ -374,6 +382,8 @@ func _process(delta: float) -> void:
 	if DevProfilerClass.enabled:
 		DevProfilerClass.sample("frame.process_delta", int(delta * 1000000.0))
 	if _world == null or _world.map == null:
+		return
+	if _combat_scene != null:
 		return
 	_tick_held_move_repeat(delta)
 	_sync_inventory_ui_visibility()
@@ -607,6 +617,9 @@ func _begin_held_move_repeat(keycode: int, dir: Vector2i, force_attack: bool) ->
 func _tick_held_move_repeat(delta: float) -> void:
 	if _held_move_keycode == KEY_NONE:
 		return
+	if _combat_scene != null:
+		_stop_held_move_repeat()
+		return
 	if _auto_move_mode != AutoMoveMode.NONE or _game_over or _screen != Screen.NONE:
 		_stop_held_move_repeat()
 		return
@@ -621,10 +634,16 @@ func _tick_held_move_repeat(delta: float) -> void:
 	while _held_move_repeat_accum >= repeat_sec:
 		_held_move_repeat_accum -= repeat_sec
 		if _held_move_force_attack and _held_move_dir != Vector2i.ZERO:
+			if _try_begin_tactical_combat(_held_move_dir, true):
+				_stop_held_move_repeat()
+				return
 			_world.do_player_turn(_held_move_dir, true)
 			_handle_post_player_action()
 		else:
 			if _maybe_prompt_neutral_attack(_held_move_dir, false):
+				_stop_held_move_repeat()
+				return
+			if _try_begin_tactical_combat(_held_move_dir, false):
 				_stop_held_move_repeat()
 				return
 			_world.do_player_turn(_held_move_dir, false)
@@ -703,15 +722,17 @@ func _rebuild_terrain_render_cache() -> void:
 						glyph = "."
 						lit_color = C_FLOOR_LIT
 					GameMapClass.TILE_SAND:
-						glyph = "."
-						lit_color = C_SAND_LIT
+						var sand_variant := _terrain_cell(tile, x, y)
+						glyph = sand_variant[0] if sand_variant[0] != "" else "."
+						lit_color = sand_variant[1] as Color
 					GameMapClass.TILE_DUNE:
 						var dune_variant := _terrain_cell(tile, x, y)
 						glyph = dune_variant[0] if dune_variant[0] != "" else "^"
 						lit_color = dune_variant[1] as Color
 					GameMapClass.TILE_ROCK:
-						glyph = "#"
-						lit_color = C_ROCK_LIT
+						var rock_variant := _terrain_cell(tile, x, y)
+						glyph = rock_variant[0] if rock_variant[0] != "" else "#"
+						lit_color = rock_variant[1] as Color
 					GameMapClass.TILE_WATER:
 						glyph = "~"
 						lit_color = C_WATER_LIT
@@ -736,9 +757,9 @@ func _rebuild_terrain_render_cache() -> void:
 
 			atlas_row.append(_glyph_atlas_coords(glyph))
 			lit_row.append(lit_color)
-			dim_row.append(_tile_dim_color(tile))
-			fill_lit_row.append(_terrain_fill_base_color(tile, true, lit_color))
-			fill_dim_row.append(_terrain_fill_base_color(tile, false, lit_color))
+			dim_row.append(_terrain_dim_glyph_color(tile, lit_color))
+			fill_lit_row.append(_terrain_fill_color(tile, x, y, true, lit_color))
+			fill_dim_row.append(_terrain_fill_color(tile, x, y, false, lit_color))
 		_terrain_atlas_cache.append(atlas_row)
 		_terrain_lit_cache.append(lit_row)
 		_terrain_dim_cache.append(dim_row)
@@ -848,11 +869,13 @@ func _build_tilemap_layers() -> void:
 
 	_chunk_bg_layer = _make_tile_layer(_fill_tileset, 0)
 	_chunk_fg_layer = _make_tile_layer(_glyph_tileset, 1)
-	_chunk_entity_layer = _make_tile_layer(_glyph_tileset, 2)
-	_chunk_overlay_bg_layer = _make_tile_layer(_fill_tileset, 3)
-	_chunk_overlay_fg_layer = _make_tile_layer(_glyph_tileset, 4)
+	_chunk_entity_bg_layer = _make_tile_layer(_fill_tileset, 2)
+	_chunk_entity_layer = _make_tile_layer(_glyph_tileset, 3)
+	_chunk_overlay_bg_layer = _make_tile_layer(_fill_tileset, 4)
+	_chunk_overlay_fg_layer = _make_tile_layer(_glyph_tileset, 5)
 	_chunk_terrain_root.add_child(_chunk_bg_layer)
 	_chunk_terrain_root.add_child(_chunk_fg_layer)
+	_chunk_screen_root.add_child(_chunk_entity_bg_layer)
 	_chunk_screen_root.add_child(_chunk_entity_layer)
 	_chunk_screen_root.add_child(_chunk_overlay_bg_layer)
 	_chunk_screen_root.add_child(_chunk_overlay_fg_layer)
@@ -2003,12 +2026,6 @@ func _refresh_menu_ui() -> void:
 					_refresh_menu_ui()
 			, false, true))
 			_menu_button_box.add_child(_make_menu_button(
-				"[D] Debug tools:        %s" % ("ON" if GameState.debug_tools_enabled else "OFF"),
-				func():
-					GameState.debug_tools_enabled = not GameState.debug_tools_enabled
-					_refresh_menu_ui()
-			, false, true))
-			_menu_button_box.add_child(_make_menu_button(
 				"[G] God mode:           %s" % ("ON" if GameState.god_mode else "OFF"),
 				func():
 					GameState.god_mode = not GameState.god_mode
@@ -2337,6 +2354,222 @@ func _wildlife_at_bump(dir: Vector2i):
 	return null
 
 
+func _combat_target_at_bump(dir: Vector2i, force_attack: bool):
+	if dir == Vector2i.ZERO or _map == null:
+		return null
+	var next: Vector2i = _player.pos + dir
+	if not _map.is_in_bounds(next.x, next.y):
+		return null
+	var target = _map.get_blocking_entity_at(next.x, next.y)
+	if target == null or not (target is ActorClass) or target == _player:
+		return null
+	var actor: ActorClass = target as ActorClass
+	if not actor.is_alive:
+		return null
+	if target is NpcClass:
+		var npc: NpcClass = target as NpcClass
+		if npc.is_wildlife or npc.is_angered or force_attack:
+			return npc
+		return null
+	return actor
+
+
+func _build_tactical_encounter(target: ActorClass) -> Dictionary:
+	var arena_w: int = 18
+	var arena_h: int = 12
+	var focus := Vector2i((_player.pos.x + target.pos.x) / 2, (_player.pos.y + target.pos.y) / 2)
+	var top_left := Vector2i(focus.x - arena_w / 2, focus.y - arena_h / 2)
+	var fallback_tile: int = _map.tiles[_player.pos.y][_player.pos.x]
+	var arena_tiles: Array = []
+	for y in range(arena_h):
+		var row: Array = []
+		for x in range(arena_w):
+			var mx: int = top_left.x + x
+			var my: int = top_left.y + y
+			if _map.is_in_bounds(mx, my):
+				row.append(int(_map.tiles[my][mx]))
+			else:
+				row.append(fallback_tile)
+		arena_tiles.append(row)
+	_prepare_tactical_arena(arena_tiles, fallback_tile)
+	var player_spawn := _find_tactical_spawn(arena_tiles, true)
+	var enemy_spawn := _find_tactical_spawn(arena_tiles, false)
+	if player_spawn == enemy_spawn or not _tactical_positions_connected(arena_tiles, player_spawn, enemy_spawn):
+		_carve_tactical_lane(arena_tiles, player_spawn, enemy_spawn, _combat_floor_tile(fallback_tile))
+	return {
+		"title": "TACTICAL COMBAT",
+		"subtitle": "%s vs %s" % [_player.name.capitalize(), target.name.capitalize()],
+		"tiles": arena_tiles,
+		"player": _player,
+		"enemy": target,
+		"player_pos": player_spawn,
+		"enemy_pos": enemy_spawn,
+		"xp_reward": _world.preview_kill_xp(target),
+	}
+
+
+func _prepare_tactical_arena(arena_tiles: Array, fallback_tile: int) -> void:
+	var floor_tile: int = _combat_floor_tile(fallback_tile)
+	var center_y: int = arena_tiles.size() / 2
+	var center_x: int = arena_tiles[0].size() / 2
+	for y in range(arena_tiles.size()):
+		for x in range(arena_tiles[y].size()):
+			var tile: int = int(arena_tiles[y][x])
+			if _combat_tile_walkable(tile):
+				continue
+			var dist_to_center: int = absi(x - center_x) + absi(y - center_y)
+			var edge: bool = x == 0 or y == 0 or x == arena_tiles[y].size() - 1 or y == arena_tiles.size() - 1
+			if not edge or dist_to_center <= 5:
+				arena_tiles[y][x] = floor_tile
+	# Ensure both sides have valid approach space even when the sampled terrain is mostly rock/wall.
+	_carve_tactical_lane(arena_tiles, Vector2i(2, center_y), Vector2i(arena_tiles[0].size() - 3, center_y), floor_tile)
+
+
+func _combat_floor_tile(fallback_tile: int) -> int:
+	if _combat_tile_walkable(fallback_tile):
+		return fallback_tile
+	return GameMapClass.TILE_FLOOR
+
+
+func _find_tactical_spawn(arena_tiles: Array, prefer_left: bool) -> Vector2i:
+	var x_range: Array = []
+	if prefer_left:
+		for x in range(2, mini(8, arena_tiles[0].size() - 1)):
+			x_range.append(x)
+	else:
+		for x in range(arena_tiles[0].size() - 3, maxi(arena_tiles[0].size() - 9, 1), -1):
+			x_range.append(x)
+	var center_y: int = arena_tiles.size() / 2
+	for dy in range(arena_tiles.size()):
+		for x in x_range:
+			var y_candidates := [center_y - dy, center_y + dy]
+			for y in y_candidates:
+				if y < 0 or y >= arena_tiles.size():
+					continue
+				if _combat_tile_walkable(int(arena_tiles[y][x])):
+					return Vector2i(x, y)
+	return Vector2i(2, center_y) if prefer_left else Vector2i(arena_tiles[0].size() - 3, center_y)
+
+
+func _carve_tactical_lane(arena_tiles: Array, from_pos: Vector2i, to_pos: Vector2i, floor_tile: int) -> void:
+	var x := from_pos.x
+	var y := from_pos.y
+	while x != to_pos.x:
+		_set_tactical_floor(arena_tiles, Vector2i(x, y), floor_tile)
+		x += signi(to_pos.x - x)
+	while y != to_pos.y:
+		_set_tactical_floor(arena_tiles, Vector2i(x, y), floor_tile)
+		y += signi(to_pos.y - y)
+	_set_tactical_floor(arena_tiles, to_pos, floor_tile)
+
+
+func _set_tactical_floor(arena_tiles: Array, pos: Vector2i, floor_tile: int) -> void:
+	for dy in range(-1, 2):
+		for dx in range(-1, 2):
+			var p := pos + Vector2i(dx, dy)
+			if p.y < 0 or p.y >= arena_tiles.size() or p.x < 0 or p.x >= arena_tiles[p.y].size():
+				continue
+			arena_tiles[p.y][p.x] = floor_tile
+
+
+func _tactical_positions_connected(arena_tiles: Array, start: Vector2i, goal: Vector2i) -> bool:
+	if start == goal:
+		return true
+	var frontier: Array[Vector2i] = [start]
+	var seen: Dictionary = {start: true}
+	var dirs := [
+		Vector2i(-1, -1), Vector2i(0, -1), Vector2i(1, -1),
+		Vector2i(-1, 0), Vector2i(1, 0),
+		Vector2i(-1, 1), Vector2i(0, 1), Vector2i(1, 1),
+	]
+	var head := 0
+	while head < frontier.size():
+		var current: Vector2i = frontier[head]
+		head += 1
+		if current == goal:
+			return true
+		for dir in dirs:
+			var next: Vector2i = current + dir
+			if seen.has(next) or next.y < 0 or next.y >= arena_tiles.size() or next.x < 0 or next.x >= arena_tiles[next.y].size():
+				continue
+			if not _combat_tile_walkable(int(arena_tiles[next.y][next.x])):
+				continue
+			seen[next] = true
+			frontier.append(next)
+	return false
+
+
+func _combat_tile_walkable(tile: int) -> bool:
+	return tile == GameMapClass.TILE_FLOOR \
+		or tile == GameMapClass.TILE_SAND \
+		or tile == GameMapClass.TILE_DUNE \
+		or tile == GameMapClass.TILE_GRASS \
+		or tile == GameMapClass.TILE_ROAD \
+		or tile == GameMapClass.TILE_CAVE_FLOOR
+
+
+func _try_begin_tactical_combat(dir: Vector2i, force_attack: bool) -> bool:
+	var target = _combat_target_at_bump(dir, force_attack)
+	if target == null:
+		return false
+	_begin_tactical_combat_with_target(target)
+	return true
+
+
+func _begin_tactical_combat_with_target(target: ActorClass) -> void:
+	if target == null or _combat_scene != null:
+		return
+	_stop_auto_move()
+	_stop_held_move_repeat()
+	_world.nearby_npc = null
+	_combat_scene = CombatScenePacked.instantiate()
+	if _ui_layer != null:
+		_ui_layer.add_child(_combat_scene)
+	else:
+		add_child(_combat_scene)
+		_combat_scene.z_index = 100
+	_combat_scene.setup(_build_tactical_encounter(target))
+	_combat_scene.encounter_finished.connect(_on_tactical_combat_finished, CONNECT_ONE_SHOT)
+	queue_redraw()
+
+
+func _on_tactical_combat_requested(attacker) -> void:
+	if _combat_scene != null or attacker == null or not (attacker is ActorClass):
+		return
+	_begin_tactical_combat_with_target(attacker as ActorClass)
+
+
+func _on_tactical_combat_finished(result: Dictionary) -> void:
+	var outcome: String = str(result.get("outcome", "aborted"))
+	var consume_turn: bool = bool(result.get("consume_turn", false))
+	var enemy = result.get("enemy")
+	if enemy is NpcClass and enemy.hp < enemy.max_hp and enemy.is_alive:
+		_world._on_npc_attacked(enemy as NpcClass, false)
+	if enemy is ActorClass and not (enemy as ActorClass).is_alive:
+		_world._award_kill_xp(enemy as ActorClass)
+		_world.map.refresh_entity(enemy)
+	match outcome:
+		"victory":
+			_world.add_msg("The tactical fight is won.")
+		"defeat":
+			_world.add_msg("You fall in tactical combat.")
+			_world.add_msg("You are dead.  Press r to try again.")
+			_world.game_over = true
+		"fled":
+			_world.add_msg("You break away from the tactical fight.")
+		"aborted":
+			_world.add_msg("The tactical combat test ends.")
+		_:
+			_world.add_msg("The tactical fight ends.")
+	if consume_turn and not _world.game_over:
+		_world.end_turn()
+	_handle_post_player_action()
+	_mark_chunk_entities_dirty()
+	_mark_hud_dirty()
+	_combat_scene = null
+	queue_redraw()
+
+
 func _maybe_prompt_neutral_attack(dir: Vector2i, force_attack: bool) -> bool:
 	if force_attack or _screen != Screen.NONE:
 		return false
@@ -2356,6 +2589,8 @@ func _maybe_prompt_neutral_attack(dir: Vector2i, force_attack: bool) -> bool:
 
 func _confirm_neutral_attack(dir: Vector2i) -> void:
 	_close_disambig_overlay()
+	if _try_begin_tactical_combat(dir, true):
+		return
 	_world.do_player_turn(dir, true)
 	_handle_post_player_action()
 	queue_redraw()
@@ -2639,7 +2874,7 @@ func _tileset_glyph_tint(base_color: Color, lit: bool) -> Color:
 	if lit:
 		glyph_color = base_color.lerp(Color(1, 1, 1, 1), 0.10)
 	else:
-		glyph_color = base_color.lerp(Color(0.80, 0.80, 0.80, 1), 0.05)
+		glyph_color = base_color.darkened(0.16).lerp(Color(0.18, 0.16, 0.14, 1), 0.04)
 	glyph_color.a = 1.0
 	return glyph_color
 
@@ -2649,18 +2884,13 @@ func _ascii_glyph_tint(base_color: Color, lit: bool) -> Color:
 	if lit:
 		glyph_color = base_color.lerp(Color(1, 1, 1, 1), 0.12)
 	else:
-		glyph_color = base_color.lerp(Color(0.85, 0.85, 0.85, 1), 0.06)
+		glyph_color = base_color.darkened(0.18).lerp(Color(0.16, 0.14, 0.12, 1), 0.05)
 	glyph_color.a = 1.0
 	return glyph_color
 
 
-# Returns [char, lit_color] for terrain tiles that support visual variation.
-# Uses a deterministic hash of world coords — stable across frames and redraws.
-# Returns ["", Color.WHITE] for unhandled tiles (caller uses its own defaults).
-func _terrain_cell(tile: int, mx: int, my: int) -> Array:
-	if not TERRAIN_VARIATION:
-		return ["", Color.WHITE]
-	# Avalanche hash — fully mixes both coords so no diagonal banding appears.
+# Returns a stable 0..1 noise value per terrain cell.
+func _terrain_noise(mx: int, my: int) -> float:
 	var h: int = mx * 1836311903 ^ my * 2971215073
 	h += h << 10
 	h ^= h >> 6
@@ -2668,31 +2898,63 @@ func _terrain_cell(tile: int, mx: int, my: int) -> Array:
 	h ^= h >> 11
 	h += h << 15
 	h = abs(h) & 0x7FFFFFFF
+	return float(h % 1000) / 999.0
+
+
+# Returns [char, lit_color] for terrain tiles that support visual variation.
+# First pass: keep glyphs consistent, but let a few terrain families nudge
+# their foreground shade slightly so the background gradient can do most of the
+# visual work.
+func _terrain_cell(tile: int, mx: int, my: int) -> Array:
+	if not TERRAIN_VARIATION:
+		return ["", Color.WHITE]
+	var noise: float = _terrain_noise(mx, my)
 	match tile:
-		GameMapClass.TILE_GRASS:
-			# All chars sit in the upper-mid region of the CP437 cell — no height mismatch.
-			var idx: int = h % 4
-			var chars := ["\"", "'", "\"", "'"]
-			var colors := [
-				Color(0.38, 0.73, 0.20),  # slightly darker
-				Color(0.42, 0.78, 0.25),  # slightly brighter
-				Color(0.40, 0.75, 0.22),  # base
-				Color(0.36, 0.70, 0.18),  # more muted
-			]
-			return [chars[idx], colors[idx]]
+		GameMapClass.TILE_SAND:
+			return [".", C_SAND_LIT.lerp(Color(1.0, 0.95, 0.66), noise * 0.12)]
 		GameMapClass.TILE_DUNE:
-			# All chars sit at mid-row in the CP437 cell — no height mismatch.
-			var idx: int = h % 4
-			var chars := ["~", "-", "~", "="]
-			var colors := [
-				Color(0.94, 0.68, 0.22),  # base
-				Color(0.90, 0.64, 0.18),  # darker
-				Color(0.97, 0.72, 0.26),  # lighter
-				Color(0.92, 0.66, 0.20),  # mid-dark
-			]
-			return [chars[idx], colors[idx]]
+			return ["^", C_DUNE_LIT.lerp(Color(1.0, 0.82, 0.36), noise * 0.15)]
+		GameMapClass.TILE_GRASS:
+			return ["\"", C_GRASS_LIT.lerp(Color(0.56, 0.90, 0.36), noise * 0.12)]
+		GameMapClass.TILE_ROCK:
+			return ["#", C_ROCK_LIT.lerp(Color(0.92, 0.54, 0.28), noise * 0.14)]
 		_:
 			return ["", Color.WHITE]
+
+
+func _terrain_fill_color(tile: int, mx: int, my: int, lit: bool, fallback: Color) -> Color:
+	var base: Color = _terrain_fill_base_color(tile, lit, fallback)
+	if not TERRAIN_VARIATION:
+		return base
+	if not lit:
+		base = base.darkened(0.08)
+	var noise: float = _terrain_noise(mx, my)
+	var centered: float = (noise - 0.5) * 2.0
+	match tile:
+		GameMapClass.TILE_SAND:
+			return base.lightened(0.11 * maxf(centered, 0.0)).darkened(0.08 * maxf(-centered, 0.0))
+		GameMapClass.TILE_DUNE:
+			return base.lightened(0.14 * maxf(centered, 0.0)).darkened(0.10 * maxf(-centered, 0.0))
+		GameMapClass.TILE_GRASS:
+			return base.lightened(0.10 * maxf(centered, 0.0)).darkened(0.10 * maxf(-centered, 0.0))
+		GameMapClass.TILE_ROCK:
+			return base.lightened(0.10 * maxf(centered, 0.0)).darkened(0.12 * maxf(-centered, 0.0))
+		_:
+			return base
+
+
+func _terrain_dim_glyph_color(tile: int, lit_color: Color) -> Color:
+	match tile:
+		GameMapClass.TILE_SAND:
+			return lit_color.darkened(0.24)
+		GameMapClass.TILE_DUNE:
+			return lit_color.darkened(0.27)
+		GameMapClass.TILE_GRASS:
+			return lit_color.darkened(0.24)
+		GameMapClass.TILE_ROCK:
+			return lit_color.darkened(0.29)
+		_:
+			return _tile_dim_color(tile)
 
 
 func _ascii_cell_rect(x: int, y: int) -> Rect2:
@@ -2738,6 +3000,8 @@ func _draw_ascii_cell(x: int, y: int, tile: int, ch: String, base_color: Color, 
 # ===========================================================================
 
 func _unhandled_input(event: InputEvent) -> void:
+	if _combat_scene != null:
+		return
 	var should_interrupt_auto_move: bool = false
 	if event is InputEventKey:
 		should_interrupt_auto_move = event.pressed and not event.echo
@@ -2837,12 +3101,6 @@ func _unhandled_input(event: InputEvent) -> void:
 		print(DevProfilerClass.report())
 		return
 
-	if event.shift_pressed and event.physical_keycode == KEY_D:
-		get_viewport().set_input_as_handled()
-		_world.toggle_debug_hub()
-		queue_redraw()
-		return
-
 	# Unshifted letter overlay toggles.
 	if not event.shift_pressed:
 		match event.physical_keycode:
@@ -2939,6 +3197,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	var force_attack: bool = event.alt_pressed and dir != Vector2i.ZERO
 	if _maybe_prompt_neutral_attack(dir, force_attack):
 		_stop_held_move_repeat()
+		return
+	if _try_begin_tactical_combat(dir, force_attack):
 		return
 	_world.do_player_turn(dir, force_attack)
 	_handle_post_player_action()
@@ -3072,6 +3332,8 @@ func _handle_map_mouse_click(mouse_pos: Vector2) -> void:
 		get_viewport().set_input_as_handled()
 		var step := Vector2i(clampi(delta.x, -1, 1), clampi(delta.y, -1, 1))
 		if _maybe_prompt_neutral_attack(step, false):
+			return
+		if _try_begin_tactical_combat(step, false):
 			return
 		_world.do_player_turn(step, false)
 		_handle_post_player_action()
@@ -3422,9 +3684,6 @@ func _handle_settings_input(event: InputEvent) -> void:
 			KEY_A:
 				GameState.auto_pickup = not GameState.auto_pickup
 				queue_redraw()
-			KEY_D:
-				GameState.debug_tools_enabled = not GameState.debug_tools_enabled
-				queue_redraw()
 			KEY_G:
 				GameState.god_mode = not GameState.god_mode
 				queue_redraw()
@@ -3753,19 +4012,28 @@ func _draw_map() -> void:
 					color = C_FLOOR_LIT if lit else _tile_dim_color(tile)
 				GameMapClass.TILE_SAND:
 					if ch == "":
-						ch = "."
-					color = C_SAND_LIT if lit else _tile_dim_color(tile)
+						var variant := _terrain_cell(tile, mx, my)
+						ch = variant[0] if variant[0] != "" else "."
+						var sand_base: Color = variant[1] as Color
+						color = sand_base if lit else sand_base.darkened(0.18)
+					else:
+						color = C_SAND_LIT if lit else _tile_dim_color(tile)
 				GameMapClass.TILE_DUNE:
 					if ch == "":
 						var variant := _terrain_cell(tile, mx, my)
 						ch = variant[0] if variant[0] != "" else "^"
-						color = (variant[1] as Color) if lit else _tile_dim_color(tile)
+						var dune_base: Color = variant[1] as Color
+						color = dune_base if lit else dune_base.darkened(0.20)
 					else:
 						color = C_DUNE_LIT if lit else _tile_dim_color(tile)
 				GameMapClass.TILE_ROCK:
 					if ch == "":
-						ch = "#"
-					color = C_ROCK_LIT if lit else _tile_dim_color(tile)
+						var variant := _terrain_cell(tile, mx, my)
+						ch = variant[0] if variant[0] != "" else "#"
+						var rock_base: Color = variant[1] as Color
+						color = rock_base if lit else rock_base.darkened(0.22)
+					else:
+						color = C_ROCK_LIT if lit else _tile_dim_color(tile)
 				GameMapClass.TILE_WATER:
 					if ch == "":
 						ch = "~"
@@ -3774,7 +4042,8 @@ func _draw_map() -> void:
 					if ch == "":
 						var variant := _terrain_cell(tile, mx, my)
 						ch = variant[0] if variant[0] != "" else "\""
-						color = (variant[1] as Color) if lit else _tile_dim_color(tile)
+						var grass_base: Color = variant[1] as Color
+						color = grass_base if lit else grass_base.darkened(0.18)
 					else:
 						color = C_GRASS_LIT if lit else _tile_dim_color(tile)
 				GameMapClass.TILE_ROAD:
@@ -3872,7 +4141,7 @@ func _sync_chunk_tilemaps(sync_tiles: bool = true, sync_entities: bool = true, s
 					if lit:
 						fg_color = tinted_base.lerp(Color(1, 1, 1, 1), 0.10)
 					else:
-						fg_color = tinted_base.lerp(Color(0.80, 0.80, 0.80, 1), 0.05)
+						fg_color = tinted_base.lerp(Color(1, 0.96, 0.90, 1), 0.04)
 					fg_color.a = 1.0
 					var atlas_coords: Vector2i = _terrain_atlas_cache[my][mx] as Vector2i
 					var fg_state: Array = [atlas_coords, fg_color]
@@ -3894,10 +4163,12 @@ func _sync_chunk_tilemaps(sync_tiles: bool = true, sync_entities: bool = true, s
 		# Entity layer: full clear only when camera moved (all screen-space coords shifted).
 		# Otherwise erase only cells that previously held entities.
 		if cam_moved:
+			_chunk_entity_bg_layer.clear_with_modulates()
 			_chunk_entity_layer.clear_with_modulates()
 			_prev_entity_cells.clear()
 		else:
 			for coords in _prev_entity_cells:
+				_chunk_entity_bg_layer.erase_cell_with_modulate(coords)
 				_chunk_entity_layer.erase_cell_with_modulate(coords)
 
 		var cell_map: Dictionary = {}
@@ -3917,6 +4188,13 @@ func _sync_chunk_tilemaps(sync_tiles: bool = true, sync_entities: bool = true, s
 			var e = _display_entity_for_cell(cell_map[key] as Array)
 			if e == null:
 				continue
+			if _entity_needs_backdrop(e):
+				_chunk_entity_bg_layer.set_cell_with_modulate(
+					key,
+					FILL_SOURCE_ID,
+					Vector2i.ZERO,
+					Color(0.0, 0.0, 0.0, 1.0)
+				)
 			_chunk_entity_layer.set_cell_with_modulate(
 				key,
 				TILE_SOURCE_ID,
@@ -3966,6 +4244,7 @@ func _sync_chunk_tilemaps(sync_tiles: bool = true, sync_entities: bool = true, s
 	_prev_cam_y = _cam_y
 
 	if sync_entities:
+		_chunk_entity_bg_layer.notify_runtime_tile_data_update()
 		_chunk_entity_layer.notify_runtime_tile_data_update()
 	if sync_overlay:
 		_chunk_overlay_bg_layer.notify_runtime_tile_data_update()
@@ -3988,6 +4267,9 @@ func _draw_entities() -> void:
 		var e = _display_entity_for_cell(cell_map[sp] as Array)
 		if e == null:
 			continue
+		if _entity_needs_backdrop(e):
+			var bg_rect := _tileset_cell_rect(sp.x, sp.y) if _tileset_active() else _ascii_cell_rect(sp.x, sp.y)
+			draw_rect(bg_rect, Color(0.0, 0.0, 0.0, 1.0))
 		if _tileset_active():
 			_put_map_fg(sp.x, sp.y, _entity_glyph(e), _tileset_glyph_tint(e.color * _day_tint, true))
 		else:
@@ -4886,6 +5168,21 @@ func _entity_glyph(entity) -> String:
 	if _tileset_active() and entity.tileset_char != "":
 		return entity.tileset_char
 	return str(entity.char)
+
+
+func _entity_needs_backdrop(entity) -> bool:
+	if entity == null:
+		return false
+	if entity == _player or entity is NpcClass:
+		return true
+	var glyph := str(entity.char)
+	if glyph == ">" or glyph == "<":
+		return true
+	var entity_name := str(entity.name).to_lower()
+	return entity_name.contains("entrance") \
+		or entity_name.contains("stairs") \
+		or entity_name.contains("portal") \
+		or entity_name.contains("gate")
 
 
 func _put(x: int, y: int, ch: String, color: Color) -> void:
